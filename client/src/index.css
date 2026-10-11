@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-size: 16px;
+  }
+  body {
+    @apply bg-stone-50 text-stone-900 antialiased;
+  }
+  h1 {
+    @apply text-2xl font-semibold;
+  }
+  h2 {
+    @apply text-xl font-semibold;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex min-h-tap items-center justify-center gap-2 rounded-lg px-4 text-base font-medium
+      transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-emerald-600 text-white hover:bg-emerald-700;
+  }
+  .btn-secondary {
+    @apply btn border border-stone-300 bg-white text-stone-900 hover:bg-stone-100;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .input {
+    @apply min-h-tap w-full rounded-lg border border-stone-300 bg-white px-3 text-base text-stone-900
+      focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200;
+  }
+  .card {
+    @apply rounded-xl border border-stone-200 bg-white p-4 shadow-sm;
+  }
+  .pill {
+    @apply inline-flex min-h-[32px] items-center rounded-full px-3 text-sm font-medium;
+  }
+}
