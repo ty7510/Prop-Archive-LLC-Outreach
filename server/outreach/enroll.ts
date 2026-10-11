@@ -9,7 +9,15 @@ import {
   type Persona,
 } from '../../shared/types.ts'
 import type { Db } from '../db/client.ts'
-import { enrollments, events, leads, sequences, type Lead, type Sequence } from '../db/schema.ts'
+import {
+  enrollments,
+  events,
+  leads,
+  messages,
+  sequences,
+  type Lead,
+  type Sequence,
+} from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { badRequest, conflict, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
@@ -204,6 +212,17 @@ export async function stopLead(
       inArray(
         enrollments.id,
         open.map((o) => o.id),
+      ),
+    )
+  // Nothing already written for this lead may still go out or sit in Theo's queue.
+  await db
+    .update(messages)
+    .set({ status: 'skipped', error: `stopped: ${reason}` })
+    .where(
+      and(
+        eq(messages.lead_id, leadId),
+        eq(messages.direction, 'out'),
+        inArray(messages.status, ['queued', 'ready_for_human']),
       ),
     )
   await db.update(leads).set({ next_action_at: null, updated_at: now }).where(eq(leads.id, leadId))

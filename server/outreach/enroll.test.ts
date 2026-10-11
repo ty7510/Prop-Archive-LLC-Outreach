@@ -254,7 +254,7 @@ describe('tracked redirect', () => {
     const { deps } = await setup()
     const r = await resolveRedirect(deps, { token: 'nope', dest: 'beta' })
     expect(r?.tracked).toBe(false)
-    expect(r?.url.startsWith('https://proparchive.app/?join=beta&')).toBe(true)
+    expect(r?.url.startsWith('https://proparchive.app/?beta=1&')).toBe(true)
     expect(new URL(r!.url).searchParams.get('ref')).toBeNull()
     expect(await resolveRedirect(deps, { token: 'nope', dest: 'elsewhere' })).toBeNull()
   })

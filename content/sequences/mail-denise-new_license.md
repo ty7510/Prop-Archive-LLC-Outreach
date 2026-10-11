@@ -10,7 +10,7 @@ description: One postcard to a small management company that just added a rental
 
 delay_days: 0
 
-{{first_name}},
+Hi {{first_name}},
 
 Another rental license is another renewal, lead cert and inspection date in a spreadsheet one person owns. Prop Archive tracks compliance for every building where your whole office can see it. Free while we're in beta.
 

@@ -1,6 +1,7 @@
 // Outreach: templates, rendering, sequences, email and mail senders, human queue, replies.
 // Spec section 10. Registers the OutreachModule with the production deps bag.
 import { registerModule, type OutreachModule } from '../contracts.ts'
+import { getDb } from '../db/client.ts'
 import { defaultDeps, type OutreachDeps } from './deps.ts'
 import { enrollEligible, enrollLead, stopLead } from './enroll.ts'
 import { syncReplies } from './replies.ts'
@@ -24,14 +25,18 @@ export function createOutreach(deps: OutreachDeps): OutreachModule {
 }
 
 let current: OutreachDeps | null = null
+let fallback: OutreachDeps | null = null
 
 /**
- * The deps the routes use. Lazy so the app database (set by createApp) is the one we talk to.
+ * The deps the routes use. Lazy so the app database (set by createApp) is the one we talk to, and
+ * rebuilt when that database changes (tests make a fresh in-memory db per test; production has one).
  * Tests call setOutreachDeps(testDeps(db, ...)) to swap in fakes.
  */
 export function outreachDeps(): OutreachDeps {
-  if (!current) current = defaultDeps()
-  return current
+  if (current) return current
+  const db = getDb()
+  if (!fallback || fallback.db !== db) fallback = defaultDeps(db)
+  return fallback
 }
 
 export function setOutreachDeps(deps: OutreachDeps | null): void {

@@ -1,5 +1,6 @@
-// Leads API (spec section 6). Filled by the sources builder: list, get, patch, import, discover,
-// outcome. enroll and stop hand off to the outreach module (501 NOT_BUILT until it registers).
+// Leads API (spec section 6). Filled by the sources builder: list, get, patch, import, discover.
+// POST /:id/enroll, /:id/stop and /:id/outcome live in routes/sequences.ts (leadOutreachRouter),
+// mounted at /api/leads ahead of this router, so they are not repeated here.
 import { Router, type NextFunction, type Request, type Response } from 'express'
 import { and, desc, eq, getTableColumns, inArray, like, or, type SQL } from 'drizzle-orm'
 import multer from 'multer'
@@ -9,7 +10,6 @@ import {
   LEAD_STATUSES,
   LeadPatchSchema,
   LeadPersonaSchema,
-  OutcomeBodySchema,
   type EventKind,
   type LeadStatus,
   type Paged,
@@ -26,7 +26,7 @@ import {
   type Lead,
 } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
-import { asyncHandler, badRequest, conflict, HttpError, notFound, parseOr400 } from '../lib/http.ts'
+import { asyncHandler, badRequest, conflict, notFound, parseOr400 } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
 import { withJobLock } from '../lib/locks.ts'
 import { nowIso } from '../lib/time.ts'
@@ -261,65 +261,6 @@ leadsRouter.patch(
     if (patch.notes !== undefined && patch.notes !== (lead.notes ?? '')) {
       await addEvent(id, 'note', { length: patch.notes.length })
     }
-    res.json(toLeadRow(await loadLead(id)))
-  }),
-)
-
-// POST /api/leads/:id/enroll { sequence_id } -> { ok: true }   (outreach module)
-leadsRouter.post(
-  '/:id/enroll',
-  asyncHandler(async (req, res) => {
-    const id = String(req.params.id)
-    await loadLead(id)
-    const outreach = requireModule('outreach')
-    const body = parseOr400(z.object({ sequence_id: z.string().min(1) }), req.body)
-    await outreach.enrollLead(id, body.sequence_id)
-    res.json({ ok: true })
-  }),
-)
-
-// POST /api/leads/:id/stop { reason? } -> { ok: true }   (outreach module)
-leadsRouter.post(
-  '/:id/stop',
-  asyncHandler(async (req, res) => {
-    const id = String(req.params.id)
-    await loadLead(id)
-    const outreach = requireModule('outreach')
-    const body = parseOr400(z.object({ reason: z.string().max(500).optional() }), req.body ?? {})
-    await outreach.stopLead(id, body.reason ?? 'stopped by hand')
-    res.json({ ok: true })
-  }),
-)
-
-const OUTCOME_STATUS: Record<'demo_booked' | 'beta_joined' | 'not_interested', LeadStatus> = {
-  demo_booked: 'booked',
-  beta_joined: 'joined',
-  not_interested: 'not_interested',
-}
-
-// POST /api/leads/:id/outcome { kind } -> LeadRow
-leadsRouter.post(
-  '/:id/outcome',
-  asyncHandler(async (req, res) => {
-    const db = getDb()
-    const id = String(req.params.id)
-    const lead = await loadLead(id)
-    const body = parseOr400(OutcomeBodySchema, req.body)
-    const status = OUTCOME_STATUS[body.kind]
-    const at = nowIso()
-
-    const eventKind: EventKind = body.kind === 'not_interested' ? 'status_change' : body.kind
-    await addEvent(id, eventKind, { from: lead.status, to: status, by: 'hand', kind: body.kind })
-    await db
-      .update(leads)
-      .set({ status, updated_at: at, next_action_at: null })
-      .where(eq(leads.id, id))
-    try {
-      await stopOutreach(id, body.kind)
-    } catch (err) {
-      if (!(err instanceof HttpError)) throw err
-    }
-    await logActivity('info', `lead.${body.kind}`, { lead: displayNameFor(lead) }, id, db)
     res.json(toLeadRow(await loadLead(id)))
   }),
 )

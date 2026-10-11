@@ -2,7 +2,7 @@
 // and a calm "still being built" flag instead of a toast when the server answers 501.
 import { useCallback, useRef, useState } from 'react'
 import { useQueryClient, type QueryKey } from '@tanstack/react-query'
-import { ApiRequestError, errorMessage, isNotBuilt } from '../api.ts'
+import { errorMessage, isNotBuilt } from '../api.ts'
 import { useToast } from '../components/Toast.tsx'
 
 export interface ActionOptions<R> {
@@ -11,8 +11,6 @@ export interface ActionOptions<R> {
   onSuccess?: (result: R) => void | Promise<void>
   /** Query keys to invalidate after success. */
   invalidate?: QueryKey[]
-  /** Some routes are not in the spec; a 404 there means "not built" too. */
-  treat404AsNotBuilt?: boolean
   /** Skip the error toast (the caller shows the error inline). */
   quiet?: boolean
 }
@@ -55,10 +53,7 @@ export function useAction<A extends unknown[], R>(
         await opts.onSuccess?.(result)
         return result
       } catch (err) {
-        const missing =
-          isNotBuilt(err) ||
-          (opts.treat404AsNotBuilt === true && err instanceof ApiRequestError && err.status === 404)
-        if (missing) {
+        if (isNotBuilt(err)) {
           setNotBuilt(true)
           return undefined
         }

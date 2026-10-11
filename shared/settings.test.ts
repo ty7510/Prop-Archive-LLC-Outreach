@@ -19,7 +19,7 @@ describe('DEFAULT_SETTINGS', () => {
     expect(DEFAULT_SETTINGS.physical_address).toBe('')
     expect(DEFAULT_SETTINGS.site_url).toBe('https://proparchive.app')
     expect(DEFAULT_SETTINGS.demo_url).toBe('https://proparchive.app/demo')
-    expect(DEFAULT_SETTINGS.beta_url).toBe('https://proparchive.app/?join=beta')
+    expect(DEFAULT_SETTINGS.beta_url).toBe('https://proparchive.app/?beta=1')
     expect(DEFAULT_SETTINGS.target_zips).toEqual([
       '19104',
       '19121',

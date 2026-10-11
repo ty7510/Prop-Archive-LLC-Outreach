@@ -103,7 +103,7 @@ export const SettingsSchema = z.object({
 
   site_url: z.string().url().default('https://proparchive.app'),
   demo_url: z.string().url().default('https://proparchive.app/demo'),
-  beta_url: z.string().url().default('https://proparchive.app/?join=beta'),
+  beta_url: z.string().url().default('https://proparchive.app/?beta=1'),
 
   target_zips: z
     .array(z.string().regex(ZIP5, 'use a 5 digit zip'))

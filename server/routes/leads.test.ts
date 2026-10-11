@@ -190,7 +190,7 @@ describe('leads API', () => {
     expect(kinds).toEqual(['do_not_contact', 'note', 'status_change'])
   })
 
-  it('outcome sets the status, writes an event and stops open enrollments', async () => {
+  it('outcome sets the status, writes an event, stops open enrollments and skips queued messages', async () => {
     await importSample(agent)
     const id = (await agent.get('/api/leads?q=okafor')).body.items[0].id as string
     const seqId = newId()
@@ -222,6 +222,7 @@ describe('leads API', () => {
 
     expect((await agent.post(`/api/leads/${id}/outcome`).send({ kind: 'nope' })).status).toBe(400)
 
+    // The outreach module's leadOutreachRouter answers this path (mounted ahead of leadsRouter).
     const res = await agent.post(`/api/leads/${id}/outcome`).send({ kind: 'demo_booked' })
     expect(res.status).toBe(200)
     expect(res.body.status).toBe('booked')
@@ -232,7 +233,7 @@ describe('leads API', () => {
     const [msg] = await db.select().from(messages).where(eq(messages.lead_id, id))
     expect(msg?.status).toBe('skipped')
     const evs = await db.select().from(events).where(eq(events.lead_id, id))
-    expect(evs.map((e) => e.kind)).toEqual(['demo_booked'])
+    expect(evs.map((e) => e.kind)).toContain('demo_booked')
 
     const detail = await agent.get(`/api/leads/${id}`)
     expect(detail.body.enrollments[0]).toMatchObject({
@@ -248,7 +249,7 @@ describe('leads API', () => {
     ).toBe('not_interested')
   })
 
-  it('outcome hands off to the outreach module when it is registered', async () => {
+  it('do not contact hands off to the outreach module when it is registered', async () => {
     await importSample(agent)
     const id = (await agent.get('/api/leads?q=maya')).body.items[0].id as string
     const calls: [string, string][] = []
@@ -262,21 +263,24 @@ describe('leads API', () => {
       syncReplies: async () => ({ received: 0 }),
       renderStep: async () => ({ body: '' }),
     })
-    await agent.post(`/api/leads/${id}/outcome`).send({ kind: 'not_interested' })
-    expect(calls).toEqual([[id, 'not_interested']])
+    await agent.patch(`/api/leads/${id}`).send({ do_not_contact: true })
+    expect(calls).toEqual([[id, 'do_not_contact']])
     expect(modules.outreach).toBeDefined()
   })
 
-  it('enroll and stop answer 501 until the outreach module exists', async () => {
+  it('enroll and stop are served by the outreach router with plain 404s', async () => {
     await importSample(agent)
     const id = (await agent.get('/api/leads?q=maya')).body.items[0].id as string
     const enroll = await agent.post(`/api/leads/${id}/enroll`).send({ sequence_id: 'x' })
-    expect(enroll.status).toBe(501)
-    expect(enroll.body.code).toBe('NOT_BUILT')
-    expect((await agent.post(`/api/leads/${id}/stop`).send({})).status).toBe(501)
-    expect((await agent.post('/api/leads/01ARZ3NDEKTSV4RRFFQ69G5FAV/stop').send({})).status).toBe(
-      404,
-    )
+    expect(enroll.status).toBe(404)
+    expect(enroll.body.code).toBe('SEQUENCE_NOT_FOUND')
+    const stop = await agent.post(`/api/leads/${id}/stop`).send({})
+    expect(stop.status).toBe(200)
+    expect(stop.body).toEqual({ ok: true, stopped: 0 })
+    expect(
+      (await agent.post('/api/leads/01ARZ3NDEKTSV4RRFFQ69G5FAV/enroll').send({ sequence_id: 'x' }))
+        .status,
+    ).toBe(404)
   })
 
   it('discover validates the body, takes the job lock and answers counts', async () => {

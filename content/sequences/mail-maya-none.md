@@ -10,7 +10,7 @@ description: One postcard to the owner mailing address. Hand-written feel, one a
 
 delay_days: 0
 
-{{first_name}},
+Hi {{first_name}},
 
 Repair texts at work, receipts in a shoebox, tax time with no records. Prop Archive keeps all of it for your rentals in one place, free while we're in beta.
 

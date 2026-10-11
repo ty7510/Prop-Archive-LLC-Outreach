@@ -177,6 +177,9 @@ async function main(): Promise<number> {
     await step('settings', async () => {
       const s = (await client.expect('PUT', '/api/settings', {
         live_mode: false,
+        // No target zips: the daily discover job has nothing to look up, so the smoke never calls
+        // the Carto API. The CSV below is the only lead source here.
+        target_zips: [],
         physical_address: '1500 Market St, Suite 1200, Philadelphia, PA 19102',
         // Any time of any day counts as the send window, so the tick's send job always runs here.
         send_window: {
@@ -189,7 +192,7 @@ async function main(): Promise<number> {
       })) as { live_mode: boolean; physical_address: string }
       assert(s.live_mode === false, 'live_mode should be false')
       assert(s.physical_address.length > 0, 'physical_address not saved')
-      return 'dry run, physical address set, send window open all day'
+      return 'dry run, no target zips, physical address set, send window open all day'
     })
 
     const imported = await step('import csv', async () => {

@@ -67,16 +67,6 @@ describe('auth', () => {
     expect(res.status).toBe(404)
     expect(res.body).toEqual({ error: 'Not found', code: 'NOT_FOUND' })
   })
-
-  it('stub routes answer 501 NOT_BUILT', async () => {
-    const agent = request.agent(app)
-    await agent.post('/api/login').send({ password: 'test-password' })
-    for (const path of ['/api/autopilot']) {
-      const res = await agent.get(path)
-      expect(res.status, path).toBe(501)
-      expect(res.body, path).toEqual({ error: 'not built yet', code: 'NOT_BUILT' })
-    }
-  })
 })
 
 describe('settings routes', () => {

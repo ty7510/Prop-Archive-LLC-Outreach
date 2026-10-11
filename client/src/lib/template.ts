@@ -32,7 +32,7 @@ export const SAMPLE_VARS: Record<string, string> = {
   trigger_line: 'I saw a new rental license on 52nd Street last month.',
   ai_opener: 'Four rentals in West Philly is a lot of paper to keep straight.',
   demo_link: 'https://proparchive.app/demo',
-  beta_link: 'https://proparchive.app/?join=beta',
+  beta_link: 'https://proparchive.app/?beta=1',
   site_link: 'https://proparchive.app',
   sender_name: 'Theo at Prop Archive',
   unsubscribe_link: 'https://outreach.example/u/sample',

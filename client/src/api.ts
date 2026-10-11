@@ -163,6 +163,4 @@ export const getAutopilot = () => api<AutopilotStatus>('/api/autopilot')
 export const startAutopilot = () => api<AutopilotStatus>('/api/autopilot/start', 'POST')
 export const stopAutopilot = () => api<AutopilotStatus>('/api/autopilot/stop', 'POST')
 export const tickAutopilot = () => api<AutopilotStatus>('/api/autopilot/tick', 'POST')
-/** Not in the spec's route list; the UI treats 404 like 501 for this one. */
-export const resetTodayCounters = () => api<{ ok: true }>('/api/autopilot/reset-today', 'POST')
 export const getActivity = (limit = 100) => api<ActivityEntry[]>(`/api/activity${qs({ limit })}`)
