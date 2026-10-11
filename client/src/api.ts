@@ -14,6 +14,7 @@ import type {
   LoginBody,
   Me,
   OutcomeBody,
+  Paged,
   ProvidersResponse,
   Queue,
   QueueActionResult,
@@ -22,6 +23,7 @@ import type {
   SequenceUpdate,
 } from '@shared/types'
 import type { Settings } from '@shared/settings'
+import type { Lead, LeadDetail, Sequence } from './types.ts'
 
 export class ApiRequestError extends Error {
   constructor(
@@ -38,6 +40,18 @@ export class ApiRequestError extends Error {
   get unauthorized(): boolean {
     return this.status === 401
   }
+}
+
+/** True when an unknown error is the server saying "not built yet". */
+export function isNotBuilt(err: unknown): boolean {
+  return err instanceof ApiRequestError && err.notBuilt
+}
+
+/** Plain words for any thrown value. */
+export function errorMessage(err: unknown, fallback = 'Something went wrong'): string {
+  if (err instanceof ApiRequestError) return err.message
+  if (err instanceof Error && err.message) return err.message
+  return fallback
 }
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -93,16 +107,17 @@ export const putSettings = (patch: Partial<Settings>) =>
 export const getProviders = () => api<ProvidersResponse>('/api/settings/providers')
 
 // leads
-export const listLeads = (params: {
+export interface LeadsParams extends Record<string, string | number | undefined> {
   status?: string
   persona?: string
   q?: string
   page?: number
   limit?: number
-}) => api<unknown>(`/api/leads${qs(params)}`)
-export const getLead = (id: string) => api<unknown>(`/api/leads/${encodeURIComponent(id)}`)
+}
+export const listLeads = (params: LeadsParams) => api<Paged<Lead>>(`/api/leads${qs(params)}`)
+export const getLead = (id: string) => api<LeadDetail>(`/api/leads/${encodeURIComponent(id)}`)
 export const patchLead = (id: string, patch: LeadPatch) =>
-  api<unknown>(`/api/leads/${encodeURIComponent(id)}`, 'PATCH', patch)
+  api<Lead>(`/api/leads/${encodeURIComponent(id)}`, 'PATCH', patch)
 export const importCsv = (file: File) => {
   const form = new FormData()
   form.append('file', file)
@@ -117,13 +132,14 @@ export const enrollLead = (id: string, body: EnrollBody) =>
 export const stopLead = (id: string, reason?: string) =>
   api<{ ok: true }>(`/api/leads/${encodeURIComponent(id)}/stop`, 'POST', { reason })
 export const leadOutcome = (id: string, body: OutcomeBody) =>
-  api<unknown>(`/api/leads/${encodeURIComponent(id)}/outcome`, 'POST', body)
+  api<Lead>(`/api/leads/${encodeURIComponent(id)}/outcome`, 'POST', body)
 
 // sequences
-export const listSequences = () => api<unknown[]>('/api/sequences')
-export const createSequence = (body: SequenceCreate) => api<unknown>('/api/sequences', 'POST', body)
+export const listSequences = () => api<Sequence[]>('/api/sequences')
+export const createSequence = (body: SequenceCreate) =>
+  api<Sequence>('/api/sequences', 'POST', body)
 export const updateSequence = (id: string, body: SequenceUpdate) =>
-  api<unknown>(`/api/sequences/${encodeURIComponent(id)}`, 'PUT', body)
+  api<Sequence>(`/api/sequences/${encodeURIComponent(id)}`, 'PUT', body)
 export const deleteSequence = (id: string) =>
   api<{ ok: true }>(`/api/sequences/${encodeURIComponent(id)}`, 'DELETE')
 export const previewSequence = (id: string, leadId?: string) =>
@@ -139,10 +155,14 @@ export const queueDone = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/done`, 'POST', { note })
 export const queueSkip = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/skip`, 'POST', { note })
+export const printQueueUrl = (ids: string[]) =>
+  `/api/queue/print?ids=${ids.map(encodeURIComponent).join(',')}`
 
 // autopilot
 export const getAutopilot = () => api<AutopilotStatus>('/api/autopilot')
 export const startAutopilot = () => api<AutopilotStatus>('/api/autopilot/start', 'POST')
 export const stopAutopilot = () => api<AutopilotStatus>('/api/autopilot/stop', 'POST')
 export const tickAutopilot = () => api<AutopilotStatus>('/api/autopilot/tick', 'POST')
+/** Not in the spec's route list; the UI treats 404 like 501 for this one. */
+export const resetTodayCounters = () => api<{ ok: true }>('/api/autopilot/reset-today', 'POST')
 export const getActivity = (limit = 100) => api<ActivityEntry[]>(`/api/activity${qs({ limit })}`)

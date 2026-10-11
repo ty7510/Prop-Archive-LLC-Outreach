@@ -67,7 +67,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 key={href}
                 href={href}
                 className={clsx(
-                  'flex min-h-tap flex-1 items-center gap-3 rounded-lg px-3 text-lg font-medium md:flex-none',
+                  'flex min-h-tap flex-1 items-center justify-center gap-2 rounded-lg px-2 text-base font-medium md:flex-none md:justify-start md:gap-3 md:px-3 md:text-lg',
                   active ? 'bg-emerald-50 text-emerald-800' : 'text-stone-700 hover:bg-stone-100',
                 )}
               >
@@ -111,12 +111,12 @@ export default function App() {
       <Route path="/">
         <Redirect to="/go" />
       </Route>
-      <Route path="/leads/:rest*">
+      <Route path="/leads/*?">
         <Protected>
           <Leads />
         </Protected>
       </Route>
-      <Route path="/sequences/:rest*">
+      <Route path="/sequences/*?">
         <Protected>
           <Sequences />
         </Protected>
