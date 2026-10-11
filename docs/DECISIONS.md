@@ -103,7 +103,8 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **L&I joins** `business_licenses.opa_account_num` on `properties.opa_account`, newest active license
   per property. It fills `properties.units` and license fields, sums `unit_count`, and reads the
   person from `legalfirstname/legallastname`, else `ownercontact1name`.
-## Outreach builder (2026-10-11)
+
+## 2026-10-11 (outreach)
 
 - **Deps bag** (`server/outreach/deps.ts`): db, clock, random, fetch, SMTP mailer factory, a thin
   `Llm` (text + structured) over `@anthropic-ai/sdk`, and an IMAP client factory, all injected.
