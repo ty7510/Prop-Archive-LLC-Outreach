@@ -19,10 +19,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    host: '0.0.0.0',
-    allowedHosts: true,
     port: 5173,
-    strictPort: true,
     proxy: {
       '/api': target,
       '/u': target,

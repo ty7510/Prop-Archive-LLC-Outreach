@@ -3,7 +3,6 @@
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import type { ProvidersPresent } from '../shared/types.ts'
-import { resolveDatabaseUrl } from './db/url.ts'
 
 const optional = z.preprocess(
   (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
@@ -24,7 +23,7 @@ export const EnvSchema = z.object({
   APP_PASSWORD: z.string().default(''),
   SESSION_SECRET: z.string().default(''),
   DATABASE_URL: z.preprocess(
-    (v) => (typeof v === 'string' || v === undefined ? resolveDatabaseUrl(v) : v),
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().default('file:./data/outreach.db'),
   ),
   /** Only for a hosted libsql DATABASE_URL (Turso). */
