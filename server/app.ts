@@ -15,7 +15,7 @@ import { healthRouter } from './routes/health.ts'
 import { leadsRouter } from './routes/leads.ts'
 import { publicRouter } from './routes/public.ts'
 import { queueRouter } from './routes/queue.ts'
-import { sequencesRouter } from './routes/sequences.ts'
+import { leadOutreachRouter, sequencesRouter } from './routes/sequences.ts'
 import { settingsRouter } from './routes/settings.ts'
 import { webhooksRouter } from './routes/webhooks.ts'
 
@@ -59,6 +59,7 @@ export function createApp(db: Db, options: CreateAppOptions = {}): Express {
   app.use('/api', requireAuth)
   app.use('/api/settings', settingsRouter)
   app.use('/api/leads', enrichRouter) // POST /api/leads/enrich
+  app.use('/api/leads', leadOutreachRouter) // POST /api/leads/:id/enroll | stop | outcome
   app.use('/api/leads', leadsRouter)
   app.use('/api/sequences', sequencesRouter)
   app.use('/api/queue', queueRouter)

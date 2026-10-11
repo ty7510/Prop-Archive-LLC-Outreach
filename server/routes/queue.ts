@@ -1,21 +1,50 @@
-// Human queue API (linkedin, instagram, call, print mail). STUB: 501 NOT_BUILT.
-// FILLED BY: the outreach builder.
+// Human queue API (linkedin, instagram, call, print mail). FILLED BY: the outreach builder.
 import { Router } from 'express'
-import { notBuilt } from '../lib/http.ts'
+import { QueueActionBodySchema } from '../../shared/types.ts'
+import { asyncHandler, parseOr400 } from '../lib/http.ts'
+import { outreachDeps } from '../outreach/index.ts'
+import { actOnQueueItem, listQueue, printPage } from '../outreach/queue.ts'
 
 export const queueRouter = Router()
 
-const stub = () => {
-  throw notBuilt()
-}
-
 // GET /api/queue -> Queue (ready_for_human messages grouped by channel)
-queueRouter.get('/', stub)
+queueRouter.get(
+  '/',
+  asyncHandler(async (_req, res) => {
+    res.json(await listQueue(outreachDeps()))
+  }),
+)
+
 // GET /api/queue/print?ids=a,b,c -> HTML page, one letter per page
-queueRouter.get('/print', stub)
+queueRouter.get(
+  '/print',
+  asyncHandler(async (req, res) => {
+    const raw = typeof req.query.ids === 'string' ? req.query.ids : ''
+    const ids = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 200)
+    res.type('html').send(await printPage(outreachDeps(), ids))
+  }),
+)
+
 // POST /api/queue/:messageId/done { note? } -> QueueActionResult
-queueRouter.post('/:messageId/done', stub)
+queueRouter.post(
+  '/:messageId/done',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(QueueActionBodySchema, req.body ?? {})
+    res.json(await actOnQueueItem(outreachDeps(), String(req.params.messageId), 'done', body.note))
+  }),
+)
+
 // POST /api/queue/:messageId/skip { note? } -> QueueActionResult
-queueRouter.post('/:messageId/skip', stub)
+queueRouter.post(
+  '/:messageId/skip',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(QueueActionBodySchema, req.body ?? {})
+    res.json(await actOnQueueItem(outreachDeps(), String(req.params.messageId), 'skip', body.note))
+  }),
+)
 
 export default queueRouter

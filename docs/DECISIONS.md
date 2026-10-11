@@ -69,3 +69,35 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Prettier:** single quotes, no semicolons, width 100, trailing commas.
 - **Em-dash guard:** `hasEmDash()` in `lib/text.ts` for builders to assert on rendered copy. No
   automated sweep of the client yet; the UI builder should grep `—` in `client/` and `content/`.
+
+## Outreach builder (2026-10-11)
+
+- **Deps bag** (`server/outreach/deps.ts`): db, clock, random, fetch, SMTP mailer factory, a thin
+  `Llm` (text + structured) over `@anthropic-ai/sdk`, and an IMAP client factory, all injected.
+  `defaultDeps()` reads env; `testDeps(db, fakes)` for tests. Routes read `outreachDeps()`, tests
+  swap it with `setOutreachDeps()`. No test touches the network.
+- **Public base URL for links:** `PUBLIC_URL` env, else the first `REPLIT_DOMAINS` entry, else
+  `http://localhost:PORT`. Settings has no such key, so this stays an env value.
+- **Tracked links carry `?c=<channel>&s=<sequence-slug>`** so `/r/:token/:dest` can tag the click
+  without a lookup; it falls back to the lead's last outbound message. Unknown token still
+  redirects (without `ref`) so a prospect never hits a dead link.
+- **At-most-once:** `sendDue` writes the message row (`queued`) with `enrollment_id:step_index`
+  before any provider call. A later run that finds the row as `sent|dry_run|ready_for_human|skipped`
+  only advances the enrollment; a row left `queued|failed` is retried in place.
+- **Daily caps count `dry_run` rows too**, so a dry run paces exactly like live would.
+- **Human channels advance the enrollment when the `ready_for_human` row is created.** Queue
+  done/skip only change the message status (done also stamps `last_contacted_at`).
+- **Lead statuses never contacted by the autopilot:** replied, booked, joined, not_interested,
+  unsubscribed, bounced, disqualified, plus do_not_contact and any suppression hit. A human may
+  re-enrol replied / not_now leads by hand; unsubscribed, bounced, do_not_contact and suppressed
+  are refused for everyone.
+- **`first_name` falls back to "there"** when unknown, so "Hi {{first_name}}" never reads "Hi ,".
+  Unknown variable names render empty and log `template_missing_var` as a warn.
+- **Test send** emails step 1 (rendered for a labelled sample lead) to `owner_email` regardless of
+  `live_mode`, since it only reaches Theo. It still needs an email provider and the physical address.
+- **Replies:** IMAP search since last sync (stored as settings row `_replies_synced_at`) minus one
+  day of slack, last 200 uids. Thread match on `In-Reply-To`/`References` vs `provider_message_id`,
+  else From address of a contacted lead. Bounces skip the model and never notify the owner.
+- **Webhook outcomes** reuse `recordOutcome`, which `POST /api/leads/:id/outcome` also uses.
+  `enroll`, `stop` and `outcome` live in `routes/sequences.ts` as `leadOutreachRouter`, mounted at
+  `/api/leads` before `leadsRouter` (one line in `app.ts`).
