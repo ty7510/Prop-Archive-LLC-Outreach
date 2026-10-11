@@ -3,36 +3,37 @@ name: Email, Maya, new rental license
 channel: email
 persona: maya
 trigger: new_license
-description: Three emails for a side-income owner who just got a rental license. The first year of paperwork is the pain.
+description: Three emails for a side-income owner with a newly licensed rental. The first year of paperwork is the pain; never cite the license back to them.
 ---
 
 ## Step 1
 
 delay_days: 0
-subject: New rental license, new paperwork
+subject: A rental's first year of paperwork
 
 Hi {{first_name}},
 
 {{ai_opener}}
-{{trigger_line}}
-A new rental license means the paperwork starts now: the lead cert, the renewal date, the tenant's deposit record, and every repair text in between. Most owners with a day job keep all of that in their phone until something goes wrong.
+A rental's first year is mostly paperwork on top of a day job: the lead cert, the license renewal date, the lease, and every repair text from a tenant you just met.
 
-Prop Archive keeps it in one place from day one, so the first year of this rental does not turn into a search through old texts.
+Prop Archive gives each place one home for those papers and texts, so nothing lives only in your inbox.
 
-This is my second company, and I grew up around landlords. Free while we're in beta, plus two months free after the public launch. Nothing to sign.
+This is my second company, and I grew up around landlords. We're building it with owners who have a day job too.
+
+Free while we're in beta, plus two months free after the public launch. Nothing to sign.
 
 Worth a 15 minute look? {{demo_link}}
 
 ## Step 2
 
 delay_days: 3
-subject: The lead cert and the renewal date
+subject: If a tenant asks for your papers
 
 Hi {{first_name}},
 
-The two dates that bite new Philadelphia landlords: the lead cert that has to be in hand before the tenant moves in, and the rental license renewal a year out. Both are easy to lose in a busy work week.
+One question with Philadelphia's Nov 1 rental changes: if your tenant asked for the rental license and the Certificate of Rental Suitability this week, where would you look first?
 
-Prop Archive tracks the dates for each place and reminds you before they matter, next to the receipts and the repair texts.
+Prop Archive keeps the license, the lead cert and the repair history for each place in one search, so the answer takes a minute.
 
 Still free while we're in beta. Join here: {{beta_link}}
 
@@ -43,8 +44,8 @@ subject: I'll stop here
 
 Hi {{first_name}},
 
-Last note from me. The first year with a new rental is busy enough without a stranger in your inbox.
+Last note from me. The first year with a rental is busy enough without my emails.
 
-If the texts and the dates start piling up and you want them in one place, this is where to find me: {{site_link}}
+If the lead cert, the renewal date and the repair texts start to pile up, here's where to find me: {{site_link}}
 
-Good luck with the new place.
+Good luck with the place.

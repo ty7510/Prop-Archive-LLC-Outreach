@@ -3,28 +3,28 @@ name: Call script, Denise, new rental license
 channel: call
 persona: denise
 trigger: new_license
-description: One call script for a small management company that just added a rental license.
+description: One call script for a small management company that is adding licenses. Never cite the license back to them.
 ---
 
 ## Step 1
 
 delay_days: 0
-notes: Theo dials. Let them talk after each question.
+notes: Theo dials by hand. Only call someone who has talked with you or asked about Prop Archive; Pennsylvania treats any other sales call as telemarketing that needs registration. If that talk was more than 3 months ago, check the Do Not Call list first. 9 AM to 7 PM, never Sunday or a legal holiday. Take no payment on the phone. Let them talk after each question.
 
 10 second open
-"Hi {{first_name}}, this is {{sender_name}}. I work with small Philadelphia management companies. Every new rental license adds a renewal, a lead cert and an inspection to a list that usually lives in one person's spreadsheet. We put compliance for every building where the whole office sees it. Do you have two minutes?"
+"Hi {{first_name}}, this is {{sender_name}}, calling about how your office keeps its records. Every license added across a portfolio is one more renewal date and lead cert in a compliance spreadsheet only one person owns. We put every building's papers and dates where the whole staff can see them. Do you have two minutes?"
 
 Three questions (let them talk)
 
-1. Who tracks license renewals, lead certs and inspections across the {{property_count}} buildings today?
-2. What happened the last time a date got missed or almost missed?
-3. How do the tenants and contractors for the new unit reach your office?
+1. Who owns license renewals and lead certs across the buildings today?
+2. What happens when that person is out?
+3. If a tenant asked the office for a building's rental license tomorrow, who would find it, and how?
 
 The ask
 "Worth 15 minutes on a screen with you and your office manager? It's free while we're in beta, plus two months free after the public launch, and your data comes with you. Here is the link: {{demo_link}}"
 
-If they say "Our software already has a compliance module"
-"Does the whole office see it, and does it cover Philadelphia licenses and lead certs? If yes, you are set. If not, the 15 minutes is to compare."
+If they say "Our property software already does that"
+"Some do part of it. The 15 minutes is to compare, building by building, with what your staff actually uses."
 
-If they say "Not now, bringing the unit online"
-"Fair. When is the tenant in? I'll call the week after."
+If they say "We just renewed our current tool"
+"Fair. When is the renewal date? I'll call two months before, so you have a real comparison when the bill comes."

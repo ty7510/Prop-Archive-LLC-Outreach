@@ -152,7 +152,7 @@ export function tidy(text: string): string {
 
 /** CAN-SPAM footer appended to every email. */
 export function emailFooter(vars: TemplateVars): string {
-  return `\n\n${vars.sender_name ?? ''}, Prop Archive LLC\n${vars.physical_address ?? ''}\nNo more emails: ${vars.unsubscribe_link ?? ''}`
+  return `\n\n${vars.sender_name ?? ''}, Prop Archive LLC\n${vars.physical_address ?? ''}\nThis email is an offer from Prop Archive.\nNo more emails: ${vars.unsubscribe_link ?? ''}`
 }
 
 /** Throw a 400 when any step text holds an em-dash. Called before a sequence is saved. */
@@ -179,7 +179,9 @@ export function assertNoEmDash(
 
 const AI_OPENER_SYSTEM =
   'You write one short, plain, friendly opening sentence for a cold email to a Philadelphia landlord. ' +
-  'Use only the facts given. Never invent names, numbers, places or events. No greeting, no sign off, ' +
+  'Use only the facts given. Never invent names, numbers, places or events. The facts are for choosing ' +
+  'a situation an owner like this runs into; never state them back as something you know about the ' +
+  'reader (no counts, addresses, licenses, purchases). No greeting, no sign off, ' +
   'no exclamation marks, no em-dash character. Return the sentence only.'
 
 /** One grounded sentence, or '' when there is no model or it fails. */

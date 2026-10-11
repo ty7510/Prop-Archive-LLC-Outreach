@@ -40,6 +40,14 @@ Theo sounds like one person typing to another, fast, at a desk. Every message:
 8. **Plain words a Philadelphia rowhome landlord uses.** Repair texts, rental license, lead cert,
    turnover, tax time, contractors, the spreadsheet, the office, per unit.
 9. **The last email is a break-up.** Short, honest, no ask, just `{{site_link}}`.
+10. **Records are the sale.** Lead with finding the text, the receipt, the license. Never lead with
+    rent collection, autopay or payments (docs/RESEARCH.md, "What to stop doing").
+11. **Never recite their own records back.** No property counts, addresses, licenses or purchases
+    quoted at them; L&I already emails owners about their own licenses. The data picks who gets
+    which sequence; the copy speaks to the situation.
+12. **Nov 1 once, as a date, as a question about their records.** "One question with
+    Philadelphia's Nov 1 rental changes: could you find ...?" Never "the law requires": Theo is not
+    a lawyer, and the ordinance is in litigation.
 
 Banned: "circle back", "touch base", "hope this finds you well", "great question", "I wanted to
 reach out", "quick question", "I came across your", "checking in", "synergies", "leverage".
@@ -67,9 +75,10 @@ Only these render (spec section 10). Anything else renders empty and logs a warn
 
 - `{{ai_opener}}` goes on its own line at the top of email step 1 only. With an Anthropic key it
   becomes one plain sentence grounded in the lead's facts; without a key it renders empty.
-- `{{trigger_line}}` is one sentence built from the trigger. Use it only in trigger variants.
+- `{{property_count}}`, `{{unit_count}}`, `{{neighborhood}}` and `{{trigger_line}}` still render, but
+  the shipped copy never uses them (rule 11). A test fails if one shows up in a sequence file.
 - Never write `{{unsubscribe_link}}` in a body. The email sender appends the CAN-SPAM footer
-  (sender, physical address, unsubscribe link) to every email.
+  (sender, physical address, a line saying the email is an offer, unsubscribe link) to every email.
 - Email bodies have no sign-off because the footer signs them.
 
 ## File format

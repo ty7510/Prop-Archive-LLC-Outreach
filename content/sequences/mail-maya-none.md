@@ -12,7 +12,7 @@ delay_days: 0
 
 Hi {{first_name}},
 
-Repair texts at work, receipts in a shoebox, tax time with no records. Prop Archive keeps all of it for your rentals in one place, free while we're in beta.
+Repair texts at work, receipts all over your phone at tax time, a lead cert date you hope you wrote down. Prop Archive keeps every rental's records in one search. Free while we're in beta.
 
 Worth a 15 minute look? {{demo_link}}
 

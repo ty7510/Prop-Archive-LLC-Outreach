@@ -175,6 +175,36 @@ describe('content/sequences as a set', () => {
       expect(/\b(contract|NDA|sign the|agreement)\b/i.test(step.body), file).toBe(false)
     }
   })
+
+  it("never recites the lead's own records back to them", () => {
+    // L&I already emails owners about their own licenses; quoting their data reads as surveillance.
+    for (const { file, step } of steps) {
+      const vars = findVariables(`${step.subject ?? ''}\n${step.body}`)
+      for (const v of ['property_count', 'unit_count', 'neighborhood', 'trigger_line']) {
+        expect(vars, `${file} step ${step.step_index + 1} uses {{${v}}}`).not.toContain(v)
+      }
+    }
+  })
+
+  it('mentions Nov 1 at most once per message and never says the law requires', () => {
+    for (const { file, step } of steps) {
+      const text = `${step.subject ?? ''}\n${step.body}`
+      expect(
+        count(/\bNov(ember)? 1\b/g, text),
+        `${file} step ${step.step_index + 1}`,
+      ).toBeLessThanOrEqual(1)
+      expect(/law requires|required by law|you must/i.test(text), file).toBe(false)
+    }
+  })
+
+  it('sells the records, never rent collection or payments', () => {
+    for (const { file, step } of steps) {
+      expect(
+        /\b(rent collection|collect rent|autopay|payouts?|stripe)\b/i.test(step.body),
+        file,
+      ).toBe(false)
+    }
+  })
 })
 
 describe('email sequences', () => {

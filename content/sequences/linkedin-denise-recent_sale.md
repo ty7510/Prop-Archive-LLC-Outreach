@@ -3,7 +3,7 @@ name: LinkedIn, Denise, recent purchase
 channel: linkedin
 persona: denise
 trigger: recent_sale
-description: Connection note, then one message, for a small management company that just took on a building.
+description: Connection note, then one message, for a small management company taking on a building.
 ---
 
 ## Step 1
@@ -11,7 +11,7 @@ description: Connection note, then one message, for a small management company t
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, congrats on the new building. I build software for small Philadelphia management companies, and onboarding a building is where the old owner's records and your office's week collide. Would like to connect.
+Hi {{first_name}}, taking on a building means keying in the old owner's records while the work orders keep coming. I build software that gives every building one record the whole staff shares. Would like to connect.
 
 ## Step 2
 
@@ -20,8 +20,8 @@ notes: Message after they accept.
 
 Thanks for connecting, {{first_name}}.
 
-A new building means new leases, a rental license, lead certs and the old owner's records that someone in your office has to key in, while the work orders keep coming.
+Onboarding a building usually means the old owner's papers in a box, work orders in one tool, contractor invoices in email and compliance in a spreadsheet.
 
-Prop Archive gives every building one record your staff, tenants and contractors share, and we help move the data in. This is my second company, and I grew up around property managers.
+Prop Archive starts each building's record on day one, in one place your office can search. This is my second company, and I grew up around property managers.
 
-Free while we're in beta. Worth a 15 minute look? {{demo_link}}
+Free while we're in beta, plus two months free after the public launch. Worth a 15 minute look? {{demo_link}}

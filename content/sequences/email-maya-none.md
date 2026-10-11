@@ -3,7 +3,7 @@ name: Email, Maya, no trigger
 channel: email
 persona: maya
 trigger: none
-description: Three emails for a side-income owner with 3 to 6 rentals and a day job. Pain first, one ask, break-up last.
+description: Three emails for a side-income owner with 3 to 6 rentals and a day job. Pain first, the Nov 1 records question, break-up last.
 ---
 
 ## Step 1
@@ -14,9 +14,9 @@ subject: Repair texts during your work day?
 Hi {{first_name}},
 
 {{ai_opener}}
-The repair text comes in at 10am, you're at work, and now you're a landlord for the rest of the afternoon.
+The repair text lands at 10am, you're at work, and the photos, the receipt and the plumber's number are somewhere in your phone.
 
-Prop Archive puts the texts, the receipts and the paperwork for your {{property_count}} places in one spot, so you deal with them when you have a minute instead of all day.
+Prop Archive gives every rental one place for its texts, receipts and papers, so you find things in seconds instead of scrolling.
 
 This is my second company, and I grew up around landlords. We're building it with owners who have a day job too, not for the big portfolios.
 
@@ -27,13 +27,13 @@ Worth a 15 minute look? {{demo_link}}
 ## Step 2
 
 delay_days: 3
-subject: Tax time with no records
+subject: Could you find your rental papers?
 
 Hi {{first_name}},
 
-Tax time is when the year of Zelle payments, receipts in a shoebox and texts about the water heater all come due at once.
+One question with Philadelphia's Nov 1 rental changes: if a tenant asked for your rental license and your Certificate of Rental Suitability tomorrow, how long would it take you to find both, plus the lead cert?
 
-Prop Archive keeps the rent, the receipts and the repair history for each place as they happen, so the numbers are already there in April.
+Prop Archive keeps those papers and the repair history for each place in one search, so the answer is a minute, even from work.
 
 Still free while we're in beta. Join here: {{beta_link}}
 
@@ -46,6 +46,6 @@ Hi {{first_name}},
 
 Sounds like the timing is off, so this is my last note.
 
-If a repair text lands in the middle of a meeting one of these weeks and you want one place for the texts, the records and the rental license dates, you know where I am: {{site_link}}
+If a repair text lands in the middle of a meeting one of these weeks and you want one place for the texts and the papers, here's where to find me: {{site_link}}
 
 Good luck with the places.

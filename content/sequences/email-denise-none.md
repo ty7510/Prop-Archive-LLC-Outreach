@@ -3,7 +3,7 @@ name: Email, Denise, no trigger
 channel: email
 persona: denise
 trigger: none
-description: Three emails for the owner of a small management company with 15 to 20 buildings. Staff, tenants and contractors in different places, compliance in a spreadsheet, paying per unit for half a tool.
+description: Three emails for the owner of a small management company with 15 to 20 buildings. Staff, tenants and contractors in different places, compliance in a spreadsheet, a per-unit bill; then the Nov 1 records question.
 ---
 
 ## Step 1
@@ -14,28 +14,28 @@ subject: Staff, tenants, contractors in 5 places
 Hi {{first_name}},
 
 {{ai_opener}}
-Your staff track work orders in one tool, tenants text the office, contractors email invoices, and compliance for {{property_count}} buildings sits in a spreadsheet someone has to remember to open.
+Work orders in one tool, tenants texting the office, contractors emailing invoices, and compliance in a spreadsheet one person owns, all on a per-unit bill for software the staff half uses.
 
-Prop Archive puts owners, staff, tenants and contractors in one connected platform, with the licenses, lead certs and inspections for every building tracked in the same place as the rent and repairs.
+Prop Archive puts owners, staff, tenants and contractors in one connected platform, so the office works from one record per building.
 
-This is my second company, and I grew up around property managers. We're building it with small management companies so they can run like the big portfolios without paying like them.
+This is my second company, and I grew up around property managers. We're building it so small management companies can compete with the big ones.
 
-Free while we're in beta, plus two months free after the public launch.
+Free while we're in beta, plus two months free after the public launch. Nothing to sign.
 
-Worth a 15 minute look? {{demo_link}}
+Worth a 15 minute look with your office manager? {{demo_link}}
 
 ## Step 2
 
 delay_days: 3
-subject: Paying per unit for half a tool
+subject: Who in the office could find it?
 
 Hi {{first_name}},
 
-Most small management companies pay per unit for software and use about half of it, then run the other half on texts and email because the tool does not fit how a Philadelphia rowhome portfolio actually works.
+One question with Philadelphia's Nov 1 rental changes: if a tenant at any of your buildings asked for the rental license and the Certificate of Rental Suitability, could anyone in the office find both in a minute, or only the person who owns the compliance spreadsheet?
 
-Prop Archive was built for {{property_count}} buildings, not 2,000 units, with portals for your office, your tenants and your contractors.
+Prop Archive keeps every building's papers and repair history where the whole staff can search them.
 
-Still free while we're in beta, and your data comes with you. Join here: {{beta_link}}
+Still free while we're in beta. Join here: {{beta_link}}
 
 ## Step 3
 
@@ -46,6 +46,6 @@ Hi {{first_name}},
 
 Sounds like the timing is off, so this is my last note.
 
-If your current tool raises its price at renewal, or an office hire leaves with the system in their head, here is where to find me: {{site_link}}
+If the per-unit bill or the compliance spreadsheet ever becomes the thing to fix, here's where to find me: {{site_link}}
 
-Good luck with the buildings.
+Good luck this season.

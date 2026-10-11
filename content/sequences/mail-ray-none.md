@@ -12,7 +12,7 @@ delay_days: 0
 
 Hi {{first_name}},
 
-Ten repair texts a week, contractors who said Tuesday, rent that said Friday, and no record of any of it. Prop Archive puts repairs, rent and license dates for every property in one place. Free while we're in beta.
+When a tenant's leak turns into a dispute months later, can you find the text and the receipt? Prop Archive gives every property one searchable record. Free while we're in beta.
 
 Worth a 15 minute look? {{demo_link}}
 

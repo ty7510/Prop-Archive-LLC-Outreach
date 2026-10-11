@@ -9,10 +9,10 @@ description: One call script for the owner of a small management company. The of
 ## Step 1
 
 delay_days: 0
-notes: Theo dials. Let them talk after each question.
+notes: Theo dials by hand. Only call someone who has talked with you or asked about Prop Archive; Pennsylvania treats any other sales call as telemarketing that needs registration. If that talk was more than 3 months ago, check the Do Not Call list first. 9 AM to 7 PM, never Sunday or a legal holiday. Take no payment on the phone. Let them talk after each question.
 
 10 second open
-"Hi {{first_name}}, this is {{sender_name}}. I work with small Philadelphia management companies. Staff, tenants and contractors tracked in different places, compliance across {{property_count}} buildings in a spreadsheet, and a per-unit bill for a tool the team half uses. We put all of that in one platform. Do you have two minutes?"
+"Hi {{first_name}}, this is {{sender_name}}, calling about how your office keeps its records. Staff, tenants and contractors in different tools, compliance in a spreadsheet one person owns, and a per-unit bill for software the team half uses. We put all of it in one platform the whole office shares. Do you have two minutes?"
 
 Three questions (let them talk)
 
@@ -24,7 +24,7 @@ The ask
 "Worth 15 minutes on a screen with you and your office manager? It's free while we're in beta, plus two months free after the public launch, and your data comes with you. Here is the link: {{demo_link}}"
 
 If they say "Moving our data is too much work"
-"That is the real cost, and we do the move with you. The 15 minutes is to see what comes over and what does not before you decide anything."
+"That is the real cost. The 15 minutes is to see what comes over and how, before you decide anything."
 
 If they say "We just renewed our current tool"
 "Fair. When is the renewal date? I'll call two months before, so you have a real comparison when the bill comes."

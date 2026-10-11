@@ -3,7 +3,7 @@ name: Email, Ray, no trigger
 channel: email
 persona: ray
 trigger: none
-description: Three emails for a full-time owner with 7 to 14 properties. Repair texts with no record, turnover, chasing contractors and rent.
+description: Three emails for a full-time owner with 7 to 14 properties. The repair dispute with no record, the Nov 1 records question, break-up last.
 ---
 
 ## Step 1
@@ -14,11 +14,11 @@ subject: Ten repair texts a week, no record
 Hi {{first_name}},
 
 {{ai_opener}}
-Ten repair texts a week across {{property_count}} properties, and no record of who said what, which contractor showed up, or what it cost. Then a tenant disputes it in August.
+A tenant's leak text turns into a dispute six months later, and now you need that text and the receipt for the fix.
 
-Prop Archive puts the texts, the contractors and the rent in one place, so turnover season and tax time stop being a dig through your phone.
+Prop Archive gives every property one searchable record, texts, receipts, contractors and license dates, so that takes seconds, not a night in your phone and a spreadsheet.
 
-This is my second company, and I grew up around landlords and property managers. We're building it with full-time owners, not for the big portfolios.
+This is my second company, and I grew up around landlords and property managers. We're building it so owners your size can keep up with the big portfolios.
 
 Free while we're in beta, plus two months free after the public launch. Nothing to sign.
 
@@ -27,13 +27,13 @@ Worth a 15 minute look? {{demo_link}}
 ## Step 2
 
 delay_days: 3
-subject: Chasing contractors and rent, same week
+subject: Your license and suitability cert
 
 Hi {{first_name}},
 
-The same week you chase a contractor who said Tuesday, you chase a tenant who said Friday. Both conversations live in your texts, next to everything else.
+One question with Philadelphia's Nov 1 rental changes: if a tenant at any of your properties asked for the rental license and the Certificate of Rental Suitability, could you find both in a minute, or is it a spreadsheet and a filing cabinet?
 
-Prop Archive keeps repairs, rent and the paperwork for each property where you and your tenants can both see them, so the chasing turns into checking.
+Prop Archive keeps those papers with each property's repair and turnover history, all in one search.
 
 Still free while we're in beta. Join here: {{beta_link}}
 
@@ -44,8 +44,8 @@ subject: I'll stop here
 
 Hi {{first_name}},
 
-Sounds like the timing is off. This is my last note.
+Sounds like the timing is off, so this is my last note.
 
-If a bad turnover season or a tool that raised its price pushes you to look for one place for the texts, the licenses and the rent, here is where I am: {{site_link}}
+If turnover season or a repair dispute ever has you digging through your phone for a text, here's where to find me: {{site_link}}
 
 Good luck with the properties.
