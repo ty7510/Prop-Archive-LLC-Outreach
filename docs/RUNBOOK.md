@@ -77,10 +77,18 @@ Postcards start with `Hi {{first_name}},`; a lead without a first name reads "Hi
 
 ## Production (Replit)
 
-- Build command: `npm run build`. Run command: `npm start`. Port: 5300 (or set `PORT`).
-- Secrets go in Replit Secrets with the same names as `.env.example`. Set `PUBLIC_URL` when not on
-  Replit, or unsubscribe and tracked links point at localhost.
-- The sqlite file lives in `data/`; keep that folder persistent.
+- Run button and Preview: `npm ci && npm run build && npm start` with `PORT=5000` (port 5000 maps
+  to 80 for the Preview). In the workspace the sqlite file in `data/` persists.
+- Publishing: Reserved VM, not Autoscale. The autopilot is a timer inside the server, so the app
+  must stay up and run as exactly one copy. Build `npm ci && npm run build`, run `npm start`.
+- A published app loses the files it writes on every publish and restart, so it cannot use the
+  sqlite file. Before the first Publish, create a hosted libsql database (Turso), then add
+  `DATABASE_URL` (`libsql://...`) and `DATABASE_AUTH_TOKEN` to the publishing secrets. The server
+  refuses to start in a published app with a `file:` database (override, at your own risk:
+  `ALLOW_FILE_DB_IN_DEPLOYMENT=1`).
+- Secrets go in Replit Secrets with the same names as `.env.example`. Set `APP_PASSWORD` (nobody
+  can log in without it) and `SESSION_SECRET` (or every restart logs you out). Set `PUBLIC_URL`
+  when not on Replit, or unsubscribe and tracked links point at localhost.
 - Health check: `GET /api/health` returns `{ ok, version, dbOk, liveMode, autopilotOn }`.
 
 ## When something is off

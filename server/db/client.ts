@@ -21,11 +21,32 @@ export function ensureDbFolder(url: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
-/** Create a drizzle database for a libsql URL (`file:./data/outreach.db` or `file::memory:`). */
-export function createDb(url: string): Db {
+/**
+ * Create a drizzle database for a libsql URL (`file:./data/outreach.db`, `file::memory:`, or a hosted
+ * `libsql://` database, which also needs its auth token).
+ */
+export function createDb(url: string, authToken?: string): Db {
   ensureDbFolder(url)
-  const client = createClient({ url })
+  const client = createClient(authToken ? { url, authToken } : { url })
   return drizzle(client, { schema })
+}
+
+/**
+ * Why this database must not be used here, or null when it is fine. A published Replit app loses the
+ * files it writes on every publish and restart, so a `file:` database there would quietly wipe the
+ * leads and settings.
+ */
+export function ephemeralDbProblem(
+  url: string,
+  e: Record<string, string | undefined> = process.env,
+): string | null {
+  if (e.REPLIT_DEPLOYMENT !== '1' || !url.startsWith('file:')) return null
+  if (e.ALLOW_FILE_DB_IN_DEPLOYMENT === '1') return null
+  return (
+    'Published Replit apps lose their files on every publish and restart, so this file database ' +
+    'would be wiped. Set DATABASE_URL to a hosted libsql database (for example Turso) and ' +
+    'DATABASE_AUTH_TOKEN in the publishing secrets.'
+  )
 }
 
 function findMigrationsFolder(): string {
@@ -64,7 +85,10 @@ let defaultDb: Db | null = null
  */
 export function getDb(): Db {
   if (!defaultDb) {
-    defaultDb = createDb(process.env.DATABASE_URL || DEFAULT_DATABASE_URL)
+    defaultDb = createDb(
+      process.env.DATABASE_URL || DEFAULT_DATABASE_URL,
+      process.env.DATABASE_AUTH_TOKEN || undefined,
+    )
   }
   return defaultDb
 }

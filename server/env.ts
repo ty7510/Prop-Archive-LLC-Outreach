@@ -26,6 +26,8 @@ export const EnvSchema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().default('file:./data/outreach.db'),
   ),
+  /** Only for a hosted libsql DATABASE_URL (Turso). */
+  DATABASE_AUTH_TOKEN: optional,
 
   ANTHROPIC_API_KEY: optional,
 

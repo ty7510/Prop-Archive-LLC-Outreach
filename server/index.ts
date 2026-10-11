@@ -4,7 +4,7 @@ import 'dotenv/config'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app.ts'
 import { modules } from './contracts.ts'
-import { applyMigrations, getDb } from './db/client.ts'
+import { applyMigrations, ephemeralDbProblem, getDb } from './db/client.ts'
 import { settings as settingsTable } from './db/schema.ts'
 import { env, isProduction, presentProviders } from './env.ts'
 import { logActivity } from './lib/activity.ts'
@@ -29,6 +29,11 @@ async function seedOnFirstBoot(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const dbProblem = ephemeralDbProblem(env.DATABASE_URL)
+  if (dbProblem) {
+    console.error(`[boot] ${dbProblem}`)
+    process.exit(1)
+  }
   if (!env.APP_PASSWORD) {
     console.warn('[boot] APP_PASSWORD is not set. Nobody can log in until you add it to .env.')
   }
