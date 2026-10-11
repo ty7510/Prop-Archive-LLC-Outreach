@@ -11,7 +11,7 @@ description: Connection note, then one message three days later. Theo sends both
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, I build software for Philadelphia landlords who have a day job and a few rentals. Repair texts at work and tax time with no records are the two things I hear most. Would like to connect and compare notes.
+Hi {{first_name}}, repair texts at work and tax time with no records are the two things I hear from Philadelphia owners with a day job and a few rentals. I build software for exactly that. Would like to connect and compare notes.
 
 ## Step 2
 

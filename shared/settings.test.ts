@@ -132,6 +132,17 @@ describe('mergeSettings', () => {
         .human_queue_webhook_url,
     ).toBe('https://example.com/hook')
   })
+
+  it('links and the webhook must be https with a host', () => {
+    expect(() => mergeSettings({ human_queue_webhook_url: 'http://example.com/hook' })).toThrow()
+    expect(() => mergeSettings({ site_url: 'http://proparchive.app' })).toThrow()
+    expect(() => mergeSettings({ demo_url: 'javascript:alert(1)' })).toThrow()
+    expect(() => mergeSettings({ beta_url: 'file:///etc/passwd' })).toThrow()
+    expect(() => mergeSettings({ site_url: 'https://' })).toThrow()
+    expect(mergeSettings({ site_url: ' https://proparchive.app/ ' }).site_url).toBe(
+      'https://proparchive.app/',
+    )
+  })
 })
 
 describe('deepMerge', () => {

@@ -77,6 +77,7 @@ export default function Confirm({
   confirmLabel,
   danger = false,
   busy = false,
+  disabled = false,
   children,
 }: {
   open: boolean
@@ -86,6 +87,8 @@ export default function Confirm({
   confirmLabel: string
   danger?: boolean
   busy?: boolean
+  /** Nothing would happen on confirm (for example no lead can be started). */
+  disabled?: boolean
   children: React.ReactNode
 }) {
   return (
@@ -99,7 +102,7 @@ export default function Confirm({
           type="button"
           onClick={onConfirm}
           className={danger ? 'btn-danger' : 'btn-primary'}
-          disabled={busy}
+          disabled={busy || disabled}
         >
           {busy ? 'Working' : confirmLabel}
         </button>

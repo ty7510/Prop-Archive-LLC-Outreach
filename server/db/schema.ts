@@ -162,6 +162,8 @@ export const enrollments = sqliteTable(
     next_send_at: text('next_send_at'),
     started_at: text('started_at').notNull(),
     ended_at: text('ended_at'),
+    /** Bumped every time the lead is put back into this sequence, so idempotency keys never collide. */
+    run: integer('run').notNull().default(0),
   },
   (t) => [
     uniqueIndex('enrollments_lead_sequence_uq').on(t.lead_id, t.sequence_id),
@@ -194,6 +196,8 @@ export const messages = sqliteTable(
     scheduled_at: text('scheduled_at'),
     sent_at: text('sent_at'),
     error: text('error'),
+    /** How many times a provider was asked to carry this message. Bounded retries live in send.ts. */
+    attempts: integer('attempts').notNull().default(0),
     classification: text('classification').$type<ReplyClassification>(),
     raw: text('raw', { mode: 'json' }).$type<unknown>(),
     created_at: text('created_at').notNull(),

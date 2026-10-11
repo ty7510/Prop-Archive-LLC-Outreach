@@ -5,6 +5,8 @@ import { getDb } from '../db/client.ts'
 import { PROVIDER_ENV_KEYS, presentProviders } from '../env.ts'
 import { asyncHandler } from '../lib/http.ts'
 import { getSettings, updateSettings } from '../lib/settings.ts'
+import { restartDryRunEnrollments } from '../outreach/enroll.ts'
+import { outreachDeps } from '../outreach/index.ts'
 
 export const settingsRouter = Router()
 
@@ -18,7 +20,11 @@ settingsRouter.get(
 settingsRouter.put(
   '/',
   asyncHandler(async (req, res) => {
-    res.json(await updateSettings(req.body, getDb()))
+    const before = await getSettings(getDb())
+    const next = await updateSettings(req.body, getDb())
+    // Dry run -> Live: sequences that only ever dry-ran start over, so step 1 really goes out.
+    if (!before.live_mode && next.live_mode) await restartDryRunEnrollments(outreachDeps())
+    res.json(next)
   }),
 )
 

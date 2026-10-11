@@ -132,6 +132,7 @@ export async function enrollLead(
       if (opts.quiet) return false
       throw conflict('This lead is already in that sequence', 'ALREADY_ENROLLED')
     }
+    // A new run: the step keys of the old run must not be found again (see send.ts idempotencyKey).
     await db
       .update(enrollments)
       .set({
@@ -140,6 +141,7 @@ export async function enrollLead(
         next_send_at: startAt,
         started_at: now.toISOString(),
         ended_at: null,
+        run: row.run + 1,
       })
       .where(eq(enrollments.id, row.id))
   } else {
@@ -187,6 +189,55 @@ function blockerMessage(blocker: string): string {
     default:
       return `This lead is marked ${blocker.replace(/_/g, ' ')}`
   }
+}
+
+/**
+ * When Live mode is switched on, every enrollment that only ever produced dry_run rows starts over
+ * from step 0 as a new run, so the first live round really sends step 0 instead of silently
+ * walking past the dry-run rows. Enrollments with a real send or a queued human item are left alone.
+ * Returns how many were restarted.
+ */
+export async function restartDryRunEnrollments(deps: OutreachDeps): Promise<number> {
+  const { db } = deps
+  const now = deps.now().toISOString()
+  const candidates = await db
+    .select()
+    .from(enrollments)
+    .where(inArray(enrollments.status, ['active', 'done']))
+  let restarted = 0
+  for (const e of candidates) {
+    const rows = await db
+      .select({ status: messages.status })
+      .from(messages)
+      .where(and(eq(messages.enrollment_id, e.id), eq(messages.direction, 'out')))
+    if (rows.length === 0 || !rows.every((m) => m.status === 'dry_run')) continue
+    await db
+      .update(enrollments)
+      .set({
+        status: 'active',
+        current_step: 0,
+        next_send_at: now,
+        started_at: now,
+        ended_at: null,
+        run: e.run + 1,
+      })
+      .where(eq(enrollments.id, e.id))
+    await db
+      .update(leads)
+      .set({ next_action_at: now, updated_at: now })
+      .where(eq(leads.id, e.lead_id))
+    restarted++
+  }
+  if (restarted > 0) {
+    await logActivity(
+      'info',
+      'dry_run_enrollments_restarted',
+      { restarted, reason: 'Live mode turned on: dry-run sequences start over from step 1' },
+      null,
+      db,
+    )
+  }
+  return restarted
 }
 
 /**

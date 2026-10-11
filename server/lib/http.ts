@@ -100,9 +100,12 @@ export const tooManyTries = (message = 'Too many tries. Wait 15 minutes and try 
  */
 export class LoginLimiter {
   private readonly failures = new Map<string, number[]>()
+  /** All keys together. A client that fakes a new address per try still hits this ceiling. */
+  private readonly globalKey = '\u0000all'
   constructor(
     private readonly max = 10,
     private readonly windowMs = 15 * 60 * 1000,
+    private readonly globalMax = max * 10,
   ) {}
 
   private recent(key: string, now: number): number[] {
@@ -112,15 +115,20 @@ export class LoginLimiter {
     return list
   }
 
-  /** True while the key is still allowed to try. */
+  /** True while the key, and everyone together, are still allowed to try. */
   allowed(key: string, now = Date.now()): boolean {
-    return this.recent(key, now).length < this.max
+    return (
+      this.recent(key, now).length < this.max &&
+      this.recent(this.globalKey, now).length < this.globalMax
+    )
   }
 
   recordFailure(key: string, now = Date.now()): void {
-    const list = this.recent(key, now)
-    list.push(now)
-    this.failures.set(key, list)
+    for (const k of [key, this.globalKey]) {
+      const list = this.recent(k, now)
+      list.push(now)
+      this.failures.set(k, list)
+    }
   }
 
   reset(key: string): void {
@@ -134,7 +142,7 @@ export class LoginLimiter {
 
 export const loginLimiter = new LoginLimiter()
 
-/** The key the login limiter counts by: the client IP (trust proxy is on, so Replit's header counts). */
+/** The key the login limiter counts by: the client IP (behind Replit's proxy, the forwarded one). */
 export function clientKey(req: Request): string {
   return req.ip || req.socket?.remoteAddress || 'unknown'
 }

@@ -9,6 +9,7 @@ import { enrollLead } from '../outreach/enroll.ts'
 import { setOutreachDeps } from '../outreach/index.ts'
 import { sendDue } from '../outreach/send.ts'
 import { insertLead, insertSequence, setSettings, setup } from '../outreach/testFixtures.ts'
+import { PUBLIC_HITS_PER_MINUTE, publicLimiter } from './public.ts'
 
 afterEach(() => setOutreachDeps(null))
 
@@ -279,30 +280,80 @@ describe('queue routes', () => {
 })
 
 describe('public routes', () => {
-  it('GET and POST /u/:token unsubscribe in plain words; unknown token is a 404 page', async () => {
+  it('GET /u/:token only shows a button (link scanners must not unsubscribe anyone); POST does it', async () => {
     const { app, db, deps } = await loggedIn()
+    await setSettings(db, { site_url: 'https://proparchive.app/"><s>' })
     const lead = await insertLead(db)
     const { sequence } = await insertSequence(db)
     await enrollLead(deps, lead.id, sequence.id)
 
     const get = await request(app).get(`/u/${lead.unsubscribe_token}`)
     expect(get.status).toBe(200)
-    expect(get.text).toContain('You will not get more email from us')
+    expect(get.text).toContain('Stop emails to me')
+    expect(get.text).toContain('<form method="post">')
+    expect(get.text).not.toContain('"><s>') // the site link is escaped
     expect(get.text).not.toContain('—')
-    expect(await db.select().from(suppression)).toHaveLength(1)
-    const [enr] = await db.select().from(enrollments)
-    expect(enr!.status).toBe('stopped_unsubscribed')
+    expect(await db.select().from(suppression)).toHaveLength(0)
+    let [enr] = await db.select().from(enrollments)
+    expect(enr!.status).toBe('active')
 
     const post = await request(app)
       .post(`/u/${lead.unsubscribe_token}`)
       .type('form')
       .send('List-Unsubscribe=One-Click')
     expect(post.status).toBe(200)
+    expect(post.text).toContain('You will not get more email from us')
     expect(await db.select().from(suppression)).toHaveLength(1)
+    ;[enr] = await db.select().from(enrollments)
+    expect(enr!.status).toBe('stopped_unsubscribed')
+
+    const again = await request(app).get(`/u/${lead.unsubscribe_token}`)
+    expect(again.text).toContain('You are unsubscribed')
+    expect(again.text).not.toContain('Stop emails to me')
 
     const bad = await request(app).get('/u/not-a-token')
     expect(bad.status).toBe(404)
     expect(bad.text).toContain('This link is not valid')
+  })
+
+  it('a replayed tracked link is one click, and the public routes have a per-client limit', async () => {
+    const { app, db } = await loggedIn()
+    const lead = await insertLead(db)
+    for (let i = 0; i < 3; i++) {
+      expect((await request(app).get(`/r/${lead.unsubscribe_token}/demo`)).status).toBe(302)
+    }
+    expect((await db.select().from(events)).filter((e) => e.kind === 'click')).toHaveLength(1)
+    expect((await request(app).get(`/r/${lead.unsubscribe_token}/beta`)).status).toBe(302)
+    expect((await db.select().from(events)).filter((e) => e.kind === 'click')).toHaveLength(2)
+
+    publicLimiter.resetAll()
+    for (let i = 0; i < PUBLIC_HITS_PER_MINUTE; i++) {
+      expect((await request(app).get('/r/unknown/site')).status).toBe(302)
+    }
+    const limited = await request(app).get(`/r/${lead.unsubscribe_token}/demo`)
+    expect(limited.status).toBe(429)
+    expect(limited.text).not.toContain('—')
+    publicLimiter.resetAll()
+    expect((await request(app).get(`/r/${lead.unsubscribe_token}/demo`)).status).toBe(302)
+  })
+
+  it('PUT live_mode on restarts sequences that only ever dry-ran', async () => {
+    const { agent, db, deps, outbox } = await loggedIn()
+    await setSettings(db, { physical_address: '1 Main St, Philadelphia, PA 19146' })
+    const lead = await insertLead(db)
+    const { sequence } = await insertSequence(db, {}, [
+      { delay_days: 0, subject: 'Only step', body: 'Hello {{first_name}}' },
+    ])
+    await enrollLead(deps, lead.id, sequence.id)
+    expect((await sendDue(deps)).dryRun).toBe(1)
+    expect((await db.select().from(enrollments))[0]!.status).toBe('done')
+
+    const res = await agent.put('/api/settings').send({ live_mode: true })
+    expect(res.status).toBe(200)
+    const [enr] = await db.select().from(enrollments)
+    expect(enr).toMatchObject({ status: 'active', current_step: 0, run: 1 })
+    expect((await sendDue(deps)).sent).toBe(1)
+    expect(outbox).toHaveLength(1)
   })
 
   it('GET /r/:token/:dest redirects with utm tags and records a click', async () => {

@@ -11,7 +11,7 @@ description: Connection note, then one message, for a full-time owner with 7 to 
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, I build software for full-time Philadelphia landlords with a dozen or so properties. Repair texts with no record, summer turnover and chasing contractors are what I hear most. Would like to connect and compare notes.
+Hi {{first_name}}, repair texts with no record, summer turnover and chasing contractors are what I hear from full-time Philadelphia landlords with a dozen or so properties. I build software for exactly that. Would like to connect and compare notes.
 
 ## Step 2
 

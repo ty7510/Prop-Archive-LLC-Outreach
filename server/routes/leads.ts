@@ -257,6 +257,8 @@ leadsRouter.patch(
     }
     if (patch.status !== undefined && patch.status !== lead.status) {
       await addEvent(id, 'status_change', { from: lead.status, to: patch.status, by: 'hand' })
+      // A final answer by hand ends every sequence and clears Theo's queue, like the outcome route.
+      if (patch.status !== 'new') await stopOutreach(id, patch.status)
     }
     if (patch.notes !== undefined && patch.notes !== (lead.notes ?? '')) {
       await addEvent(id, 'note', { length: patch.notes.length })

@@ -109,6 +109,8 @@ export default function Leads() {
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  // The rows behind the ticked ids, including ones from pages no longer on screen.
+  const selectedRows = useRef(new Map<string, Lead>())
   const [openId, setOpenId] = useState<string | null>(urlId)
   const dq = useDebounced(q.trim(), 300)
 
@@ -187,7 +189,10 @@ export default function Leads() {
       toast.error('Settings and sequences are still loading')
       return
     }
-    const chosen = items.filter((l) => selected.has(l.id))
+    for (const l of items) if (selected.has(l.id)) selectedRows.current.set(l.id, l)
+    const chosen = [...selected]
+      .map((id) => selectedRows.current.get(id))
+      .filter((l): l is Lead => Boolean(l))
     setPicks(chosen.map((l) => pickSequence(l, settings.data!, sequences.data!)))
   }
   async function confirmStart() {
@@ -218,6 +223,7 @@ export default function Leads() {
     }
   }
 
+  const startable = picks?.filter((p) => p.sequence).length ?? 0
   const anyNotBuilt = errored && isNotBuilt(errored.error)
   const allOnPageSelected = items.length > 0 && items.every((l) => selected.has(l.id))
 
@@ -225,11 +231,17 @@ export default function Leads() {
     setSelected((s) => {
       const next = new Set(s)
       if (allOnPageSelected) items.forEach((l) => next.delete(l.id))
-      else items.forEach((l) => next.add(l.id))
+      else
+        items.forEach((l) => {
+          next.add(l.id)
+          selectedRows.current.set(l.id, l)
+        })
       return next
     })
   }
   function toggleOne(id: string) {
+    const row = items.find((l) => l.id === id)
+    if (row) selectedRows.current.set(id, row)
     setSelected((s) => {
       const next = new Set(s)
       if (next.has(id)) next.delete(id)
@@ -524,7 +536,10 @@ export default function Leads() {
         onClose={() => setPicks(null)}
         onConfirm={() => void confirmStart()}
         title="Start sequence"
-        confirmLabel={`Start for ${plural(picks?.filter((p) => p.sequence).length ?? 0, 'lead')}`}
+        confirmLabel={
+          startable === 0 ? 'Nothing to start' : `Start for ${plural(startable, 'lead')}`
+        }
+        disabled={startable === 0}
         busy={enrolling}
       >
         <p>The sequence is picked from Settings by each lead's persona.</p>

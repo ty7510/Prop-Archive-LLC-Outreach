@@ -6,7 +6,9 @@ import { EnrichBodySchema, type ProvidersPresent } from '../../shared/types.ts'
 import { requireModule } from '../contracts.ts'
 import { PROVIDER_ENV_KEYS, presentProviders } from '../env.ts'
 import { usageReport } from '../enrich/usage.ts'
-import { asyncHandler, badRequest, parseOr400 } from '../lib/http.ts'
+import { getDb } from '../db/client.ts'
+import { asyncHandler, badRequest, conflict, parseOr400 } from '../lib/http.ts'
+import { withJobLock } from '../lib/locks.ts'
 import { getSettings } from '../lib/settings.ts'
 
 export const enrichRouter = Router()
@@ -23,10 +25,23 @@ enrichRouter.post(
       throw badRequest('Send ids (a list of lead ids) or all: true', 'VALIDATION')
     }
     const enrich = requireModule('enrich')
-    const ids = new Set(body.ids ?? [])
-    if (body.all) for (const id of await enrich.pickBatch(ENRICH_ALL_LIMIT)) ids.add(id)
-    const result = await enrich.enrichLeads([...ids])
-    res.json(result)
+    // Same lock as the autopilot's enrich job, so the two never work the same leads at once.
+    const run = await withJobLock(
+      'enrich',
+      async () => {
+        const ids = new Set(body.ids ?? [])
+        if (body.all) for (const id of await enrich.pickBatch(ENRICH_ALL_LIMIT)) ids.add(id)
+        return enrich.enrichLeads([...ids])
+      },
+      getDb(),
+    )
+    if (run.skipped) {
+      throw conflict(
+        'Already enriching (the autopilot is on it). Try again in a minute.',
+        'RUNNING',
+      )
+    }
+    res.json(run.result)
   }),
 )
 

@@ -194,3 +194,81 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
   (only the free `li_license` provider ran; the others logged `provider_not_configured`), enrolled 0
   (no email, mail off, no profile URLs or phones), and left the queue empty. New-license leads whose
   license covers 1 or 2 units score 55 and persona `maya`; whether that is wanted is Theo's call.
+
+## 2026-10-11 (review fixes)
+
+- **Re-enrolling is a new run.** `enrollments.run` (new column, migration `0001_run_and_attempts`)
+  is bumped every time a lead is put back into a sequence that was done or stopped. The idempotency
+  key stays `enrollment_id:step_index` for run 0 and becomes `enrollment_id:r<run>:step_index` after
+  that, so the rows of an earlier run are never mistaken for "already sent". Before this, a
+  re-enrolled lead walked through every step without a single message leaving, and a lead stopped
+  mid-sequence got false `sent` events and a false `contacted` status.
+- **Dry run to Live restarts dry-run sequences.** `PUT /api/settings` with `live_mode` going from
+  off to on calls `restartDryRunEnrollments`: every enrollment whose outbound rows are all `dry_run`
+  goes back to step 0 as a new run, so the first live round really sends step 1. Enrollments with a
+  real send or a queued human item are left alone. The Live confirm says so.
+- **At-most-once, for real.** A message row is set to `sending` (new status) with `attempts + 1`
+  right before the provider call. A row found in `sending` on a later tick means the process died
+  mid-send: it becomes `failed` with "Send outcome unknown" and is never resent by the machine
+  (Theo checks his Sent folder; stop and start the sequence sends a fresh run). A `failed` row is
+  retried at most `MAX_SEND_ATTEMPTS` (2) times and never after a timeout or socket error, because
+  the provider may have accepted the message. Emails carry our own `Message-ID`
+  (`<idempotency_key@host>`) so a duplicate is at least visible on the receiving side.
+- **No step without a destination.** An email step for a lead with no email, or a mail step for a
+  lead with no mailing address, ends that enrollment (`stopped_manual`) instead of queueing a card
+  that says "To: null" or failing every minute. Live Lob mail refuses without `physical_address`
+  exactly like live email does, logged once per round per channel.
+- **Human steps wait for Theo.** While an enrollment has a `ready_for_human` row, its next step is
+  not produced. Queueing no longer stamps `last_contacted_at` or `contacted`; marking the item done
+  does (as before). Skip still leaves the enrollment where it is; whether a skipped connection note
+  should end the LinkedIn sequence is Theo's call.
+- **Owners first in discover.** The OPA owner pass (the 3-20 property ICP, the only pass that
+  honours `min_props..max_props`) runs first and may use 80 percent of the day's budget
+  (`OPA_BUDGET_SHARE`); new rental licenses take what is left, then recent sales merge. Before,
+  633 one-license landlords used the whole budget for about two weeks and no ICP owner was ever
+  asked for. L&I leads are still created and still score as before (1-2 units, persona maya at
+  55); filtering them by `min_props` would turn the trigger source off entirely, so that stays a
+  settings question for Theo.
+- **Manual enrich takes the job lock.** `POST /api/leads/enrich` runs under `withJobLock('enrich')`
+  like discover does and answers 409 RUNNING when the tick holds it, so the two never enrich (and
+  pay for) the same leads at once.
+- **Break-up email is day 8, written as `delay_days: 5`.** The scheduler counts from the previous
+  send, so the third step of every email sequence now says 5 (3 + 5 = day 8), matching the spec's
+  "day 0, 3, 8".
+- **A failed discover is retried.** The once-a-day gate only counts `ok` and `running` job rows;
+  an `error` row no longer blocks discover for the rest of the day.
+- **Replies never undo a result.** `booked`, `joined`, `unsubscribed` and `not_interested` stay
+  when a later mail is classified interested / not now / other. Unsubscribe and bounce still win.
+- **Bounces are matched inside the report.** When a mail looks like a delivery failure (sender or
+  subject) and has no thread id, `matchLead` looks for our message id and for a contacted lead's
+  address anywhere in the raw mail (Final-Recipient, the embedded original, "could not be delivered
+  to ..."). Resend bounces still need Resend's own webhook (not built: needs a signing secret and a
+  decision from Theo); with Resend configured, IMAP alone will not see them.
+- **Dedupe key follows the address.** A lead keyed by email that learns a mailing address on merge
+  takes the `street|zip` key (unless another lead holds it), so the next OPA candidate for the same
+  owner merges instead of becoming a second lead.
+- **GET /u/:token is a page with one button.** Link scanners (SafeLinks, Mimecast, Gmail
+  prefetch) GET every link in a mail; the GET now only shows "Stop emails to me", and the POST
+  (that button, or RFC 8058 List-Unsubscribe-Post) does the unsubscribe. The site link on that page
+  is HTML-escaped. `/r` and `/u` share an in-memory limit of 120 hits per client per minute, and a
+  repeated click on the same link within 10 minutes is one click event.
+- **Webhook hardening.** `site_url`, `demo_url`, `beta_url` and `human_queue_webhook_url` must be
+  `https://` with a host. The human queue POST carries `x-outreach-signature: sha256=<HMAC of the
+body with webhook_secret>` instead of the secret itself, and refuses private or loopback hosts.
+  `trust proxy` is on only on Replit or with `TRUST_PROXY=1`, and the login limiter has a ceiling
+  over all addresses together (10x the per-address limit).
+- **Owner mail is exempt from Live.** Test sends and reply notices only ever reach
+  `owner_email`; Settings and LEGAL.md now say so instead of "nothing leaves". Owner mail has no
+  List-Unsubscribe headers (the old `/u/owner` link pointed nowhere).
+- **PATCH status by hand stops outreach.** `PATCH /api/leads/:id` with booked / joined /
+  not_interested / disqualified ends open enrollments and skips queued items, like the outcome route.
+- **UI.** Queue cards break long tracked links (`break-words`, `min-w-0`), the phone nav shrinks to
+  fit four links, the phone header has a Log out button, the Live confirm describes the saved
+  settings (which are what runs) and warns about unsaved edits, "Start sequence" counts ticks on
+  every page, and its confirm is disabled with "Nothing to start" when no lead can start.
+  Postcards and call scripts render `demo_link` / `beta_link` / `site_link` as the plain
+  `settings.*_url` (a person types or hears those); email and LinkedIn keep tracked links.
+- **Not changed, on purpose.** From-address matching of replies still acts without a DKIM/SPF check
+  (spec section 10 says "by From address"; Theo is emailed about every reply, and a forged
+  unsubscribe only drops one prospect). Making it stricter would silence real replies from mail
+  servers that do not add Authentication-Results.

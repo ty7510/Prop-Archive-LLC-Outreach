@@ -1,9 +1,10 @@
 // One tick: the six jobs in spec order, each under a job_runs lock, each calling the registered
 // module through requireModule. A missing module is a skipped job with one warn line, never a crash.
 // An error in one job is recorded and the tick moves on to the next job.
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { ModuleNotRegisteredError, requireModule, type modules } from '../contracts.ts'
 import { getDb, type Db } from '../db/client.ts'
+import type { JobStatus } from '../../shared/types.ts'
 import { jobRuns } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { expireStaleLocks, withJobLock } from '../lib/locks.ts'
@@ -60,21 +61,37 @@ export interface TickOptions {
 
 const warnedByDefault = new Set<string>()
 
-/** Newest job_runs.started_at for a job, any status. null when it never ran. */
-export async function lastStartedAt(job: JobName, db: Db): Promise<string | null> {
+/** Newest job_runs.started_at for a job (any status unless `statuses` narrows it). null when it never ran. */
+export async function lastStartedAt(
+  job: JobName,
+  db: Db,
+  statuses?: readonly JobStatus[],
+): Promise<string | null> {
   const rows = await db
     .select({ started_at: jobRuns.started_at })
     .from(jobRuns)
-    .where(eq(jobRuns.job, job))
+    .where(
+      statuses
+        ? and(eq(jobRuns.job, job), inArray(jobRuns.status, [...statuses]))
+        : eq(jobRuns.job, job),
+    )
     .orderBy(desc(jobRuns.started_at))
     .limit(1)
   return rows[0]?.started_at ?? null
 }
 
-async function ranSince(job: JobName, cutoffIso: string, db: Db): Promise<boolean> {
-  const last = await lastStartedAt(job, db)
+async function ranSince(
+  job: JobName,
+  cutoffIso: string,
+  db: Db,
+  statuses?: readonly JobStatus[],
+): Promise<boolean> {
+  const last = await lastStartedAt(job, db, statuses)
   return last !== null && last >= cutoffIso
 }
+
+/** A run that finished fine, or is still going, counts as "done today". An error does not. */
+const COUNTS_AS_RAN: readonly JobStatus[] = ['ok', 'running']
 
 type ModuleName = keyof typeof modules
 
@@ -143,7 +160,7 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
   // 1. discover: once per local day.
   {
     const today = dayRangeInTz(startedAt, tz)
-    if (await ranSince('discover', today.start, db)) {
+    if (await ranSince('discover', today.start, db, COUNTS_AS_RAN)) {
       jobs.push(notDue('discover'))
     } else {
       const sources = await resolveModule('sources', 'discover', db, warned)

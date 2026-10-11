@@ -205,6 +205,19 @@ describe('runTick', () => {
     expect(errors[0]?.detail).toEqual({ error: 'carto is down' })
   })
 
+  it('a failed discover is tried again on the next tick of the same day', async () => {
+    registerFakes(calls, { discoverError: 'carto is down' })
+    const c = clock(INSIDE_WINDOW)
+    const first = await runTick({ db, now: c.now, warned: new Set() })
+    expect(statuses(first).discover).toBe('error')
+    c.advanceMinutes(1)
+    const second = await runTick({ db, now: c.now, warned: new Set() })
+    expect(statuses(second).discover).toBe('error') // tried again, not 'not_due'
+    expect(calls.filter((x) => x === 'discover')).toHaveLength(2)
+    const rows = await db.select().from(jobRuns).where(eq(jobRuns.job, 'discover'))
+    expect(rows).toHaveLength(2)
+  })
+
   it('does not send outside the send window', async () => {
     registerFakes(calls)
     const t = await runTick({ db, now: () => OUTSIDE_WINDOW, warned: new Set() })

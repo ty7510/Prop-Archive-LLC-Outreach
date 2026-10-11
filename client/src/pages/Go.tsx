@@ -215,7 +215,7 @@ function QueueGroup({ channel, items }: { channel: Channel; items: QueueItem[] }
           </a>
         ) : null}
       </h3>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
         {items.map((item) => (
           <QueueCard key={item.message_id} item={item} />
         ))}
@@ -225,10 +225,10 @@ function QueueGroup({ channel, items }: { channel: Channel; items: QueueItem[] }
 }
 
 function postalAddress(raw: string | null): string | null {
-  if (!raw) return null
+  if (!raw || raw === 'null') return null
   try {
     const o = JSON.parse(raw) as Record<string, unknown>
-    if (typeof o !== 'object' || o === null) return raw
+    if (typeof o !== 'object' || o === null) return null
     const parts = ['name', 'street', 'address_line1', 'city', 'state', 'zip']
       .map((k) => o[k])
       .filter((v): v is string => typeof v === 'string' && v.length > 0)
@@ -267,7 +267,7 @@ function QueueCard({ item }: { item: QueueItem }) {
   const copyText = item.subject ? `${item.subject}\n\n${item.body}` : item.body
 
   return (
-    <article className="card flex flex-col gap-3">
+    <article className="card flex min-w-0 flex-col gap-3">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <Link
@@ -288,11 +288,11 @@ function QueueCard({ item }: { item: QueueItem }) {
           ) : null}
         </div>
       </header>
-      {item.channel === 'mail' && item.to_address ? (
-        <p className="text-sm text-stone-600">To: {postalAddress(item.to_address)}</p>
+      {item.channel === 'mail' && postalAddress(item.to_address) ? (
+        <p className="break-words text-sm text-stone-600">To: {postalAddress(item.to_address)}</p>
       ) : null}
-      {item.subject ? <p className="font-medium">{item.subject}</p> : null}
-      <p className="whitespace-pre-wrap text-stone-800">{item.body}</p>
+      {item.subject ? <p className="break-words font-medium">{item.subject}</p> : null}
+      <p className="whitespace-pre-wrap break-words text-stone-800">{item.body}</p>
       <div className="flex flex-wrap gap-2">
         <CopyButton text={copyText} label="Copy text" />
         {link ? (

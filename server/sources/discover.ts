@@ -1,5 +1,7 @@
 // Discover: pull new owners from the public records and upsert them, under the daily cap.
-// Order: new rental licenses (fresh landlords), OPA owner groups, recent sales (mostly merges).
+// Order: OPA owner groups (the 3-20 property ICP, which honours min_props..max_props) take up to
+// OPA_BUDGET_SHARE of the day's budget, then new rental licenses (fresh landlords, usually one
+// property) take what is left, then recent sales (mostly merges onto owners we already have).
 // Each source fails on its own; one bad Carto answer never stops the others.
 // Owned by the sources builder.
 import { and, count, gte, inArray } from 'drizzle-orm'
@@ -26,6 +28,9 @@ import { upsertCandidate } from './upsert.ts'
 /** Safety rails so one run can never loop forever against Carto. */
 export const MAX_OWNER_PAGES = 100
 export const MAX_TRIGGER_PAGES = 10
+
+/** The share of the daily budget the OPA owner pass may use, so new licenses still get a slice. */
+export const OPA_BUDGET_SHARE = 0.8
 
 export interface DiscoverOptions {
   zips?: string[]
@@ -92,13 +97,18 @@ export async function discover(
   let budget = Math.min(dailyLeft, opts.limit ?? Number.POSITIVE_INFINITY)
   summary.budget = Number.isFinite(budget) ? budget : dailyLeft
 
-  const upsertAll = async (candidates: LeadCandidate[], into: DiscoverResult): Promise<void> => {
+  /** `reserve` keeps that many creations for the passes after this one. */
+  const upsertAll = async (
+    candidates: LeadCandidate[],
+    into: DiscoverResult,
+    reserve = 0,
+  ): Promise<void> => {
     for (const c of candidates) {
       const r = await upsertCandidate(c, {
         db,
         settings,
         now: now(),
-        allowCreate: budget > 0,
+        allowCreate: budget > reserve,
       })
       into[r.outcome]++
       summary[r.outcome]++
@@ -108,8 +118,33 @@ export async function discover(
 
   const minProps = Math.max(0, settings.min_props)
   const maxProps = Math.max(minProps, settings.max_props)
+  const opaReserve = Number.isFinite(budget) ? budget - Math.ceil(budget * OPA_BUDGET_SHARE) : 0
 
-  // 1. New rental licenses in the window.
+  // 1. OPA owner groups (the ICP), page by page, up to their share of the cap.
+  try {
+    for (let page = 0; page < MAX_OWNER_PAGES; page++) {
+      if (budget <= opaReserve) break
+      const rows = await client.query<OpaRow>(
+        buildOpaOwnersSql(
+          zips,
+          minProps,
+          maxProps,
+          OPA_OWNERS_PAGE_SIZE,
+          page * OPA_OWNERS_PAGE_SIZE,
+        ),
+      )
+      if (rows.length === 0) break
+      const candidates = opaRowsToCandidates(rows, now())
+      await upsertAll(candidates, summary.by_source.opa, opaReserve)
+      if (candidates.length < OPA_OWNERS_PAGE_SIZE) break
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    summary.errors.push(`Property owners: ${message}`)
+    await logActivity('warn', 'discover.opa.failed', { message }, null, db)
+  }
+
+  // 2. New rental licenses in the window, with whatever budget is left.
   try {
     for (let page = 0; page < MAX_TRIGGER_PAGES; page++) {
       const rows = await client.query<LiRow>(
@@ -122,30 +157,6 @@ export async function discover(
     const message = err instanceof Error ? err.message : String(err)
     summary.errors.push(`Rental licenses: ${message}`)
     await logActivity('warn', 'discover.li.failed', { message }, null, db)
-  }
-
-  // 2. OPA owner groups, page by page, until the cap is reached.
-  try {
-    for (let page = 0; page < MAX_OWNER_PAGES; page++) {
-      if (budget <= 0) break
-      const rows = await client.query<OpaRow>(
-        buildOpaOwnersSql(
-          zips,
-          minProps,
-          maxProps,
-          OPA_OWNERS_PAGE_SIZE,
-          page * OPA_OWNERS_PAGE_SIZE,
-        ),
-      )
-      if (rows.length === 0) break
-      const candidates = opaRowsToCandidates(rows, now())
-      await upsertAll(candidates, summary.by_source.opa)
-      if (candidates.length < OPA_OWNERS_PAGE_SIZE) break
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    summary.errors.push(`Property owners: ${message}`)
-    await logActivity('warn', 'discover.opa.failed', { message }, null, db)
   }
 
   // 3. Recent sales: mostly adds the trigger to owners we already have.

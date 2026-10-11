@@ -130,9 +130,11 @@ function SettingsForm({
     if (r) setLiveConfirm(false)
   }
 
-  const emailKeyPresent = draft.email_provider === 'smtp' ? providers?.smtp : providers?.resend
-  const mailKeyPresent = draft.mail_provider === 'lob' ? providers?.lob : true
-  const enabledChannels = CHANNELS.filter((c) => draft.channels[c])
+  // The Live switch only saves live_mode, so the confirm must describe the SAVED settings:
+  // those are what the next round runs with, whatever is still unsaved in the form.
+  const emailKeyPresent = saved.email_provider === 'smtp' ? providers?.smtp : providers?.resend
+  const mailKeyPresent = saved.mail_provider === 'lob' ? providers?.lob : true
+  const enabledChannels = CHANNELS.filter((c) => saved.channels[c])
 
   return (
     <div className="space-y-4 pb-24">
@@ -556,7 +558,7 @@ function SettingsForm({
       <Section
         id="danger"
         title="Danger"
-        intro="Live mode is the only switch that lets email and mail leave the building."
+        intro="Live mode is the switch that lets email and mail go to leads. Test sends and reply notices to your own address go out either way."
       >
         <div className="flex flex-wrap items-center gap-4 rounded-xl border border-red-200 bg-red-50 p-4">
           <div className="flex-1">
@@ -619,25 +621,25 @@ function SettingsForm({
       >
         <p>From the next round inside the send window, this goes out without asking you:</p>
         <ul className="list-disc space-y-1 pl-5">
-          {draft.channels.email ? (
+          {saved.channels.email ? (
             <li>
-              Email, up to {draft.daily_caps.email} a day, through{' '}
-              {draft.email_provider === 'smtp' ? 'SMTP' : 'Resend'}
+              Email, up to {saved.daily_caps.email} a day, through{' '}
+              {saved.email_provider === 'smtp' ? 'SMTP' : 'Resend'}
               {emailKeyPresent === false ? (
                 <span className="text-red-700"> (key missing, sends will fail)</span>
               ) : null}
             </li>
           ) : null}
-          {draft.channels.mail ? (
+          {saved.channels.mail ? (
             <li>
-              Mail, up to {draft.daily_caps.mail} a day,{' '}
-              {draft.mail_provider === 'lob' ? 'through Lob' : 'as letters you print'}
+              Mail, up to {saved.daily_caps.mail} a day,{' '}
+              {saved.mail_provider === 'lob' ? 'through Lob' : 'as letters you print'}
               {mailKeyPresent === false ? (
                 <span className="text-red-700"> (key missing, sends will fail)</span>
               ) : null}
             </li>
           ) : null}
-          {!draft.channels.email && !draft.channels.mail ? (
+          {!saved.channels.email && !saved.channels.mail ? (
             <li>Nothing automatic: email and mail are both off.</li>
           ) : null}
           {enabledChannels.filter((c) => c !== 'email' && c !== 'mail').length ? (
@@ -651,8 +653,12 @@ function SettingsForm({
           ) : null}
         </ul>
         <p>
-          Send window: {draft.send_window.days.map((d) => DAYS[d]).join(', ') || 'no days'} from{' '}
-          {draft.send_window.start} to {draft.send_window.end} ({draft.send_window.tz}).
+          Send window: {saved.send_window.days.map((d) => DAYS[d]).join(', ') || 'no days'} from{' '}
+          {saved.send_window.start} to {saved.send_window.end} ({saved.send_window.tz}).
+        </p>
+        <p>
+          Sequences that only ever ran in dry run start over from step 1, so the first live round
+          really sends.
         </p>
         {!saved.physical_address.trim() ? (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-900">
@@ -660,8 +666,10 @@ function SettingsForm({
           </p>
         ) : null}
         {dirtyCount ? (
-          <p className="text-sm text-stone-500">
-            You have unsaved changes above; they are not part of this switch.
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-amber-900">
+            The list above is what is saved. Your {dirtyCount}{' '}
+            {dirtyCount === 1 ? 'unsaved change is' : 'unsaved changes are'} not part of it. Cancel
+            and press Save first if you want them to count.
           </p>
         ) : null}
       </Confirm>

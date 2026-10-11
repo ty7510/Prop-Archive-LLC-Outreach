@@ -44,7 +44,10 @@ They are the main lead source. We store the public fields and the owner's mailin
 ## Dry run and Live
 
 The system starts in dry run: everything is found, scored, written and queued, but no email or mail
-leaves. You switch to Live in Settings > Danger, with a confirm dialog that lists what would go out.
+goes to a lead. The two exceptions only ever reach you: "Send me a test" on a sequence, and the
+one-line notice when a lead replies. You switch to Live in Settings > Danger, with a confirm dialog
+that lists what would go out from the saved settings. Sequences that only ever ran in dry run start
+over from step 1 at that moment, so the first live round really sends.
 Human channels (LinkedIn, Instagram, calls) behave the same in both modes: they only ever reach the
 queue.
 

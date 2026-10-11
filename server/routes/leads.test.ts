@@ -249,6 +249,44 @@ describe('leads API', () => {
     ).toBe('not_interested')
   })
 
+  it('PATCH status to a final answer stops open enrollments and empties the queue', async () => {
+    await importSample(agent)
+    const id = (await agent.get('/api/leads?q=okafor')).body.items[0].id as string
+    const seqId = newId()
+    await db.insert(sequences).values({
+      id: seqId,
+      name: 'LinkedIn Ray',
+      channel: 'linkedin',
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    })
+    const enrId = newId()
+    await db.insert(enrollments).values({
+      id: enrId,
+      lead_id: id,
+      sequence_id: seqId,
+      status: 'active',
+      started_at: nowIso(),
+    })
+    await db.insert(messages).values({
+      id: newId(),
+      lead_id: id,
+      enrollment_id: enrId,
+      channel: 'linkedin',
+      status: 'ready_for_human',
+      idempotency_key: `${enrId}:0`,
+      body: 'Connect',
+      created_at: nowIso(),
+    })
+    const res = await agent.patch(`/api/leads/${id}`).send({ status: 'not_interested' })
+    expect(res.status).toBe(200)
+    expect(res.body.status).toBe('not_interested')
+    const [enr] = await db.select().from(enrollments).where(eq(enrollments.id, enrId))
+    expect(enr?.status).toBe('stopped_manual')
+    const [msg] = await db.select().from(messages).where(eq(messages.lead_id, id))
+    expect(msg?.status).toBe('skipped')
+  })
+
   it('do not contact hands off to the outreach module when it is registered', async () => {
     await importSample(agent)
     const id = (await agent.get('/api/leads?q=maya')).body.items[0].id as string

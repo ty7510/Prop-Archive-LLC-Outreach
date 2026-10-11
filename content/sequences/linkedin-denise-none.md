@@ -11,7 +11,7 @@ description: Connection note, then one message, for the owner of a small managem
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, I build software for small Philadelphia management companies. Staff, tenants and contractors tracked in different places, and compliance across 20 buildings in a spreadsheet, are what I hear most. Would like to connect.
+Hi {{first_name}}, staff, tenants and contractors tracked in different places, and compliance across 20 buildings in a spreadsheet, are what I hear from small Philadelphia management companies. I build software for exactly that. Would like to connect.
 
 ## Step 2
 

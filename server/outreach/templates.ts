@@ -70,6 +70,22 @@ export interface LinkContext {
   sequenceName: string
 }
 
+/** Channels where a person reads the link off paper or hears it: the plain address, nothing to track. */
+export const PLAIN_LINK_CHANNELS: readonly Channel[] = ['mail', 'call']
+
+/** The settings' own short addresses, for postcards and call scripts. */
+export function plainLinks(settings: Pick<Settings, 'site_url' | 'demo_url' | 'beta_url'>): {
+  demo_link: string
+  beta_link: string
+  site_link: string
+} {
+  return {
+    demo_link: settings.demo_url,
+    beta_link: settings.beta_url || settings.site_url,
+    site_link: settings.site_url,
+  }
+}
+
 /** Tracked links for a lead. The channel and sequence ride along so the redirect can tag the click. */
 export function trackedLinks(
   lead: Pick<Lead, 'unsubscribe_token'>,
@@ -101,6 +117,7 @@ export function buildVars(lead: Lead, settings: Settings, ctx: LinkContext): Tem
     sender_name: settings.from_name,
     physical_address: settings.physical_address,
     ...trackedLinks(lead, ctx),
+    ...(PLAIN_LINK_CHANNELS.includes(ctx.channel) ? plainLinks(settings) : {}),
   }
 }
 

@@ -89,6 +89,22 @@ export const SequenceByPersonaSchema = z.object({
 })
 export type SequenceByPersona = z.infer<typeof SequenceByPersonaSchema>
 
+/** Links that leads click and hosts we post lead data to: https only, with a real host name. */
+export const HttpsUrl = z
+  .string()
+  .trim()
+  .refine(
+    (v) => {
+      try {
+        const u = new URL(v)
+        return u.protocol === 'https:' && u.hostname.length > 0
+      } catch {
+        return false
+      }
+    },
+    { message: 'use a full https:// address' },
+  )
+
 export const SettingsSchema = z.object({
   autopilot_on: z.boolean().default(false),
   live_mode: z.boolean().default(false),
@@ -101,9 +117,9 @@ export const SettingsSchema = z.object({
   /** CAN-SPAM footer. Required before live email goes out. */
   physical_address: z.string().default(''),
 
-  site_url: z.string().url().default('https://proparchive.app'),
-  demo_url: z.string().url().default('https://proparchive.app/demo'),
-  beta_url: z.string().url().default('https://proparchive.app/?beta=1'),
+  site_url: HttpsUrl.default('https://proparchive.app'),
+  demo_url: HttpsUrl.default('https://proparchive.app/demo'),
+  beta_url: HttpsUrl.default('https://proparchive.app/?beta=1'),
 
   target_zips: z
     .array(z.string().regex(ZIP5, 'use a 5 digit zip'))
@@ -150,7 +166,7 @@ export const SettingsSchema = z.object({
   mail_provider: z.enum(['lob', 'print']).default('print'),
 
   notify_owner_on_reply: z.boolean().default(true),
-  human_queue_webhook_url: z.union([z.literal(''), z.string().url()]).default(''),
+  human_queue_webhook_url: z.union([z.literal(''), HttpsUrl]).default(''),
   /** Random on first boot (server/lib/settings.ts ensureWebhookSecret). */
   webhook_secret: z.string().default(''),
 })
