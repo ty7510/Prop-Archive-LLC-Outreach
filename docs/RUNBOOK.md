@@ -83,9 +83,11 @@ Postcards start with `Hi {{first_name}},`; a lead without a first name reads "Hi
   must stay up and run as exactly one copy. Build `npm ci && npm run build`, run `npm start`.
 - A published app loses the files it writes on every publish and restart, so it cannot use the
   sqlite file. Before the first Publish, create a hosted libsql database (Turso), then add
-  `DATABASE_URL` (`libsql://...`) and `DATABASE_AUTH_TOKEN` to the publishing secrets. The server
-  refuses to start in a published app with a `file:` database (override, at your own risk:
-  `ALLOW_FILE_DB_IN_DEPLOYMENT=1`).
+  `OUTREACH_DATABASE_URL` (`libsql://...`) and `OUTREACH_DATABASE_AUTH_TOKEN` to the publishing
+  secrets. The server refuses to start in a published app with a `file:` database (override, at
+  your own risk: `ALLOW_FILE_DB_IN_DEPLOYMENT=1`).
+- Replit sets `DATABASE_URL` to its own Postgres database when the Repl has one. This app cannot
+  open Postgres, so it ignores that value (a `[boot]` warning says so) and uses its own database.
 - Secrets go in Replit Secrets with the same names as `.env.example`. Set `APP_PASSWORD` (nobody
   can log in without it) and `SESSION_SECRET` (or every restart logs you out). Set `PUBLIC_URL`
   when not on Replit, or unsubscribe and tracked links point at localhost.

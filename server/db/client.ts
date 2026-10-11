@@ -44,8 +44,8 @@ export function ephemeralDbProblem(
   if (e.ALLOW_FILE_DB_IN_DEPLOYMENT === '1') return null
   return (
     'Published Replit apps lose their files on every publish and restart, so this file database ' +
-    'would be wiped. Set DATABASE_URL to a hosted libsql database (for example Turso) and ' +
-    'DATABASE_AUTH_TOKEN in the publishing secrets.'
+    'would be wiped. Set OUTREACH_DATABASE_URL to a hosted libsql database (for example Turso) and ' +
+    'OUTREACH_DATABASE_AUTH_TOKEN in the publishing secrets.'
   )
 }
 
@@ -79,16 +79,48 @@ export async function dbOk(db: Db): Promise<boolean> {
 
 let defaultDb: Db | null = null
 
+/** URL schemes the libsql client opens. Anything else in DATABASE_URL is some other app's database. */
+const LIBSQL_URL = /^(file|libsql|https?|wss?):/i
+
+export interface DatabaseConfig {
+  url: string
+  authToken?: string
+  /** Set when DATABASE_URL held an address this app cannot open, so it was skipped. */
+  ignored?: string
+}
+
 /**
- * The app's database. Created on first use from DATABASE_URL (default file:./data/outreach.db).
- * createApp(db) and tests call setDefaultDb so lib helpers share one connection.
+ * Which database to open. OUTREACH_DATABASE_URL wins. DATABASE_URL counts only when libsql can open
+ * it, because Replit sets DATABASE_URL to its own Postgres database in any Repl that has one.
+ */
+export function resolveDatabaseConfig(
+  e: Record<string, string | undefined> = process.env,
+): DatabaseConfig {
+  const own = e.OUTREACH_DATABASE_URL?.trim()
+  const shared = e.DATABASE_URL?.trim()
+  const authToken = (e.OUTREACH_DATABASE_AUTH_TOKEN || e.DATABASE_AUTH_TOKEN)?.trim() || undefined
+  if (own) return { url: own, authToken }
+  if (shared && LIBSQL_URL.test(shared)) return { url: shared, authToken }
+  if (!shared) return { url: DEFAULT_DATABASE_URL }
+  return {
+    url: DEFAULT_DATABASE_URL,
+    ignored:
+      'DATABASE_URL is not a libsql or file address (Replit sets it for its own Postgres ' +
+      'database), so it is ignored and the app uses ' +
+      DEFAULT_DATABASE_URL +
+      '. Set OUTREACH_DATABASE_URL to use a hosted libsql database.',
+  }
+}
+
+/**
+ * The app's database, created on first use (see resolveDatabaseConfig; default
+ * file:./data/outreach.db). createApp(db) and tests call setDefaultDb so lib helpers share one
+ * connection.
  */
 export function getDb(): Db {
   if (!defaultDb) {
-    defaultDb = createDb(
-      process.env.DATABASE_URL || DEFAULT_DATABASE_URL,
-      process.env.DATABASE_AUTH_TOKEN || undefined,
-    )
+    const { url, authToken } = resolveDatabaseConfig()
+    defaultDb = createDb(url, authToken)
   }
   return defaultDb
 }
