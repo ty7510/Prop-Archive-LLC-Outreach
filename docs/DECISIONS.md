@@ -69,3 +69,37 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Prettier:** single quotes, no semicolons, width 100, trailing commas.
 - **Em-dash guard:** `hasEmDash()` in `lib/text.ts` for builders to assert on rendered copy. No
   automated sweep of the client yet; the UI builder should grep `—` in `client/` and `content/`.
+
+## 2026-10-11 (enrich)
+
+- **Provider interface** is the spec's plus `applies(lead, ctx)`: a provider says no when the lead
+  lacks what it needs (Hunter needs a business domain and a first/last name, Apollo and PDL need a
+  person's name, L&I needs an OPA account on a property). Saves credits and avoids junk matches.
+  Providers throw a plain `Error` on failure; the orchestrator catches it, logs
+  `enrich.provider_error` to activity_log and carries on. One lead counts as `failed` only when
+  every provider that ran threw; its status goes back to `new` so the next tick retries.
+- **Credit caps** count `provider_usage` rows in the calendar month of `settings.send_window.tz`.
+  The check is `used + costPerCall > cap`; Hunter declares `costPerCall: 2` (finder + verifier) and
+  records what it really used (1 when nothing was found). PDL records 0 for a 404 ("no match" is not
+  billed). The free L&I provider records a 0-credit row so `GET /api/enrich/usage` shows calls.
+  A cap being hit is logged once per batch, not once per lead.
+- **Stop rule** is the spec's: email AND (linkedin OR phone). Email statuses: Hunter verifier
+  `deliverable` -> valid, `undeliverable` -> invalid, else risky; Apollo `verified` -> valid,
+  `guessed`/`likely to engage` -> risky; Claude research and PDL emails are `unknown` (unverified).
+  `mergeProviderResult` never writes an empty value over a value, never replaces a `valid` email with
+  a different address, and only upgrades the same address to a better status.
+- **Channels** are "do we have a way in" (email that is not invalid, mailing street + zip or city,
+  linkedin url, instagram url, phone). Settings toggles and suppression are outreach's job.
+- **Status** moves new -> enriching -> enriched only for leads in new/enriching/enriched. A lead that
+  is already enrolled or further along keeps its status but still gets the new fields and channels.
+- **Claude research** follows the SDK README: `client.messages.parse` with
+  `output_config: { effort: 'low', format: zodOutputFormat(schema) }` (a `json_schema` format), the
+  `web_search_20260209` server tool with `max_uses: 5`, `max_tokens: 2000`, no streaming. `stop_reason`
+  is read before content: `refusal` and `max_tokens` return an empty result, `pause_turn` pushes the
+  assistant turn back and continues (3 turns max). Timeout is 60 s for this provider because a web
+  search turn cannot finish in the 10 s the plain HTTP providers get; the SDK retries 429/5xx twice.
+- **GET /api/enrich/usage** needed a second mount point, so `server/app.ts` gained one line:
+  `app.use('/api/enrich', enrichUsageRouter)`.
+- **L&I joins** `business_licenses.opa_account_num` on `properties.opa_account`, newest active license
+  per property. It fills `properties.units` and license fields, sums `unit_count`, and reads the
+  person from `legalfirstname/legallastname`, else `ownercontact1name`.
