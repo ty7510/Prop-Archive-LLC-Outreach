@@ -3,28 +3,28 @@ name: Call script, Denise, recent purchase
 channel: call
 persona: denise
 trigger: recent_sale
-description: One call script for a small management company that just took on a building.
+description: One call script for a small management company taking on a building. Never cite the purchase back to them.
 ---
 
 ## Step 1
 
 delay_days: 0
-notes: Theo dials. Let them talk after each question.
+notes: Theo dials by hand. Only call someone who has talked with you or asked about Prop Archive; Pennsylvania treats any other sales call as telemarketing that needs registration. If that talk was more than 3 months ago, check the Do Not Call list first. 9 AM to 7 PM, never Sunday or a legal holiday. Take no payment on the phone. Let them talk after each question.
 
 10 second open
-"Hi {{first_name}}, this is {{sender_name}}. Congrats on the new building. New leases, a rental license, lead certs and the old owner's records that someone in your office has to key in, while the work orders keep coming. We give every building one record your team shares, and we help move the data. Do you have two minutes?"
+"Hi {{first_name}}, this is {{sender_name}}, calling about how your office keeps its records. Taking on a building means keying in the old owner's records while the work orders keep coming. We give every building one record the whole staff shares from day one. Do you have two minutes?"
 
 Three questions (let them talk)
 
-1. What did the old owner hand you, and who in the office is keying it in?
-2. How are the new tenants reaching your office about repairs so far?
-3. With {{property_count}} buildings now, is your current tool's per-unit bill going up, and does the team use all of it?
+1. What came over from the old owner, and who is keying it in?
+2. Walk me through a work order at the new building, from the tenant's text to the paid invoice.
+3. Where do its license and lead cert dates live now?
 
 The ask
 "Worth 15 minutes on a screen with you and your office manager? It's free while we're in beta, plus two months free after the public launch, and your data comes with you. Here is the link: {{demo_link}}"
 
-If they say "We will add it to our current system"
-"Fair, if the current system is one your staff, tenants and contractors all use. If half of it still runs on texts and email, the 15 minutes is worth it."
+If they say "Moving the records is too much work"
+"That is the real cost. The 15 minutes is to see what comes over and how, before you decide anything."
 
-If they say "Not now, just closed"
-"Fair. When are the first leases up in the new building? I'll call a few weeks before."
+If they say "Not now, busy"
+"Fair. What week is less busy? I'll call back then." Then set the date.

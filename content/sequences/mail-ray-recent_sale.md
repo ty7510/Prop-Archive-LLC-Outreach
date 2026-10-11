@@ -3,7 +3,7 @@ name: Postcard, Ray, recent purchase
 channel: mail
 persona: ray
 trigger: recent_sale
-description: One postcard to a full-time owner who just bought a building.
+description: One postcard to a full-time owner who just added a building. Never cite the purchase back to them.
 ---
 
 ## Step 1
@@ -12,7 +12,7 @@ delay_days: 0
 
 Hi {{first_name}},
 
-Congrats on the new building. New tenants, a new license, lead certs, and a longer contractor list, all in the same phone as the other properties. Prop Archive gives every one of them one home. Free while we're in beta.
+A new building means new tenants, a license to pull and a longer contractor list, all in the same phone. Prop Archive gives every property one record from day one. Free while we're in beta.
 
 Worth a 15 minute look? {{demo_link}}
 

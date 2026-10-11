@@ -3,28 +3,28 @@ name: Call script, Maya, new rental license
 channel: call
 persona: maya
 trigger: new_license
-description: One call script for a side-income owner who just got a rental license.
+description: One call script for a side-income owner with a newly licensed rental. Never cite the license back to them.
 ---
 
 ## Step 1
 
 delay_days: 0
-notes: Theo dials. Let them talk after each question.
+notes: Theo dials by hand. Only call someone who has talked with you or asked about Prop Archive; Pennsylvania treats any other sales call as telemarketing that needs registration. If that talk was more than 3 months ago, check the Do Not Call list first. 9 AM to 7 PM, never Sunday or a legal holiday. Take no payment on the phone. Let them talk after each question.
 
 10 second open
-"Hi {{first_name}}, this is {{sender_name}}. Congrats on the new rental license. The first year with a new place is when the lead cert, the renewal date and the repair texts all land on top of a work day. We put all of that in one spot from day one. Do you have two minutes?"
+"Hi {{first_name}}, this is {{sender_name}}, calling about how you keep the records for your rentals. A rental's first year is mostly paperwork on top of a day job: the lead cert, the renewal date, the lease and the repair texts. We put all of it in one place for each rental. Do you have two minutes?"
 
 Three questions (let them talk)
 
-1. Is the place rented yet, and where are you keeping the lease, the deposit and the lead cert?
-2. When the first repair text comes in at work, what is your plan?
-3. How are you tracking the license renewal and the lead cert dates for this place and the others?
+1. Where do the lead cert, the license and the lease live today?
+2. When a tenant texts about a repair while you're at work, what happens next?
+3. How are you planning to keep the receipts for tax time?
 
 The ask
 "Worth 15 minutes on a screen so you can see it with your own places? It's free while we're in beta, plus two months free after the public launch. Nothing to sign. Here is the link: {{demo_link}}"
 
-If they say "It's one more place, I'll manage"
-"Most owners say that at place number {{property_count}}. The 15 minutes is to see what the first year looks like with the records already in order."
+If they say "It's just one place, I can keep track"
+"That works for one. The 15 minutes is to see it set up so a second place doesn't double the pile."
 
-If they say "Not now, I'm in the middle of getting it rented"
-"Fair. Getting it rented is the whole job right now. When is the move-in date? I'll call the week after."
+If they say "Not now, busy"
+"Fair. What week is less busy? I'll call back then." Then set the date.

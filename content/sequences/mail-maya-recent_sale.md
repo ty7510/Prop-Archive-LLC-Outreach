@@ -3,7 +3,7 @@ name: Postcard, Maya, recent purchase
 channel: mail
 persona: maya
 trigger: recent_sale
-description: One postcard to a side-income owner who just bought another place.
+description: One postcard to a side-income owner who just added a place. Never cite the purchase back to them.
 ---
 
 ## Step 1
@@ -12,7 +12,7 @@ delay_days: 0
 
 Hi {{first_name}},
 
-Congrats on the new place. A new rental means a new license, a lead cert and repair texts during your work day. Prop Archive keeps all of it in one spot for every place you own, free while we're in beta.
+Another place means more repair texts at work and another pile of receipts for tax time. Prop Archive gives every place one home for its texts, receipts and papers. Free while we're in beta.
 
 Worth a 15 minute look? {{demo_link}}
 

@@ -3,7 +3,7 @@ name: LinkedIn, Maya, new rental license
 channel: linkedin
 persona: maya
 trigger: new_license
-description: Connection note, then one message, for a side-income owner who just got a rental license.
+description: Connection note, then one message, for a side-income owner with a newly licensed rental.
 ---
 
 ## Step 1
@@ -11,7 +11,7 @@ description: Connection note, then one message, for a side-income owner who just
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, congrats on the new rental license. I build software for Philadelphia landlords with a day job and a few rentals, and the first year with a new place is where I hear the most pain. Would like to connect.
+Hi {{first_name}}, a rental's first year is mostly paperwork on top of a day job: the lead cert, the renewal date, the lease and the repair texts. I build software that keeps all of it in one place. Would like to connect.
 
 ## Step 2
 
@@ -20,8 +20,8 @@ notes: Message after they accept.
 
 Thanks for connecting, {{first_name}}.
 
-A new rental license means the lead cert, the renewal date, the deposit record and every repair text, all landing on top of a work day. Most owners keep it in their phone until something goes wrong.
+One question with Philadelphia's Nov 1 rental changes: if a tenant asked for your rental license and your Certificate of Rental Suitability, how long would it take to find both?
 
-Prop Archive keeps it in one place from day one. This is my second company, and I grew up around landlords.
+Prop Archive keeps those papers, the lead cert and the repair texts for each place in one search. This is my second company, and I grew up around landlords.
 
-Free while we're in beta. Worth a 15 minute look? {{demo_link}}
+Free while we're in beta, plus two months free after the public launch. Worth a 15 minute look? {{demo_link}}

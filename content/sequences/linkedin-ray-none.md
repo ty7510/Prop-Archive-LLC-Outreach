@@ -11,7 +11,7 @@ description: Connection note, then one message, for a full-time owner with 7 to 
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, repair texts with no record, summer turnover and chasing contractors are what I hear from full-time Philadelphia landlords with a dozen or so properties. I build software for exactly that. Would like to connect and compare notes.
+Hi {{first_name}}, a leak text that turns into a dispute six months later, summer turnover and chasing contractors are what I hear from full-time Philly landlords. I build software for exactly that. Would like to connect and compare notes.
 
 ## Step 2
 
@@ -20,8 +20,8 @@ notes: Message after they accept.
 
 Thanks for connecting, {{first_name}}.
 
-Ten repair texts a week across {{property_count}} properties, and no record of who said what or what it cost. Then turnover season and tax time turn into a dig through your phone.
+When a tenant's repair text turns into a dispute months later, the text, the receipt and the contractor's invoice are usually in three different places, and the license dates live in a spreadsheet.
 
-Prop Archive puts the texts, the contractors, the rent and the license dates in one place. This is my second company, and I grew up around landlords and property managers.
+Prop Archive gives every property one searchable record. This is my second company, and I grew up around landlords and property managers.
 
-Free while we're in beta. Worth a 15 minute look? {{demo_link}}
+Free while we're in beta, plus two months free after the public launch. Worth a 15 minute look? {{demo_link}}

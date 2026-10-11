@@ -14,6 +14,8 @@ send has:
 - a working one-click unsubscribe link, and the technical headers mail apps use for their own
   "unsubscribe" button,
 - a subject line that says what the email is about.
+- one plain line that the email is an offer ("This email is an offer from Prop Archive."). CAN-SPAM
+  asks for that on any sales email, business to business included.
 
 When someone unsubscribes, bounces, or replies, they go on a suppression list and never get another
 email from this system, even if they show up again from a new source. You can re-enable a person by
@@ -35,6 +37,21 @@ send it yourself with one click to copy. Nothing goes out on these channels with
 
 No automated texting and no robocalls. Phone numbers go into a call queue with a short script. You
 dial.
+
+Pennsylvania adds its own rules (the Telemarketer Registration Act, 73 P.S. 2241 and on, changed by
+Act 47 of 2026, in force about Oct 19, 2026). In plain words, from docs/RESEARCH.md, not legal
+advice:
+
+- Only call or text someone who talked with you or asked about Prop Archive. Any other sales call is
+  telemarketing, which needs state registration first ($500 and a $50,000 bond). After Oct 19 the
+  talk has to be within the last 12 months, or you need their signed written consent.
+- The federal Do Not Call rules still apply: if that talk was over 3 months ago, check the list.
+- 9 AM to 7 PM, never on a Sunday or a legal holiday. Open with your name, Prop Archive and why you
+  are calling.
+- Take no payment on the phone. If they say stop (STOP, QUIT, END, CANCEL, UNSUBSCRIBE), stop and
+  mark them.
+- Whether landlord software counts as "consumer goods or services" under the Act is a question for
+  a lawyer.
 
 ## Public records
 

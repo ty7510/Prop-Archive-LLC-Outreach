@@ -112,7 +112,7 @@ describe('renderStepForLead', () => {
     expect(r.subject).toBe('Hello Ray')
     expect(r.body).toContain('Body for Ray Example.')
     expect(r.body).toContain(
-      '\n\nTheo at Prop Archive, Prop Archive LLC\n123 Main St, Philadelphia, PA 19146\nNo more emails: https://outreach.test/u/sample-token',
+      '\n\nTheo at Prop Archive, Prop Archive LLC\n123 Main St, Philadelphia, PA 19146\nThis email is an offer from Prop Archive.\nNo more emails: https://outreach.test/u/sample-token',
     )
     expect(r.body.endsWith(emailFooter(buildVars(lead, settings, ctx)))).toBe(true)
   })

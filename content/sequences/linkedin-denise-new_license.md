@@ -3,7 +3,7 @@ name: LinkedIn, Denise, new rental license
 channel: linkedin
 persona: denise
 trigger: new_license
-description: Connection note, then one message, for a small management company that just added a rental license.
+description: Connection note, then one message, for a small management company that is adding licenses.
 ---
 
 ## Step 1
@@ -11,7 +11,7 @@ description: Connection note, then one message, for a small management company t
 delay_days: 0
 notes: Connection note. LinkedIn caps these at 300 characters.
 
-Hi {{first_name}}, every new rental license adds a renewal, a lead cert and an inspection to a list one person in the office owns. I build software for small Philadelphia management companies that keeps that list. Would like to connect.
+Hi {{first_name}}, every license added across a portfolio is one more renewal date and lead cert in a compliance spreadsheet only one person owns. I build software that puts it where the whole office can see it. Would like to connect.
 
 ## Step 2
 
@@ -20,8 +20,8 @@ notes: Message after they accept.
 
 Thanks for connecting, {{first_name}}.
 
-Another rental license is another renewal date, lead cert and inspection across {{property_count}} buildings, and when the list lives in one person's spreadsheet, the day they are out is the day something lapses.
+One question with Philadelphia's Nov 1 rental changes: if a tenant asked your office for the rental license and the Certificate of Rental Suitability, who would find them, and how long would it take?
 
-Prop Archive tracks compliance for every building where the whole office sees it, next to work orders and rent. This is my second company, and I grew up around property managers.
+Prop Archive gives the whole staff one place for every building's licenses, certs and repair history. This is my second company, and I grew up around property managers.
 
-Free while we're in beta. Worth a 15 minute look? {{demo_link}}
+Free while we're in beta, plus two months free after the public launch. Worth a 15 minute look? {{demo_link}}
