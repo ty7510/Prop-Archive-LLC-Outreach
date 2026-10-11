@@ -1,0 +1,6 @@
+Name,Email Address,Phone,Company,Street Address,City,State,Zip,# Properties,Units,LinkedIn,Notes
+Maya Chen,maya.chen@example.com,(215) 555-0101,,1420 N 29th St,Philadelphia,PA,19121,4,6,https://www.linkedin.com/in/maya-chen-example,Met at the REIA meetup
+Ray Okafor,ray@okafor-properties.example.com,215-555-0102,Okafor Properties LLC,5214 Baltimore Ave,Philadelphia,PA,19143,9,14,,Wants quarterly owner reports
+,denise.hall@hall-mgmt.example.com,,Hall Property Management LLC,"2100 Washington Ave, Suite 300",Philadelphia,PA,19146,18,41,https://www.linkedin.com/company/hall-mgmt-example,Manages for three owners
+Ray Okafor,,,Okafor Properties LLC,5214 Baltimore Avenue,Philadelphia,PA,19143-2116,,,,Second row for the same address
+Sam Rivera,,,,,,,,2,,,No way to reach yet
