@@ -392,3 +392,31 @@ describe('bounces without a thread id', () => {
     expect(await matchLead(db, parseRawMail(plain))).toBeNull()
   })
 })
+
+describe('a From-only match', () => {
+  it('never marks a lead booked when the reply is outside our thread', async () => {
+    const llm: Llm = {
+      text: async () => null,
+      structured: async () => ({ classification: 'booked' }) as never,
+    }
+    const raw = [
+      'From: Owner <owner@spoof.com>',
+      'To: theo@proparchive.biz',
+      'Subject: booked',
+      'Message-ID: <spoof-1@spoof.com>',
+      '',
+      'Booked for Tuesday.',
+    ].join('\r\n')
+    const { db, deps } = await setup({
+      llm,
+      imap: fakeImap([{ uid: 3, source: Buffer.from(raw) }]),
+    })
+    const lead = await insertLead(db, {
+      email: 'owner@spoof.com',
+      last_contacted_at: '2026-10-12T15:00:00.000Z',
+    })
+    expect(await syncReplies(deps)).toEqual({ received: 1 })
+    const [l] = await db.select().from(leads).where(eq(leads.id, lead.id))
+    expect(l!.status).toBe('replied')
+  })
+})
