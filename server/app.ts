@@ -42,8 +42,9 @@ export function createApp(db: Db, options: CreateAppOptions = {}): Express {
       httpOnly: true,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000,
-      // Replit terminates TLS in front of us; the cookie stays usable over the dev proxy too.
-      secure: false,
+      // Production runs behind Replit's TLS proxy; trust proxy is on, so X-Forwarded-Proto counts
+      // as https and the cookie is marked Secure. Local dev is plain http, so it is not.
+      secure: isProduction,
     }),
   )
 

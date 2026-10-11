@@ -1,4 +1,5 @@
 // Express helpers: async wrapper, typed errors, auth middleware, body parsing. Owned by the scaffold.
+import { createHash, timingSafeEqual } from 'node:crypto'
 import type { NextFunction, Request, RequestHandler, Response } from 'express'
 import { ZodError, type ZodType } from 'zod'
 import { ModuleNotRegisteredError } from '../contracts.ts'
@@ -79,15 +80,63 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
   next(unauthorized())
 }
 
-/** Constant-time compare of the submitted password with APP_PASSWORD. False when APP_PASSWORD is unset. */
+/**
+ * Constant-time compare of the submitted password with APP_PASSWORD. False when APP_PASSWORD is unset.
+ * Both sides are hashed first so the comparison never leaks the password length.
+ */
 export function passwordMatches(candidate: string, expected: string = env.APP_PASSWORD): boolean {
   if (!expected || !candidate) return false
-  const a = Buffer.from(candidate)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length) return false
-  let diff = 0
-  for (let i = 0; i < a.length; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0)
-  return diff === 0
+  const a = createHash('sha256').update(candidate).digest()
+  const b = createHash('sha256').update(expected).digest()
+  return timingSafeEqual(a, b)
+}
+
+export const tooManyTries = (message = 'Too many tries. Wait 15 minutes and try again.') =>
+  new HttpError(429, message, 'TOO_MANY_TRIES')
+
+/**
+ * Brute-force guard for the one password login: at most `max` failed tries per key (the client
+ * IP) inside a sliding window. In memory on purpose: one process, one owner, resets on restart.
+ */
+export class LoginLimiter {
+  private readonly failures = new Map<string, number[]>()
+  constructor(
+    private readonly max = 10,
+    private readonly windowMs = 15 * 60 * 1000,
+  ) {}
+
+  private recent(key: string, now: number): number[] {
+    const list = (this.failures.get(key) ?? []).filter((t) => now - t < this.windowMs)
+    if (list.length) this.failures.set(key, list)
+    else this.failures.delete(key)
+    return list
+  }
+
+  /** True while the key is still allowed to try. */
+  allowed(key: string, now = Date.now()): boolean {
+    return this.recent(key, now).length < this.max
+  }
+
+  recordFailure(key: string, now = Date.now()): void {
+    const list = this.recent(key, now)
+    list.push(now)
+    this.failures.set(key, list)
+  }
+
+  reset(key: string): void {
+    this.failures.delete(key)
+  }
+
+  resetAll(): void {
+    this.failures.clear()
+  }
+}
+
+export const loginLimiter = new LoginLimiter()
+
+/** The key the login limiter counts by: the client IP (trust proxy is on, so Replit's header counts). */
+export function clientKey(req: Request): string {
+  return req.ip || req.socket?.remoteAddress || 'unknown'
 }
 
 /** Last middleware in the chain: turns thrown errors into { error, code } JSON. */
