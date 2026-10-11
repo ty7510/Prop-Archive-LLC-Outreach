@@ -69,3 +69,29 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Prettier:** single quotes, no semicolons, width 100, trailing commas.
 - **Em-dash guard:** `hasEmDash()` in `lib/text.ts` for builders to assert on rendered copy. No
   automated sweep of the client yet; the UI builder should grep `—` in `client/` and `content/`.
+
+## 2026-10-11 (autopilot)
+
+- **Interval always runs, ticks only while on.** `start()` schedules the 60 s interval at boot no matter
+  what; each scheduled tick reads `settings.autopilot_on` and returns at once when it is false. `POST
+/api/autopilot/start|stop` flip the setting and start or stop the interval. `POST /api/autopilot/tick`
+  runs a tick now even while off, and answers the status plus a `tick` field with one line per job
+  (`ok | error | skipped | not_built | not_due | outside_window`). Two overlapping ticks share one run.
+- **Due checks come from `job_runs`, not memory,** so a restart does not rerun discover: discover is due
+  when no run started on the local day yet, sync_replies when none in the last 10 minutes, housekeeping
+  when none in the last hour. Any status counts (ok, error, running), so a failing discover is tried
+  once a day, not once a minute.
+- **A missing module is a `not_built` job** with one warn line in the activity log per module per process,
+  never a crash. A job error is written to `job_runs` and the activity log and the tick moves on.
+- **Today's counters are computed, never stored,** over the local day in `settings.send_window.tz`:
+  discovered = leads created today; enriched = leads at status enriched or later whose `updated_at` is
+  today; enrolled = enrollments started today; sent = outbound messages with status `sent` and `sent_at`
+  today (dry runs do not count as sent, the send job's activity line carries `dryRun`); queued =
+  `ready_for_human` messages created today; replied = inbound messages created today; booked / joined =
+  `demo_booked` / `beta_joined` events today. "Roll daily counters" in housekeeping is therefore just a
+  logged snapshot of these numbers plus `expireStaleLocks()`.
+- **`lastTick`** is the in-memory start of the last tick, falling back to the newest `job_runs` row after a
+  restart. `nextTick` is null while autopilot is off.
+- **Smoke script** (`npm run smoke`) boots the app on a random port with an in-memory db and
+  `APP_PASSWORD=test`. A 501 from an unbuilt module fails the run; `SMOKE_ALLOW_NOT_BUILT=1` turns
+  those into skips so the script is useful before every builder has landed.
