@@ -225,7 +225,7 @@ describe('postcards', () => {
       expect(body.length, `${f.file} is ${body.length} chars`).toBeLessThan(350)
       expect(findVariables(body)).toContain('demo_link')
       expect(findVariables(body)).toContain('sender_name')
-      expect(body.startsWith('{{first_name}},'), f.file).toBe(true)
+      expect(body.startsWith('Hi {{first_name}},'), f.file).toBe(true)
     }
   })
 })

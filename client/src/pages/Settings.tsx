@@ -1,7 +1,7 @@
 // Settings: every section from spec section 7 and 12, a sticky Save bar, Live mode with a confirm.
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Save, RotateCcw, Loader2, KeyRound, Plus } from 'lucide-react'
+import { Save, Loader2, KeyRound, Plus } from 'lucide-react'
 import clsx from 'clsx'
 import type { Settings as SettingsT } from '@shared/settings'
 import { ENRICH_PROVIDER_IDS, type EnrichProviderId } from '@shared/settings'
@@ -14,19 +14,12 @@ import {
   type ProvidersResponse,
 } from '@shared/types'
 import type { Sequence } from '../types.ts'
-import {
-  getProviders,
-  getSettings,
-  listSequences,
-  putSettings,
-  resetTodayCounters,
-} from '../api.ts'
+import { getProviders, getSettings, listSequences, putSettings } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { useToast } from '../components/Toast.tsx'
 import { Badge, Chip, Field, Section, Toggle } from '../components/Field.tsx'
 import Confirm from '../components/Confirm.tsx'
 import CopyButton from '../components/CopyButton.tsx'
-import NotBuilt from '../components/NotBuilt.tsx'
 import { ErrorNote, Loading } from '../components/QueryState.tsx'
 import { CHANNEL_LABEL, PERSONA_LABEL, humanise } from '../lib/format.ts'
 
@@ -116,11 +109,6 @@ function SettingsForm({
       void qc.invalidateQueries({ queryKey: ['health'] })
       void qc.invalidateQueries({ queryKey: ['autopilot'] })
     },
-  })
-  const reset = useAction(resetTodayCounters, {
-    success: "Today's counters are back to zero",
-    invalidate: [['autopilot']],
-    treat404AsNotBuilt: true,
   })
 
   function set<K extends keyof SettingsT>(key: K, value: SettingsT[K]) {
@@ -585,20 +573,10 @@ function SettingsForm({
             />
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => void reset.run()}
-            disabled={reset.busy}
-          >
-            <RotateCcw className="h-4 w-4" aria-hidden /> Reset today's counters
-          </button>
-          <span className="text-sm text-stone-600">
-            Lets the daily caps start over. Does not undo anything sent.
-          </span>
-        </div>
-        {reset.notBuilt ? <NotBuilt what="Resetting counters." /> : null}
+        <p className="text-sm text-stone-600">
+          Today's numbers and the daily caps count real rows for the current day in your time zone,
+          so they start over by themselves at midnight. Nothing to reset.
+        </p>
       </Section>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-stone-200 bg-white/95 px-4 py-3 backdrop-blur md:left-60">

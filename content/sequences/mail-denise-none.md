@@ -10,7 +10,7 @@ description: One postcard to the owner of a small management company.
 
 delay_days: 0
 
-{{first_name}},
+Hi {{first_name}},
 
 Staff in one tool, tenants texting the office, contractors emailing invoices, compliance for {{property_count}} buildings in a spreadsheet. Prop Archive puts all of it in one platform your whole team shares. Free while we're in beta.
 

@@ -10,7 +10,7 @@ description: One postcard to a small management company that just took on a buil
 
 delay_days: 0
 
-{{first_name}},
+Hi {{first_name}},
 
 Congrats on the new building. New leases, a license, lead certs, and the old owner's records to key in. Prop Archive gives every building one record your team shares, and we help move the data. Free while we're in beta.
 

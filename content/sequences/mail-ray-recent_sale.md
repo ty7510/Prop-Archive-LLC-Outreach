@@ -10,7 +10,7 @@ description: One postcard to a full-time owner who just bought a building.
 
 delay_days: 0
 
-{{first_name}},
+Hi {{first_name}},
 
 Congrats on the new building. New tenants, a new license, lead certs, and a longer contractor list, all in the same phone as the other properties. Prop Archive gives every one of them one home. Free while we're in beta.
 

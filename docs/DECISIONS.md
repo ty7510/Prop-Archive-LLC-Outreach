@@ -70,6 +70,72 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Em-dash guard:** `hasEmDash()` in `lib/text.ts` for builders to assert on rendered copy. No
   automated sweep of the client yet; the UI builder should grep `—` in `client/` and `content/`.
 
+## 2026-10-11 (enrich)
+
+- **Provider interface** is the spec's plus `applies(lead, ctx)`: a provider says no when the lead
+  lacks what it needs (Hunter needs a business domain and a first/last name, Apollo and PDL need a
+  person's name, L&I needs an OPA account on a property). Saves credits and avoids junk matches.
+  Providers throw a plain `Error` on failure; the orchestrator catches it, logs
+  `enrich.provider_error` to activity_log and carries on. One lead counts as `failed` only when
+  every provider that ran threw; its status goes back to `new` so the next tick retries.
+- **Credit caps** count `provider_usage` rows in the calendar month of `settings.send_window.tz`.
+  The check is `used + costPerCall > cap`; Hunter declares `costPerCall: 2` (finder + verifier) and
+  records what it really used (1 when nothing was found). PDL records 0 for a 404 ("no match" is not
+  billed). The free L&I provider records a 0-credit row so `GET /api/enrich/usage` shows calls.
+  A cap being hit is logged once per batch, not once per lead.
+- **Stop rule** is the spec's: email AND (linkedin OR phone). Email statuses: Hunter verifier
+  `deliverable` -> valid, `undeliverable` -> invalid, else risky; Apollo `verified` -> valid,
+  `guessed`/`likely to engage` -> risky; Claude research and PDL emails are `unknown` (unverified).
+  `mergeProviderResult` never writes an empty value over a value, never replaces a `valid` email with
+  a different address, and only upgrades the same address to a better status.
+- **Channels** are "do we have a way in" (email that is not invalid, mailing street + zip or city,
+  linkedin url, instagram url, phone). Settings toggles and suppression are outreach's job.
+- **Status** moves new -> enriching -> enriched only for leads in new/enriching/enriched. A lead that
+  is already enrolled or further along keeps its status but still gets the new fields and channels.
+- **Claude research** follows the SDK README: `client.messages.parse` with
+  `output_config: { effort: 'low', format: zodOutputFormat(schema) }` (a `json_schema` format), the
+  `web_search_20260209` server tool with `max_uses: 5`, `max_tokens: 2000`, no streaming. `stop_reason`
+  is read before content: `refusal` and `max_tokens` return an empty result, `pause_turn` pushes the
+  assistant turn back and continues (3 turns max). Timeout is 60 s for this provider because a web
+  search turn cannot finish in the 10 s the plain HTTP providers get; the SDK retries 429/5xx twice.
+- **GET /api/enrich/usage** needed a second mount point, so `server/app.ts` gained one line:
+  `app.use('/api/enrich', enrichUsageRouter)`.
+- **L&I joins** `business_licenses.opa_account_num` on `properties.opa_account`, newest active license
+  per property. It fills `properties.units` and license fields, sums `unit_count`, and reads the
+  person from `legalfirstname/legallastname`, else `ownercontact1name`.
+
+## 2026-10-11 (outreach)
+
+- **Deps bag** (`server/outreach/deps.ts`): db, clock, random, fetch, SMTP mailer factory, a thin
+  `Llm` (text + structured) over `@anthropic-ai/sdk`, and an IMAP client factory, all injected.
+  `defaultDeps()` reads env; `testDeps(db, fakes)` for tests. Routes read `outreachDeps()`, tests
+  swap it with `setOutreachDeps()`. No test touches the network.
+- **Public base URL for links:** `PUBLIC_URL` env, else the first `REPLIT_DOMAINS` entry, else
+  `http://localhost:PORT`. Settings has no such key, so this stays an env value.
+- **Tracked links carry `?c=<channel>&s=<sequence-slug>`** so `/r/:token/:dest` can tag the click
+  without a lookup; it falls back to the lead's last outbound message. Unknown token still
+  redirects (without `ref`) so a prospect never hits a dead link.
+- **At-most-once:** `sendDue` writes the message row (`queued`) with `enrollment_id:step_index`
+  before any provider call. A later run that finds the row as `sent|dry_run|ready_for_human|skipped`
+  only advances the enrollment; a row left `queued|failed` is retried in place.
+- **Daily caps count `dry_run` rows too**, so a dry run paces exactly like live would.
+- **Human channels advance the enrollment when the `ready_for_human` row is created.** Queue
+  done/skip only change the message status (done also stamps `last_contacted_at`).
+- **Lead statuses never contacted by the autopilot:** replied, booked, joined, not_interested,
+  unsubscribed, bounced, disqualified, plus do_not_contact and any suppression hit. A human may
+  re-enrol replied / not_now leads by hand; unsubscribed, bounced, do_not_contact and suppressed
+  are refused for everyone.
+- **`first_name` falls back to "there"** when unknown, so "Hi {{first_name}}" never reads "Hi ,".
+  Unknown variable names render empty and log `template_missing_var` as a warn.
+- **Test send** emails step 1 (rendered for a labelled sample lead) to `owner_email` regardless of
+  `live_mode`, since it only reaches Theo. It still needs an email provider and the physical address.
+- **Replies:** IMAP search since last sync (stored as settings row `_replies_synced_at`) minus one
+  day of slack, last 200 uids. Thread match on `In-Reply-To`/`References` vs `provider_message_id`,
+  else From address of a contacted lead. Bounces skip the model and never notify the owner.
+- **Webhook outcomes** reuse `recordOutcome`, which `POST /api/leads/:id/outcome` also uses.
+  `enroll`, `stop` and `outcome` live in `routes/sequences.ts` as `leadOutreachRouter`, mounted at
+  `/api/leads` before `leadsRouter` (one line in `app.ts`).
+
 ## 2026-10-11 (autopilot)
 
 - **Interval always runs, ticks only while on.** `start()` schedules the 60 s interval at boot no matter
@@ -95,3 +161,36 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Smoke script** (`npm run smoke`) boots the app on a random port with an in-memory db and
   `APP_PASSWORD=test`. A 501 from an unbuilt module fails the run; `SMOKE_ALLOW_NOT_BUILT=1` turns
   those into skips so the script is useful before every builder has landed.
+
+## 2026-10-11 (integration)
+
+- **Merge order** sources, enrich, outreach, ui, autopilot, content, each `--no-ff`. Conflicts were
+  only in `server/app.ts` (kept both mount lines), `docs/DECISIONS.md` (kept every section, in date
+  order) and `server/routes/settings.test.ts` (the "stub routes answer 501" test is gone: nothing is
+  a stub any more). No package.json, lock file or schema conflicts, so no migration was regenerated.
+- **One owner per path.** `POST /api/leads/:id/enroll`, `/stop` and `/outcome` were built twice
+  (sources in `routes/leads.ts`, outreach in `routes/sequences.ts` as `leadOutreachRouter`). The
+  outreach router is mounted first and now owns them; the copies in `routes/leads.ts` were removed.
+  `PATCH /api/leads/:id` with `do_not_contact: true` still calls `modules.outreach.stopLead`.
+- **Stopping a lead empties its queue.** `stopLead` in `server/outreach/enroll.ts` also marks the
+  lead's `queued` and `ready_for_human` outbound messages `skipped`, so a lead who books, joins, says
+  no or is marked do-not-contact drops out of Theo's "Waiting for you" list at once.
+- **Outreach deps follow the current db.** `outreachDeps()` rebuilds its default bag when `getDb()`
+  changes, instead of caching the first database for the life of the process. Production has one db;
+  tests make one per test and were reading the wrong one.
+- **The smoke stays offline.** `scripts/smoke.ts` sets `target_zips: []` before the tick, so the
+  daily discover job has nothing to look up and the Carto API is never called. The CSV it imports is
+  the only lead source. Strict mode (no `SMOKE_ALLOW_NOT_BUILT`) passes: 10 of 10.
+- **beta_url is `https://proparchive.app/?beta=1`.** The main app's `conversion-dialogs.tsx` opens
+  the Join the beta form when the home page is loaded with `?beta=1` (and strips the key); `?join=beta`
+  does nothing. `demo_url` stays `https://proparchive.app/demo`.
+- **No "Reset today's counters".** Today's numbers and the daily caps are computed from rows for the
+  current local day, so there is nothing to reset; the button and its unlisted route are gone and
+  Settings > Danger says so in one sentence.
+- **Postcards open with `Hi {{first_name}},`** so a lead with no first name renders "Hi there,"
+  (the renderer's fallback) instead of "there,". Emails already said "Hi {{first_name}},".
+- **Live Carto run observed.** One manual tick on a fresh db with the default seven zips created 50
+  leads (583 more skipped by the daily cap) from L&I new rental licenses in about 2.5 s, enriched 10
+  (only the free `li_license` provider ran; the others logged `provider_not_configured`), enrolled 0
+  (no email, mail off, no profile URLs or phones), and left the queue empty. New-license leads whose
+  license covers 1 or 2 units score 55 and persona `maya`; whether that is wanted is Theo's call.
