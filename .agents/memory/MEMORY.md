@@ -1,0 +1,2 @@
+- [Outreach boundaries](outreach-boundaries.md) — separate from the main Prop Archive app; merge GitHub updates without rebasing.
+- [Preview port routing](preview-port-routing.md) — managed workflow restarts reset public routing to port 5000; preserve requested Vite/API ports behind forwarding.

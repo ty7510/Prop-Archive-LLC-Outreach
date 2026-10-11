@@ -1,11 +1,12 @@
 import { defineConfig } from 'drizzle-kit'
+import { resolveDatabaseUrl } from './server/db/url.ts'
 
 export default defineConfig({
   dialect: 'sqlite',
   schema: './server/db/schema.ts',
   out: './drizzle',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'file:./data/outreach.db',
+    url: resolveDatabaseUrl(process.env.DATABASE_URL),
   },
   strict: true,
   verbose: true,

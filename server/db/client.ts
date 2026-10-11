@@ -7,10 +7,11 @@ import { sql } from 'drizzle-orm'
 import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import * as schema from './schema.ts'
+import { resolveDatabaseUrl } from './url.ts'
 
 export type Db = LibSQLDatabase<typeof schema>
 
-export const DEFAULT_DATABASE_URL = 'file:./data/outreach.db'
+export { DEFAULT_DATABASE_URL } from './url.ts'
 
 /** Make sure the folder for a `file:` URL exists. No-op for memory databases. */
 export function ensureDbFolder(url: string): void {
@@ -86,7 +87,7 @@ let defaultDb: Db | null = null
 export function getDb(): Db {
   if (!defaultDb) {
     defaultDb = createDb(
-      process.env.DATABASE_URL || DEFAULT_DATABASE_URL,
+      resolveDatabaseUrl(process.env.DATABASE_URL),
       process.env.DATABASE_AUTH_TOKEN || undefined,
     )
   }

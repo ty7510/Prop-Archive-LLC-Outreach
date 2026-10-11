@@ -10,6 +10,8 @@ export default defineConfig({
     },
   },
   test: {
+    // Keep parallel test servers from exhausting small Replit runners.
+    maxWorkers: 2,
     environment: 'node',
     include: ['server/**/*.test.ts', 'shared/**/*.test.ts', 'client/src/**/*.test.ts'],
     globals: true,

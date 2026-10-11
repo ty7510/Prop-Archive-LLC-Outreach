@@ -11,7 +11,7 @@ How to run Prop Archive Outreach on your machine or on Replit. Every command bel
 3. `npm install`
 4. `npm run dev`
    - Server on http://localhost:5300 (API), client on http://localhost:5173 (what you open).
-   - `PORT=5311 npm run dev` moves the API; the Vite proxy follows `PORT`.
+   - The Vite proxy targets port 5300; keep the API on that port when using the dev client.
    - The database file `data/outreach.db` is created and migrated on first boot. The 36 default
      sequences (email, postcard, LinkedIn, call script, for Maya / Ray / Denise, with and without a
      trigger) are seeded on first boot and `settings.sequence_by_persona` is filled from them.
@@ -77,10 +77,17 @@ Postcards start with `Hi {{first_name}},`; a lead without a first name reads "Hi
 
 ## Production (Replit)
 
-- Run button and Preview: `npm ci && npm run build && npm start` with `PORT=5000` (port 5000 maps
-  to 80 for the Preview). In the workspace the sqlite file in `data/` persists.
+- Run button runs `npm run dev` with `PORT=5300` plus a Replit-only Preview forwarding adapter.
+  Vite listens on all interfaces on port 5173, accepts
+  Replit preview hosts, and proxies `/api`, `/u`, and `/r` to the API on port 5300.
+  The adapter forwards port 5000 to Vite on 5173; port 5000 maps to external port 80.
+  This matches Replit's managed webview without changing Vite or API ports.
+  In the workspace the sqlite file in `data/` persists.
+- PostgreSQL URLs injected by Replit are ignored because this app uses SQLite/libsql.
+  Explicit `file:` and hosted `libsql:` database URLs are preserved.
 - Publishing: Reserved VM, not Autoscale. The autopilot is a timer inside the server, so the app
   must stay up and run as exactly one copy. Build `npm ci && npm run build`, run `npm start`.
+  The launch command respects Replit's `PORT`, falling back to the mapped port 5000.
 - A published app loses the files it writes on every publish and restart, so it cannot use the
   sqlite file. Before the first Publish, create a hosted libsql database (Turso), then add
   `DATABASE_URL` (`libsql://...`) and `DATABASE_AUTH_TOKEN` to the publishing secrets. The server
