@@ -263,6 +263,13 @@ export async function matchLead(
   return byDeadAddress[0] ?? null
 }
 
+/** True when the mail's In-Reply-To/References point at a message we sent this lead. */
+export async function repliesInOurThread(db: Db, mail: ParsedMail, lead: Lead): Promise<boolean> {
+  const threadIds = [mail.inReplyTo, ...mail.references].filter((x): x is string => Boolean(x))
+  const byThread = await leadByOurMessageIds(db, threadIds)
+  return byThread?.id === lead.id
+}
+
 /** Statuses a routine later reply ("see you Tuesday", "thanks") must never undo. */
 export const TERMINAL_LEAD_STATUSES: readonly LeadStatus[] = [
   'booked',
@@ -451,7 +458,12 @@ export async function processInboundMessage(
   if (mail.from && ownAddresses.has(mail.from)) return false
   const lead = await matchLead(deps.db, mail, ownAddresses)
   if (!lead) return false
-  const classification = await classifyReply(deps.llm, mail.subject, mail.text, mail.from)
+  const classified = await classifyReply(deps.llm, mail.subject, mail.text, mail.from)
+  // A From header is easy to forge, so "booked" only counts when the reply sits in one of our threads.
+  const classification =
+    classified === 'booked' && !(await repliesInOurThread(deps.db, mail, lead))
+      ? 'other'
+      : classified
   return handleInboundReply(deps, {
     lead,
     classification,
