@@ -212,7 +212,8 @@ notify_owner_on_reply: true          human_queue_webhook_url: ''
 webhook_secret: random on first boot
 ```
 
-Env keys (`.env.example`): `APP_PASSWORD`, `SESSION_SECRET`, `DATABASE_URL=file:./data/outreach.db`,
+Env keys (`.env.example`): `APP_PASSWORD`, `SESSION_SECRET`, `OUTREACH_DATABASE_URL` (empty means
+`file:./data/outreach.db`; `DATABASE_URL` is read only when it is a libsql or file address),
 `ANTHROPIC_API_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `RESEND_API_KEY`,
 `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASS`, `LOB_API_KEY`, `HUNTER_API_KEY`,
 `APOLLO_API_KEY`, `PDL_API_KEY`, `PORT=5300`.

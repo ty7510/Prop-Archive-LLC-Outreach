@@ -5,7 +5,12 @@ export default defineConfig({
   schema: './server/db/schema.ts',
   out: './drizzle',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'file:./data/outreach.db',
+    // Same rule as server/db/client.ts: Replit's Postgres DATABASE_URL is not ours.
+    url:
+      process.env.OUTREACH_DATABASE_URL ||
+      (/^(file|libsql|https?|wss?):/i.test(process.env.DATABASE_URL ?? '')
+        ? process.env.DATABASE_URL!
+        : 'file:./data/outreach.db'),
   },
   strict: true,
   verbose: true,

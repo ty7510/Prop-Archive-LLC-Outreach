@@ -8,6 +8,7 @@
 // Env is set before any server module loads, because server/env.ts reads process.env at import time.
 process.env.APP_PASSWORD = 'test'
 process.env.DATABASE_URL = 'file::memory:'
+process.env.OUTREACH_DATABASE_URL = 'file::memory:'
 process.env.SESSION_SECRET ||= 'smoke-session-secret-not-for-production'
 process.env.NODE_ENV ||= 'development'
 
