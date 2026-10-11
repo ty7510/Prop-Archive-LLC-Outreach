@@ -8,3 +8,6 @@ data/
 .DS_Store
 .claude/worktrees/
 coverage/
+
+# Replit Agent chat attachments (screenshots can hold lead data)
+attached_assets/

@@ -4,7 +4,7 @@ import 'dotenv/config'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app.ts'
 import { modules } from './contracts.ts'
-import { applyMigrations, ephemeralDbProblem, getDb } from './db/client.ts'
+import { applyMigrations, ephemeralDbProblem, getDb, resolveDatabaseConfig } from './db/client.ts'
 import { settings as settingsTable } from './db/schema.ts'
 import { env, isProduction, presentProviders } from './env.ts'
 import { logActivity } from './lib/activity.ts'
@@ -29,7 +29,9 @@ async function seedOnFirstBoot(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const dbProblem = ephemeralDbProblem(env.DATABASE_URL)
+  const dbConfig = resolveDatabaseConfig()
+  if (dbConfig.ignored) console.warn(`[boot] ${dbConfig.ignored}`)
+  const dbProblem = ephemeralDbProblem(dbConfig.url)
   if (dbProblem) {
     console.error(`[boot] ${dbProblem}`)
     process.exit(1)
