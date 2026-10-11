@@ -161,3 +161,36 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Smoke script** (`npm run smoke`) boots the app on a random port with an in-memory db and
   `APP_PASSWORD=test`. A 501 from an unbuilt module fails the run; `SMOKE_ALLOW_NOT_BUILT=1` turns
   those into skips so the script is useful before every builder has landed.
+
+## 2026-10-11 (integration)
+
+- **Merge order** sources, enrich, outreach, ui, autopilot, content, each `--no-ff`. Conflicts were
+  only in `server/app.ts` (kept both mount lines), `docs/DECISIONS.md` (kept every section, in date
+  order) and `server/routes/settings.test.ts` (the "stub routes answer 501" test is gone: nothing is
+  a stub any more). No package.json, lock file or schema conflicts, so no migration was regenerated.
+- **One owner per path.** `POST /api/leads/:id/enroll`, `/stop` and `/outcome` were built twice
+  (sources in `routes/leads.ts`, outreach in `routes/sequences.ts` as `leadOutreachRouter`). The
+  outreach router is mounted first and now owns them; the copies in `routes/leads.ts` were removed.
+  `PATCH /api/leads/:id` with `do_not_contact: true` still calls `modules.outreach.stopLead`.
+- **Stopping a lead empties its queue.** `stopLead` in `server/outreach/enroll.ts` also marks the
+  lead's `queued` and `ready_for_human` outbound messages `skipped`, so a lead who books, joins, says
+  no or is marked do-not-contact drops out of Theo's "Waiting for you" list at once.
+- **Outreach deps follow the current db.** `outreachDeps()` rebuilds its default bag when `getDb()`
+  changes, instead of caching the first database for the life of the process. Production has one db;
+  tests make one per test and were reading the wrong one.
+- **The smoke stays offline.** `scripts/smoke.ts` sets `target_zips: []` before the tick, so the
+  daily discover job has nothing to look up and the Carto API is never called. The CSV it imports is
+  the only lead source. Strict mode (no `SMOKE_ALLOW_NOT_BUILT`) passes: 10 of 10.
+- **beta_url is `https://proparchive.app/?beta=1`.** The main app's `conversion-dialogs.tsx` opens
+  the Join the beta form when the home page is loaded with `?beta=1` (and strips the key); `?join=beta`
+  does nothing. `demo_url` stays `https://proparchive.app/demo`.
+- **No "Reset today's counters".** Today's numbers and the daily caps are computed from rows for the
+  current local day, so there is nothing to reset; the button and its unlisted route are gone and
+  Settings > Danger says so in one sentence.
+- **Postcards open with `Hi {{first_name}},`** so a lead with no first name renders "Hi there,"
+  (the renderer's fallback) instead of "there,". Emails already said "Hi {{first_name}},".
+- **Live Carto run observed.** One manual tick on a fresh db with the default seven zips created 50
+  leads (583 more skipped by the daily cap) from L&I new rental licenses in about 2.5 s, enriched 10
+  (only the free `li_license` provider ran; the others logged `provider_not_configured`), enrolled 0
+  (no email, mail off, no profile URLs or phones), and left the queue empty. New-license leads whose
+  license covers 1 or 2 units score 55 and persona `maya`; whether that is wanted is Theo's call.
