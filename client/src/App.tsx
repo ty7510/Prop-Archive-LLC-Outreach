@@ -55,11 +55,20 @@ function Shell({ children }: { children: React.ReactNode }) {
           <Link href="/go" className="text-lg font-semibold">
             Prop Archive Outreach
           </Link>
-          <div className="md:hidden">
+          <div className="flex items-center gap-2 md:hidden">
             <StatusPills />
+            <button
+              type="button"
+              onClick={onLogout}
+              className="btn-secondary min-h-tap px-2"
+              aria-label="Log out"
+              title="Log out"
+            >
+              <LogOut className="h-4 w-4" aria-hidden />
+            </button>
           </div>
         </div>
-        <nav className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:px-3">
+        <nav className="flex gap-1 px-2 pb-2 md:flex-col md:px-3">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = location.startsWith(href)
             return (
@@ -67,12 +76,12 @@ function Shell({ children }: { children: React.ReactNode }) {
                 key={href}
                 href={href}
                 className={clsx(
-                  'flex min-h-tap flex-1 items-center justify-center gap-2 rounded-lg px-2 text-base font-medium md:flex-none md:justify-start md:gap-3 md:px-3 md:text-lg',
+                  'flex min-h-tap min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1 text-sm font-medium sm:gap-2 sm:px-2 sm:text-base md:flex-none md:justify-start md:gap-3 md:px-3 md:text-lg',
                   active ? 'bg-emerald-50 text-emerald-800' : 'text-stone-700 hover:bg-stone-100',
                 )}
               >
-                <Icon className="h-5 w-5" aria-hidden />
-                {label}
+                <Icon className="h-5 w-5 shrink-0" aria-hidden />
+                <span className="truncate">{label}</span>
               </Link>
             )
           })}

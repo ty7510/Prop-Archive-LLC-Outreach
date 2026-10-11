@@ -8,6 +8,7 @@ import {
   classifyByKeywords,
   classifyReply,
   matchLead,
+  nextLeadStatus,
   parseRawMail,
   stripQuoted,
   syncReplies,
@@ -269,5 +270,125 @@ describe('syncReplies', () => {
     await insertLead(db, { email: 'never@contacted.com' }) // last_contacted_at null
     const m = parseRawMail('From: never@contacted.com\r\nSubject: x\r\n\r\nhi')
     expect(await matchLead(db, m)).toBeNull()
+  })
+})
+
+describe('replies that must not undo a result', () => {
+  it('a routine reply from a booked lead keeps the booked status and still notifies Theo', async () => {
+    const raw = [
+      'From: Jane Owner <jane@one.com>',
+      'Subject: Re: Hi',
+      'Message-ID: <j1@one.com>',
+      '',
+      'Looking forward to it.',
+    ].join('\r\n')
+    const { db, deps, outbox } = await setup({
+      imap: fakeImap([{ uid: 1, source: Buffer.from(raw) }]),
+    })
+    await setSettings(db, { physical_address: '1 Main St' })
+    const jane = await insertLead(db, {
+      email: 'jane@one.com',
+      status: 'booked',
+      last_contacted_at: '2026-10-12T15:00:00.000Z',
+    })
+    expect(await syncReplies(deps)).toEqual({ received: 1 })
+    const [l] = await db.select().from(leads).where(eq(leads.id, jane.id))
+    expect(l!.status).toBe('booked')
+    expect(l!.last_replied_at).not.toBeNull()
+    expect((await db.select().from(events)).some((e) => e.kind === 'reply')).toBe(true)
+    // The notice to Theo is plain mail to himself: no unsubscribe headers pointing nowhere.
+    expect(outbox).toHaveLength(1)
+    expect(outbox[0]!.to).toBe('theo@proparchive.biz')
+    expect(outbox[0]!.headers).toBeUndefined()
+  })
+
+  it('nextLeadStatus keeps final statuses except for an unsubscribe or a bounce', () => {
+    expect(nextLeadStatus('booked', 'interested')).toBeNull()
+    expect(nextLeadStatus('joined', 'other')).toBeNull()
+    expect(nextLeadStatus('not_interested', 'not_now')).toBeNull()
+    expect(nextLeadStatus('booked', 'unsubscribe')).toBe('unsubscribed')
+    expect(nextLeadStatus('booked', 'bounce')).toBe('bounced')
+    expect(nextLeadStatus('contacted', 'interested')).toBe('replied')
+    expect(nextLeadStatus('contacted', 'booked')).toBe('booked')
+  })
+})
+
+describe('bounces without a thread id', () => {
+  it('a mailer-daemon report is matched by the dead address inside it, then suppressed', async () => {
+    const dsn = [
+      'From: Mail Delivery System <MAILER-DAEMON@mx.example.net>',
+      'To: theo@proparchive.biz',
+      'Subject: Undelivered Mail Returned to Sender',
+      'Message-ID: <dsn-1@mx.example.net>',
+      'Content-Type: multipart/report; report-type=delivery-status; boundary="B1"',
+      '',
+      '--B1',
+      'Content-Type: text/plain',
+      '',
+      'This is the mail system at host mx.example.net.',
+      '',
+      '<dead@two.com>: host mail.two.com said: 550 5.1.1 User unknown',
+      '--B1',
+      'Content-Type: message/delivery-status',
+      '',
+      'Final-Recipient: rfc822; dead@two.com',
+      'Action: failed',
+      'Status: 5.1.1',
+      '--B1--',
+    ].join('\r\n')
+    const { db, deps, outbox } = await setup({
+      imap: fakeImap([{ uid: 9, source: Buffer.from(dsn) }]),
+    })
+    const two = await insertLead(db, {
+      email: 'dead@two.com',
+      last_contacted_at: '2026-10-12T15:00:00.000Z',
+    })
+    const { sequence } = await insertSequence(db)
+    await enrollLead(deps, two.id, sequence.id)
+
+    const parsed = parseRawMail(dsn)
+    expect(parsed.inReplyTo).toBeNull()
+    expect(parsed.allAddresses).toContain('dead@two.com')
+    expect(await matchLead(db, parsed, new Set(['theo@proparchive.biz']))).toMatchObject({
+      id: two.id,
+    })
+
+    expect(await syncReplies(deps)).toEqual({ received: 1 })
+    const [l] = await db.select().from(leads).where(eq(leads.id, two.id))
+    expect(l!.status).toBe('bounced')
+    expect(l!.email_status).toBe('invalid')
+    expect((await db.select().from(suppression)).map((s) => s.value)).toEqual(['dead@two.com'])
+    const [enr] = await db.select().from(enrollments)
+    expect(enr!.status).toBe('stopped_bounced')
+    expect(outbox).toHaveLength(0) // no owner mail for a bounce
+  })
+
+  it('a bounce that only quotes our own message id is matched through it', async () => {
+    const { db, deps } = await setup()
+    const lead = await insertLead(db, { last_contacted_at: '2026-10-12T15:00:00.000Z' })
+    await db.insert(messages).values({
+      id: 'm-out',
+      lead_id: lead.id,
+      channel: 'email',
+      direction: 'out',
+      status: 'sent',
+      idempotency_key: 'k-out',
+      body: 'hi',
+      provider_message_id: '<our-id@outreach.test>',
+      created_at: deps.now().toISOString(),
+    })
+    const raw = [
+      'From: postmaster@elsewhere.test',
+      'Subject: Delivery Status Notification (Failure)',
+      'Message-ID: <n1@elsewhere.test>',
+      '',
+      'The original message had Message-ID: <our-id@outreach.test>',
+    ].join('\r\n')
+    expect(await matchLead(db, parseRawMail(raw))).toMatchObject({ id: lead.id })
+    // A normal mail from a stranger quoting an id is still nobody: only bounces look inside.
+    const plain = raw
+      .replace('postmaster@elsewhere.test', 'someone@elsewhere.test')
+      .replace('Delivery Status Notification (Failure)', 'hello')
+    expect(await matchLead(db, parseRawMail(plain))).toBeNull()
   })
 })

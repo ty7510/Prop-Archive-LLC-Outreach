@@ -183,7 +183,7 @@ describe('email sequences', () => {
       expect(
         f.parsed.steps.map((s) => s.delay_days),
         f.file,
-      ).toEqual([0, 3, 8])
+      ).toEqual([0, 3, 5])
       for (const s of f.parsed.steps) {
         expect(s.subject, `${f.file} step ${s.step_index + 1} has no subject`).toBeTruthy()
         expect((s.subject ?? '').length, `${f.file} subject "${s.subject}"`).toBeLessThan(45)
@@ -200,6 +200,17 @@ describe('email sequences', () => {
       const firstSentenceEnd = body.indexOf('.', body.indexOf('{{ai_opener}}'))
       expect(pain, `${f.file}: Prop Archive shows up before the pain sentence`).toBeGreaterThan(
         firstSentenceEnd,
+      )
+    }
+  })
+
+  it('LinkedIn connection notes open about them, not about Theo', () => {
+    for (const f of files.filter((x) => x.parsed.channel === 'linkedin')) {
+      const body = f.parsed.steps[0]?.body ?? ''
+      const afterGreeting = body.replace(/^Hi \{\{first_name\}\},\s*/, '')
+      expect(/^I\b/.test(afterGreeting), `${f.file}: step 1 starts with "I"`).toBe(false)
+      expect(afterGreeting.indexOf('I build'), `${f.file}: Theo before the pain`).toBeGreaterThan(
+        afterGreeting.indexOf('.'),
       )
     }
   })

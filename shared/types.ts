@@ -83,6 +83,7 @@ export type MessageDirection = z.infer<typeof MessageDirectionSchema>
 export const MESSAGE_STATUSES = [
   'dry_run',
   'queued',
+  'sending',
   'ready_for_human',
   'sent',
   'skipped',

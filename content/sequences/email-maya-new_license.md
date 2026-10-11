@@ -38,7 +38,7 @@ Still free while we're in beta. Join here: {{beta_link}}
 
 ## Step 3
 
-delay_days: 8
+delay_days: 5
 subject: I'll stop here
 
 Hi {{first_name}},

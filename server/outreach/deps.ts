@@ -29,6 +29,8 @@ export interface OutgoingMail {
   text: string
   html: string
   headers?: Record<string, string>
+  /** Our own Message-ID, so a resend of the same step is at least a visible duplicate. */
+  messageId?: string
 }
 
 /** What we need from a nodemailer transport. */

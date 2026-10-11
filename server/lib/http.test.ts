@@ -30,6 +30,16 @@ describe('LoginLimiter', () => {
     expect(limiter.allowed('ip', t0 + 1001)).toBe(true)
   })
 
+  it('a ceiling over all keys together stops a client that fakes a new address per try', () => {
+    const limiter = new LoginLimiter(5, 60_000, 3)
+    limiter.recordFailure('1.1.1.1', 1)
+    limiter.recordFailure('2.2.2.2', 2)
+    expect(limiter.allowed('3.3.3.3', 3)).toBe(true)
+    limiter.recordFailure('3.3.3.3', 3)
+    expect(limiter.allowed('4.4.4.4', 4)).toBe(false)
+    expect(limiter.allowed('4.4.4.4', 60_010)).toBe(true)
+  })
+
   it('reset clears one key and resetAll clears everything', () => {
     const limiter = new LoginLimiter(1, 60_000)
     limiter.recordFailure('a', 1)

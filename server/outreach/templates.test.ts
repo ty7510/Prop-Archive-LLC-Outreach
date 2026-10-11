@@ -67,6 +67,17 @@ describe('template vars', () => {
     const links = trackedLinks({ unsubscribe_token: 'abc' }, { ...ctx, channel: 'linkedin' })
     expect(links.demo_link).toBe('https://outreach.test/r/abc/demo?c=linkedin&s=ray-email-a')
   })
+
+  it('postcards and call scripts get the plain address a person can type or hear', () => {
+    const lead = sampleLead()
+    for (const channel of ['mail', 'call'] as const) {
+      const vars = buildVars(lead, settings, { ...ctx, channel })
+      expect(vars.demo_link).toBe('https://proparchive.app/demo')
+      expect(vars.beta_link).toBe('https://proparchive.app/?beta=1')
+      expect(vars.site_link).toBe('https://proparchive.app')
+    }
+    expect(buildVars(lead, settings, { ...ctx, channel: 'linkedin' }).demo_link).toContain('/r/')
+  })
 })
 
 describe('renderTemplate', () => {

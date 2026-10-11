@@ -95,6 +95,16 @@ export interface ParsedMail {
   subject: string | null
   text: string
   date: string | null
+  /** Every message id anywhere in the raw mail (a bounce carries the original's inside a part). */
+  allMessageIds: string[]
+  /** Every email address anywhere in the raw mail, lower-cased (a bounce names the dead address). */
+  allAddresses: string[]
+}
+
+const ADDRESS_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g
+
+function uniq<T>(xs: T[]): T[] {
+  return [...new Set(xs)]
 }
 
 function headerValue(headers: string, name: string): string | null {
@@ -176,7 +186,14 @@ export function parseRawMail(
     subject: headerValue(headers, 'Subject') ?? envelope?.subject ?? null,
     text: stripQuoted(body),
     date: headerValue(headers, 'Date') ?? (envelope?.date ? String(envelope.date) : null),
+    allMessageIds: uniq(messageIds(raw)),
+    allAddresses: uniq((raw.match(ADDRESS_RE) ?? []).map((a) => normaliseEmail(a))).filter(Boolean),
   }
+}
+
+/** Does this look like a delivery failure (by sender or subject), before any lead is matched? */
+export function looksLikeBounce(mail: Pick<ParsedMail, 'from' | 'subject'>): boolean {
+  return BOUNCE_RE.test(mail.from ?? '') || BOUNCE_RE.test(mail.subject ?? '')
 }
 
 function escapeRe(s: string): string {
@@ -191,21 +208,33 @@ function decodeQuotedPrintable(s: string): string {
 
 // ---------- matching and handling ----------
 
-/** The lead a reply belongs to: by our provider message id in the thread, else by From address. */
-export async function matchLead(db: Db, mail: ParsedMail): Promise<Lead | null> {
-  const ids = [mail.inReplyTo, ...mail.references].filter((x): x is string => Boolean(x))
+async function leadByOurMessageIds(db: Db, ids: string[]): Promise<Lead | null> {
   const bare = ids.flatMap((id) => [id, id.replace(/^<|>$/g, '')])
-  if (bare.length > 0) {
-    const hit = await db
-      .select({ lead_id: messages.lead_id })
-      .from(messages)
-      .where(and(eq(messages.direction, 'out'), inArray(messages.provider_message_id, bare)))
-      .limit(1)
-    if (hit[0]) {
-      const lead = await db.select().from(leads).where(eq(leads.id, hit[0].lead_id)).limit(1)
-      if (lead[0]) return lead[0]
-    }
-  }
+  if (bare.length === 0) return null
+  const hit = await db
+    .select({ lead_id: messages.lead_id })
+    .from(messages)
+    .where(and(eq(messages.direction, 'out'), inArray(messages.provider_message_id, bare)))
+    .limit(1)
+  if (!hit[0]) return null
+  const lead = await db.select().from(leads).where(eq(leads.id, hit[0].lead_id)).limit(1)
+  return lead[0] ?? null
+}
+
+/**
+ * The lead a reply belongs to: by our provider message id in the thread, else by From address.
+ * A delivery failure comes from a mailer daemon and often has no In-Reply-To, so for those we also
+ * look for our message id and for a contacted lead's address anywhere inside the raw mail
+ * (Final-Recipient, the embedded original, "could not be delivered to ...").
+ */
+export async function matchLead(
+  db: Db,
+  mail: ParsedMail,
+  ownAddresses: ReadonlySet<string> = new Set(),
+): Promise<Lead | null> {
+  const threadIds = [mail.inReplyTo, ...mail.references].filter((x): x is string => Boolean(x))
+  const byThread = await leadByOurMessageIds(db, threadIds)
+  if (byThread) return byThread
   if (mail.from) {
     const byEmail = await db
       .select()
@@ -215,7 +244,39 @@ export async function matchLead(db: Db, mail: ParsedMail): Promise<Lead | null> 
       .limit(1)
     if (byEmail[0]) return byEmail[0]
   }
-  return null
+  if (!looksLikeBounce(mail)) return null
+  const embedded = await leadByOurMessageIds(
+    db,
+    mail.allMessageIds.filter((id) => id !== mail.messageId),
+  )
+  if (embedded) return embedded
+  const candidates = mail.allAddresses.filter(
+    (a) => a !== mail.from && !ownAddresses.has(a) && !BOUNCE_RE.test(a),
+  )
+  if (candidates.length === 0) return null
+  const byDeadAddress = await db
+    .select()
+    .from(leads)
+    .where(and(inArray(leads.email, candidates), isNotNull(leads.last_contacted_at)))
+    .orderBy(desc(leads.last_contacted_at))
+    .limit(1)
+  return byDeadAddress[0] ?? null
+}
+
+/** Statuses a routine later reply ("see you Tuesday", "thanks") must never undo. */
+export const TERMINAL_LEAD_STATUSES: readonly LeadStatus[] = [
+  'booked',
+  'joined',
+  'unsubscribed',
+  'not_interested',
+]
+
+/** The status a reply moves the lead to, or null when the current one is final and must stay. */
+export function nextLeadStatus(current: LeadStatus, c: ReplyClassification): LeadStatus | null {
+  const next = leadStatusFor(c)
+  if (c === 'unsubscribe' || c === 'bounce') return next
+  if (TERMINAL_LEAD_STATUSES.includes(current)) return null
+  return next
 }
 
 export function leadStatusFor(c: ReplyClassification): LeadStatus {
@@ -289,11 +350,11 @@ export async function handleInboundReply(
         : 'replied'
   await stopLead(deps, input.lead.id, reason)
 
-  const status = leadStatusFor(input.classification)
+  const status = nextLeadStatus(input.lead.status, input.classification)
   await db
     .update(leads)
     .set({
-      status,
+      ...(status ? { status } : {}),
       last_replied_at: input.classification === 'bounce' ? input.lead.last_replied_at : now,
       updated_at: now,
     })
@@ -350,7 +411,6 @@ async function notifyOwner(deps: OutreachDeps, input: InboundInput): Promise<voi
       to: settings.owner_email,
       subject: `Reply from ${name}: ${snippet.slice(0, 60)}`,
       text: `Reply from ${name} (${input.fromAddress ?? 'no address'}), sorted as ${input.classification}.\n\n${snippet}\n\nAnswer them yourself from your inbox. This system never replies for you.`,
-      unsubscribeUrl: `${deps.baseUrl}/u/owner`,
     })
   } catch (err) {
     await logActivity(
@@ -389,7 +449,7 @@ export async function processInboundMessage(
     [settings.from_email, settings.reply_to, settings.owner_email].map((a) => normaliseEmail(a)),
   )
   if (mail.from && ownAddresses.has(mail.from)) return false
-  const lead = await matchLead(deps.db, mail)
+  const lead = await matchLead(deps.db, mail, ownAddresses)
   if (!lead) return false
   const classification = await classifyReply(deps.llm, mail.subject, mail.text, mail.from)
   return handleInboundReply(deps, {

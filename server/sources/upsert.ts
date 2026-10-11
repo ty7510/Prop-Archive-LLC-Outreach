@@ -7,6 +7,7 @@ import { getDb, type Db } from '../db/client.ts'
 import { leads, properties, type Lead, type Property } from '../db/schema.ts'
 import { newId } from '../lib/ids.ts'
 import {
+  dedupeKeyFor,
   isUsableCandidate,
   mergeIntoLead,
   normaliseCandidate,
@@ -152,6 +153,29 @@ export function scoreFor(
   }
 }
 
+/**
+ * When a lead keyed by email (or nothing) has just learned a mailing address, its key becomes the
+ * street|zip one, so a later public-record candidate for the same owner merges instead of making a
+ * second lead. Returns the new key, or null when nothing should change (including when another
+ * lead already holds that key).
+ */
+async function betterDedupeKey(
+  existing: Lead,
+  merged: Pick<Lead, 'mailing_street' | 'mailing_zip' | 'email'>,
+  db: Db,
+): Promise<string | null> {
+  const current = existing.dedupe_key
+  if (current && current.includes('|')) return null
+  const next = dedupeKeyFor(merged)
+  if (!next || !next.includes('|') || next === current) return null
+  const [taken] = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(eq(leads.dedupe_key, next))
+    .limit(1)
+  return taken ? null : next
+}
+
 /** Create, merge or skip one candidate. Never throws for a bad candidate; it reports 'skipped'. */
 export async function upsertCandidate(
   candidate: LeadCandidate,
@@ -180,16 +204,23 @@ export async function upsertCandidate(
 
     const merged = { ...existing, ...patch }
     const score = scoreFor(merged, propsResult.all, opts.settings, now)
+    const dedupeKey = await betterDedupeKey(existing, merged, db)
     const changed =
       Object.keys(patch).length > 0 ||
       propsResult.added > 0 ||
       propsResult.updated > 0 ||
+      dedupeKey !== null ||
       score.icp_score !== existing.icp_score ||
       score.persona !== existing.persona
     if (changed) {
       await db
         .update(leads)
-        .set({ ...patch, ...score, updated_at: now.toISOString() })
+        .set({
+          ...patch,
+          ...score,
+          ...(dedupeKey ? { dedupe_key: dedupeKey } : {}),
+          updated_at: now.toISOString(),
+        })
         .where(eq(leads.id, existing.id))
     }
     return { outcome: 'merged', lead_id: existing.id }

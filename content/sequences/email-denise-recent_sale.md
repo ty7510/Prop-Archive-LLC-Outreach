@@ -38,7 +38,7 @@ Still free while we're in beta, and your data comes with you. Join here: {{beta_
 
 ## Step 3
 
-delay_days: 8
+delay_days: 5
 subject: I'll stop here
 
 Hi {{first_name}},

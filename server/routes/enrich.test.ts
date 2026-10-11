@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.ts'
 import { registerModule, resetModules } from '../contracts.ts'
 import { createTestDb, type Db } from '../db/client.ts'
-import { leads, providerUsage } from '../db/schema.ts'
+import { jobRuns, leads, providerUsage } from '../db/schema.ts'
 import { enrichLeads, pickBatch, type OrchestratorDeps } from '../enrich/orchestrator.ts'
 import { fakeProvider, insertLead } from '../enrich/testing.ts'
 import { updateSettings } from '../lib/settings.ts'
@@ -38,6 +38,19 @@ describe('POST /api/leads/enrich', () => {
     const res = await agent.post('/api/leads/enrich').send({ all: true })
     expect(res.status).toBe(501)
     expect(res.body).toEqual({ error: 'not built yet', code: 'NOT_BUILT' })
+  })
+
+  it('answers 409 while the autopilot holds the enrich lock', async () => {
+    registerReal()
+    await db.insert(jobRuns).values({
+      id: 'running-enrich',
+      job: 'enrich',
+      started_at: new Date().toISOString(),
+      status: 'running',
+    })
+    const res = await agent.post('/api/leads/enrich').send({ all: true })
+    expect(res.status).toBe(409)
+    expect(res.body.code).toBe('RUNNING')
   })
 
   it('validates the body', async () => {

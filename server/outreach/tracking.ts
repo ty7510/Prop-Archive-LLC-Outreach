@@ -1,5 +1,5 @@
 // Unsubscribe and tracked redirects (spec section 6, Public). No auth; used from emails.
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, gte } from 'drizzle-orm'
 import type { Settings } from '../../shared/settings.ts'
 import { CHANNELS, type Channel } from '../../shared/types.ts'
 import { events, leads, messages, type Lead } from '../db/schema.ts'
@@ -12,10 +12,23 @@ import { stopLead } from './enroll.ts'
 import { addSuppression } from './suppression.ts'
 
 export const REDIRECT_DESTS = ['demo', 'beta', 'site'] as const
+
+/** Repeat clicks on the same link inside this window are one click. */
+export const CLICK_DEDUPE_MS = 10 * 60_000
 export type RedirectDest = (typeof REDIRECT_DESTS)[number]
 
 export function isRedirectDest(v: string): v is RedirectDest {
   return (REDIRECT_DESTS as readonly string[]).includes(v)
+}
+
+/** The one-click unsubscribe page, found; true when the lead is already unsubscribed. */
+export async function unsubscribeState(
+  deps: OutreachDeps,
+  token: string,
+): Promise<'unknown' | 'pending' | 'done'> {
+  const lead = await leadByToken(deps, token)
+  if (!lead) return 'unknown'
+  return lead.status === 'unsubscribed' ? 'done' : 'pending'
 }
 
 export async function leadByToken(deps: OutreachDeps, token: string): Promise<Lead | null> {
@@ -98,13 +111,22 @@ export async function resolveRedirect(
     if (last[0] && !input.channel) channel = last[0].channel
     if (!sequence) sequence = 'outreach'
   }
-  await deps.db.insert(events).values({
-    id: newId(),
-    lead_id: lead.id,
-    kind: 'click',
-    detail: { dest: input.dest, channel, sequence },
-    at: deps.now().toISOString(),
-  })
+  // One click per lead and destination per CLICK_DEDUPE_MS: a replayed link does not pile up rows.
+  const since = new Date(deps.now().getTime() - CLICK_DEDUPE_MS).toISOString()
+  const recent = await deps.db
+    .select({ id: events.id, detail: events.detail })
+    .from(events)
+    .where(and(eq(events.lead_id, lead.id), eq(events.kind, 'click'), gte(events.at, since)))
+  const duplicate = recent.some((e) => (e.detail as { dest?: string } | null)?.dest === input.dest)
+  if (!duplicate) {
+    await deps.db.insert(events).values({
+      id: newId(),
+      lead_id: lead.id,
+      kind: 'click',
+      detail: { dest: input.dest, channel, sequence },
+      at: deps.now().toISOString(),
+    })
+  }
   return { url: withUtm(target, { channel, sequence, leadId: lead.id }), tracked: true }
 }
 
@@ -131,12 +153,40 @@ export function withUtm(
   return url.toString()
 }
 
-/** The small page shown after unsubscribing. Plain words, big text, no scripts. */
-export function unsubscribePage(ok: boolean, siteUrl: string): string {
-  const title = ok ? 'You are unsubscribed' : 'This link is not valid'
-  const body = ok
-    ? 'You will not get more email from us. Sorry for the bother.'
-    : 'We could not find who this link belongs to. If you want to stop getting email, reply to the message you got and say so.'
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+export type UnsubscribePageKind = 'confirm' | 'done' | 'not_found'
+
+/**
+ * The small public page. `confirm` (a GET from a person or a link scanner) only shows one button
+ * that POSTs back; `done` is shown after the POST; `not_found` for an unknown token.
+ * Plain words, big text, no scripts.
+ */
+export function unsubscribePage(kind: UnsubscribePageKind | boolean, siteUrl: string): string {
+  const k: UnsubscribePageKind = kind === true ? 'done' : kind === false ? 'not_found' : kind
+  const title =
+    k === 'done'
+      ? 'You are unsubscribed'
+      : k === 'confirm'
+        ? 'Stop emails from Prop Archive?'
+        : 'This link is not valid'
+  const body =
+    k === 'done'
+      ? 'You will not get more email from us. Sorry for the bother.'
+      : k === 'confirm'
+        ? 'Press the button and we will not email you again.'
+        : 'We could not find who this link belongs to. If you want to stop getting email, reply to the message you got and say so.'
+  const form =
+    k === 'confirm'
+      ? `\n  <form method="post"><button type="submit">Stop emails to me</button></form>`
+      : ''
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -149,13 +199,14 @@ export function unsubscribePage(ok: boolean, siteUrl: string): string {
   h1 { font-size: 1.75rem; margin: 0 0 0.75rem; }
   p { font-size: 1.125rem; line-height: 1.5; margin: 0 0 1rem; }
   a { color: #1d4ed8; }
+  button { font: inherit; font-size: 1.125rem; padding: 0.875rem 1.25rem; min-height: 3rem; border: 0; border-radius: 10px; background: #1d4ed8; color: #fff; margin: 0 0 1rem; }
 </style>
 </head>
 <body>
 <main>
-  <h1>${title}</h1>
-  <p>${body}</p>
-  <p><a href="${siteUrl}">Prop Archive</a></p>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(body)}</p>${form}
+  <p><a href="${escapeHtml(siteUrl)}">Prop Archive</a></p>
 </main>
 </body>
 </html>`

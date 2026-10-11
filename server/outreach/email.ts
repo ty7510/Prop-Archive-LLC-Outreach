@@ -39,24 +39,31 @@ export interface EmailInput {
   to: string
   subject: string
   text: string
-  unsubscribeUrl: string
+  /** Lead mail always has one. Mail to Theo himself (test send, reply notice) has none. */
+  unsubscribeUrl?: string | undefined
+  /** Set by send.ts from the idempotency key so a duplicate can be spotted on the receiving side. */
+  messageId?: string | undefined
 }
 
-/** From, Reply-To and the one-click unsubscribe headers. */
+/** From, Reply-To and, for lead mail, the one-click unsubscribe headers. */
 export function buildMail(settings: Settings, input: EmailInput): OutgoingMail {
   const from = `${settings.from_name} <${settings.from_email}>`
-  return {
+  const mail: OutgoingMail = {
     from,
     to: input.to,
     replyTo: settings.reply_to || settings.from_email,
     subject: input.subject,
     text: input.text,
     html: textToHtml(input.text),
-    headers: {
+  }
+  if (input.unsubscribeUrl) {
+    mail.headers = {
       'List-Unsubscribe': `<mailto:${settings.reply_to || settings.from_email}?subject=unsubscribe>, <${input.unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-    },
+    }
   }
+  if (input.messageId) mail.messageId = input.messageId
+  return mail
 }
 
 /** Send one email through the configured provider. Throws when nothing is configured or the provider fails. */
@@ -90,7 +97,7 @@ async function sendViaResend(deps: OutreachDeps, mail: OutgoingMail): Promise<Em
       subject: mail.subject,
       text: mail.text,
       html: mail.html,
-      headers: mail.headers,
+      ...(mail.headers ? { headers: mail.headers } : {}),
     }),
     signal: AbortSignal.timeout(15_000),
   })

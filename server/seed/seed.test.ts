@@ -45,7 +45,7 @@ describe('seed', () => {
     expect(steps.map((s) => [s.step_index, s.delay_days])).toEqual([
       [0, 0],
       [1, 3],
-      [2, 8],
+      [2, 5],
     ])
     expect(steps[0]?.subject).toBe('Repair texts during your work day?')
     expect(steps[0]?.channel).toBe('email')

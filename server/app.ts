@@ -26,12 +26,22 @@ export interface CreateAppOptions {
   clientDir?: string
 }
 
+/** True on Replit (its proxy terminates TLS) or when TRUST_PROXY=1 is set in .env. */
+export function behindProxy(e: NodeJS.ProcessEnv = process.env): boolean {
+  if (e.TRUST_PROXY === '1' || e.TRUST_PROXY === 'true') return true
+  if (e.TRUST_PROXY === '0' || e.TRUST_PROXY === 'false') return false
+  return Boolean(e.REPLIT_DOMAINS || e.REPL_ID)
+}
+
 export function createApp(db: Db, options: CreateAppOptions = {}): Express {
   setDefaultDb(db)
 
   const app = express()
   app.disable('x-powered-by')
-  app.set('trust proxy', 1)
+  // Trust X-Forwarded-* only when a proxy is really in front (Replit, or TRUST_PROXY=1 elsewhere).
+  // Trusting it on a directly reachable process would let anyone pick their own IP for the
+  // login limiter.
+  app.set('trust proxy', behindProxy() ? 1 : false)
 
   app.use(express.json({ limit: '2mb' }))
   app.use(express.urlencoded({ extended: false }))

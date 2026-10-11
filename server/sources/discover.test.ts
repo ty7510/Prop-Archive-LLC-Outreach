@@ -189,6 +189,29 @@ describe('discover', () => {
     expect(limited.budget).toBe(2)
   })
 
+  it('asks for owner groups first and keeps a share of the budget for new licenses', async () => {
+    await updateSettings({ max_new_leads_per_day: 5 }, db)
+    const licenses = [0, 1, 2].map((i) =>
+      liRow({
+        licensenum: `L${i}`,
+        address: `${i} LICENSE ST`,
+        opa_account_num: `acct-${i}`,
+        business_name: `LICENSEE ${i} LLC`,
+        legalname: `LICENSEE ${i} LLC`,
+        business_mailing_address: `${10 + i} Licensee Ave, Philadelphia, PA 19143`,
+        ownercontact1mailingaddress: `${10 + i} Licensee Ave`,
+        ownercontact1zippostalcode: '19143',
+      }),
+    )
+    const client = fakeClient({ owners: [ownerRows(50)], li: [licenses] })
+    const r = await discover({}, { db, client, now: NOW })
+    expect(client.sqls[0]).toContain('JOIN owners')
+    expect(client.sqls.findIndex((q) => q.includes('business_licenses'))).toBeGreaterThan(0)
+    expect(r.by_source.opa.created).toBe(4) // 80 percent of 5
+    expect(r.by_source.li.created).toBe(1) // the rest
+    expect(r.created).toBe(5)
+  })
+
   it('uses the zips from the body when given and only valid ones', async () => {
     const client = fakeClient({})
     const r = await discover({ zips: ['19104', '19120'] }, { db, client, now: NOW })

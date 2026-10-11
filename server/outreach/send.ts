@@ -1,5 +1,8 @@
 // sendDue: due steps -> render -> live send, dry run row, or human queue (spec sections 10 and 11.4).
-// At-most-once: a `queued` message row claims the idempotency key before any provider is called.
+// At-most-once: a message row claims the idempotency key before any provider is called, and the
+// row is marked `sending` right before the provider call. A row left in `sending` (the process died
+// mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
+import { createHmac } from 'node:crypto'
 import { and, asc, eq, lte } from 'drizzle-orm'
 import type { Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
@@ -34,8 +37,29 @@ export interface SendDueResult {
   skipped: number
 }
 
-export function idempotencyKey(enrollmentId: string, stepIndex: number): string {
-  return `${enrollmentId}:${stepIndex}`
+/** How many times a provider may be asked to carry one message before Theo has to look. */
+export const MAX_SEND_ATTEMPTS = 2
+
+/** Errors after which we cannot tell whether the provider accepted the message. Never retried. */
+const AMBIGUOUS_ERROR_RE = /timed? ?out|timeout|abort|ETIMEDOUT|ESOCKET|ECONNRESET|outcome unknown/i
+
+export const OUTCOME_UNKNOWN_ERROR =
+  'Send outcome unknown: the process stopped mid-send. Check your Sent folder; if it did not go out, stop and start the sequence again'
+
+/**
+ * `enrollment_id:step_index` for the first run of an enrollment (as the spec says). Every later run
+ * of the same enrollment (a re-enrol after done or stopped) adds `r<run>` so keys never collide
+ * with the rows of an earlier run.
+ */
+export function idempotencyKey(enrollmentId: string, stepIndex: number, run = 0): string {
+  return run > 0 ? `${enrollmentId}:r${run}:${stepIndex}` : `${enrollmentId}:${stepIndex}`
+}
+
+/** May a failed row be handed to the provider again? Bounded, and never after an ambiguous error. */
+export function canRetry(message: Pick<Message, 'status' | 'attempts' | 'error'>): boolean {
+  if (message.status !== 'failed') return false
+  if (message.attempts >= MAX_SEND_ATTEMPTS) return false
+  return !AMBIGUOUS_ERROR_RE.test(message.error ?? '')
 }
 
 function isHuman(channel: Channel): boolean {
@@ -68,13 +92,36 @@ async function stepsFor(deps: OutreachDeps, sequenceId: string): Promise<Sequenc
     .orderBy(asc(sequenceSteps.step_index))
 }
 
-/** Move the enrollment to the next step or mark it done; stamp the lead as contacted. */
+/** True while an earlier step of this enrollment still sits in Theo's queue. */
+async function hasItemWaiting(deps: OutreachDeps, enrollmentId: string): Promise<boolean> {
+  const rows = await deps.db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.enrollment_id, enrollmentId), eq(messages.status, 'ready_for_human')))
+    .limit(1)
+  return rows.length > 0
+}
+
+/** The enrollment will never go anywhere (no address for the channel): end it without a stop event. */
+async function endEnrollment(deps: OutreachDeps, enrollmentId: string): Promise<void> {
+  await deps.db
+    .update(enrollments)
+    .set({ status: 'stopped_manual', ended_at: deps.now().toISOString(), next_send_at: null })
+    .where(eq(enrollments.id, enrollmentId))
+}
+
+type AdvanceOutcome = 'sent' | 'queued' | 'dry_run' | 'skipped'
+
+/**
+ * Move the enrollment to the next step or mark it done. Only a real send stamps the lead as
+ * contacted; a queued human item is stamped when Theo marks it done (queue.ts).
+ */
 async function advance(
   deps: OutreachDeps,
   settings: Settings,
   row: DueRow,
   steps: SequenceStep[],
-  outcome: 'sent' | 'queued' | 'dry_run',
+  outcome: AdvanceOutcome,
 ): Promise<void> {
   const { db } = deps
   const now = deps.now()
@@ -98,14 +145,14 @@ async function advance(
       .where(eq(enrollments.id, row.enrollment.id))
   }
   const patch: Partial<Lead> = { updated_at: now.toISOString() }
-  if (outcome !== 'dry_run') {
+  if (outcome === 'sent') {
     patch.last_contacted_at = now.toISOString()
     if (['new', 'enriching', 'enriched', 'enrolled'].includes(row.lead.status)) {
       patch.status = 'contacted'
     }
   }
   await db.update(leads).set(patch).where(eq(leads.id, row.lead.id))
-  if (outcome !== 'dry_run') {
+  if (outcome === 'sent' || outcome === 'queued') {
     await db.insert(events).values({
       id: newId(),
       lead_id: row.lead.id,
@@ -117,6 +164,20 @@ async function advance(
       },
       at: now.toISOString(),
     })
+  }
+}
+
+/** What an already-recorded row at this step means for the enrollment. */
+function outcomeForExisting(status: MessageStatus): AdvanceOutcome {
+  switch (status) {
+    case 'sent':
+      return 'sent'
+    case 'ready_for_human':
+      return 'queued'
+    case 'dry_run':
+      return 'dry_run'
+    default:
+      return 'skipped'
   }
 }
 
@@ -133,6 +194,28 @@ function humanAddress(lead: Lead, channel: Channel): string | null {
   }
 }
 
+const PRIVATE_HOST_RE =
+  /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0$|\[?::1\]?$|172\.(1[6-9]|2\d|3[01])\.)/i
+
+/** Only a public https address may receive lead data. Returns the reason when it may not. */
+export function webhookUrlProblem(url: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'not a valid URL'
+  }
+  if (parsed.protocol !== 'https:') return 'must start with https://'
+  if (!parsed.hostname) return 'has no host'
+  if (PRIVATE_HOST_RE.test(parsed.hostname)) return 'points at a private or local address'
+  return null
+}
+
+/** `sha256=<hmac of the body>` with the webhook secret. The secret itself never leaves the app. */
+export function signWebhookBody(secret: string, body: string): string {
+  return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`
+}
+
 /** POST a ready message to Theo's own webhook once. Errors are logged, never thrown. */
 export async function notifyHumanQueueWebhook(
   deps: OutreachDeps,
@@ -141,19 +224,34 @@ export async function notifyHumanQueueWebhook(
   lead: Lead,
 ): Promise<void> {
   if (!settings.human_queue_webhook_url) return
+  const problem = webhookUrlProblem(settings.human_queue_webhook_url)
+  if (problem) {
+    await logActivity(
+      'warn',
+      'human_queue_webhook_refused',
+      { reason: `The human queue webhook URL ${problem}. Fix it in Settings` },
+      lead.id,
+      deps.db,
+    )
+    return
+  }
   try {
+    const body = JSON.stringify({
+      message_id: message.id,
+      lead_id: lead.id,
+      channel: message.channel,
+      person: lead.full_name ?? lead.company ?? '',
+      to_address: message.to_address,
+      subject: message.subject,
+      body: message.body,
+    })
     const res = await deps.fetch(settings.human_queue_webhook_url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-outreach-secret': settings.webhook_secret },
-      body: JSON.stringify({
-        message_id: message.id,
-        lead_id: lead.id,
-        channel: message.channel,
-        person: lead.full_name ?? lead.company ?? '',
-        to_address: message.to_address,
-        subject: message.subject,
-        body: message.body,
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-outreach-signature': signWebhookBody(settings.webhook_secret, body),
+      },
+      body,
       signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) throw new Error(`webhook ${res.status}`)
@@ -168,11 +266,22 @@ export async function notifyHumanQueueWebhook(
   }
 }
 
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname || 'outreach.local'
+  } catch {
+    return 'outreach.local'
+  }
+}
+
 /**
  * Send everything that is due. Outside the send window nothing happens.
  * Live email and Lob mail go out only when live_mode is on; otherwise a dry_run row is written.
- * Human channels and print mail become ready_for_human whatever the mode.
- * Running twice never sends twice: the message row with the idempotency key is written first.
+ * Human channels and print mail become ready_for_human whatever the mode, and the next step of
+ * such a sequence waits until Theo has dealt with the one in the queue.
+ * Running twice never sends twice: the message row with the idempotency key is written first,
+ * flipped to `sending` before the provider call, and never handed to a provider again once
+ * the outcome is unknown.
  */
 export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   const { db } = deps
@@ -185,6 +294,22 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
   const stepsCache = new Map<string, SequenceStep[]>()
+  const refusedNoAddress = new Set<Channel>()
+
+  const refuseNoAddress = async (channel: Channel, leadId: string) => {
+    if (refusedNoAddress.has(channel)) return
+    refusedNoAddress.add(channel)
+    await logActivity(
+      'error',
+      channel === 'email' ? 'email_refused_no_address' : 'mail_refused_no_address',
+      {
+        reason: `Add your physical mailing address in Settings before live ${channel}`,
+        channel,
+      },
+      leadId,
+      db,
+    )
+  }
 
   for (const row of due) {
     const channel = row.sequence.channel
@@ -199,6 +324,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         result.skipped++
         continue
       }
+      if (await hasItemWaiting(deps, row.enrollment.id)) continue // Theo has not done the last one
       let steps = stepsCache.get(row.sequence.id)
       if (!steps) {
         steps = await stepsFor(deps, row.sequence.id)
@@ -214,19 +340,53 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         continue
       }
 
-      const key = idempotencyKey(row.enrollment.id, step.step_index)
+      const key = idempotencyKey(row.enrollment.id, step.step_index, row.enrollment.run)
       const existing = (
         await db.select().from(messages).where(eq(messages.idempotency_key, key)).limit(1)
       )[0]
-      if (existing && !['queued', 'failed'].includes(existing.status)) {
-        // Already handled (a crash after the send but before the advance). Just move on.
-        await advance(
-          deps,
-          settings,
-          row,
-          steps,
-          existing.status === 'dry_run' ? 'dry_run' : 'sent',
-        )
+      if (existing) {
+        if (existing.status === 'sending') {
+          // The process died between the provider call and the `sent` write. Only Theo can tell.
+          await db
+            .update(messages)
+            .set({ status: 'failed', error: OUTCOME_UNKNOWN_ERROR })
+            .where(eq(messages.id, existing.id))
+          await logActivity(
+            'error',
+            'send_outcome_unknown',
+            { channel, message_id: existing.id, reason: OUTCOME_UNKNOWN_ERROR },
+            row.lead.id,
+            db,
+          )
+          result.skipped++
+          continue
+        }
+        if (existing.status === 'failed') {
+          if (!canRetry(existing)) {
+            result.skipped++
+            continue
+          }
+        } else if (existing.status !== 'queued') {
+          // Already handled (a crash after the send but before the advance). Just move on.
+          await advance(deps, settings, row, steps, outcomeForExisting(existing.status))
+          result.skipped++
+          continue
+        }
+      }
+
+      const postal = channel === 'mail' ? postalAddressFor(row.lead) : null
+      const noWayToReach =
+        (channel === 'email' && !row.lead.email) || (channel === 'mail' && !postal)
+      if (noWayToReach) {
+        const error = channel === 'email' ? 'lead has no email' : 'lead has no mailing address'
+        if (existing) {
+          await db
+            .update(messages)
+            .set({ status: 'failed', error })
+            .where(eq(messages.id, existing.id))
+        }
+        await endEnrollment(deps, row.enrollment.id)
+        await logActivity('warn', 'send_step_impossible', { channel, error }, row.lead.id, db)
         result.skipped++
         continue
       }
@@ -249,7 +409,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         channel === 'email'
           ? row.lead.email
           : channel === 'mail'
-            ? JSON.stringify(postalAddressFor(row.lead))
+            ? JSON.stringify(postal)
             : humanAddress(row.lead, channel)
 
       let message: Message
@@ -282,6 +442,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
           scheduled_at: row.enrollment.next_send_at,
           sent_at: null,
           error: null,
+          attempts: 0,
           classification: null,
           raw: null,
           created_at: now.toISOString(),
@@ -320,30 +481,25 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         continue
       }
 
+      // Live email and live Lob mail both need the CAN-SPAM / return address.
+      if (!settings.physical_address.trim()) {
+        await refuseNoAddress(channel, row.lead.id)
+        result.skipped++
+        continue // message stays queued, nothing was asked of a provider
+      }
+
+      // Claim the attempt before the provider is called, so a crash leaves a `sending` row.
+      await finish('sending', { attempts: message.attempts + 1 })
+
       if (channel === 'email') {
-        if (!settings.physical_address.trim()) {
-          await logActivity(
-            'error',
-            'email_refused_no_address',
-            { reason: 'Add your physical mailing address in Settings before live email' },
-            row.lead.id,
-            db,
-          )
-          result.skipped++
-          continue // message stays queued
-        }
-        if (!row.lead.email) {
-          await finish('failed', { error: 'lead has no email' })
-          result.skipped++
-          continue
-        }
         const unsubscribeUrl = `${deps.baseUrl}/u/${row.lead.unsubscribe_token}`
         try {
           const sent = await sendEmail(deps, settings, {
-            to: row.lead.email,
+            to: row.lead.email ?? '',
             subject: rendered.subject ?? '',
             text: rendered.body,
             unsubscribeUrl,
+            messageId: `<${key}@${hostOf(deps.baseUrl)}>`,
           })
           await finish('sent', {
             provider: sent.provider,
@@ -356,21 +512,21 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err)
           await finish('failed', { error })
-          await logActivity('error', 'email_send_failed', { error }, row.lead.id, db)
+          await logActivity(
+            'error',
+            'email_send_failed',
+            { error, attempts: message.attempts, retry: canRetry(message) },
+            row.lead.id,
+            db,
+          )
           result.skipped++
         }
         continue
       }
 
       // channel === 'mail' with Lob
-      const postal = postalAddressFor(row.lead)
-      if (!postal) {
-        await finish('failed', { error: 'lead has no mailing address' })
-        result.skipped++
-        continue
-      }
       try {
-        const lob = await sendViaLob(deps, settings, postal, rendered.body, key)
+        const lob = await sendViaLob(deps, settings, postal!, rendered.body, key)
         await finish('sent', {
           provider: `lob_${lob.kind}`,
           provider_message_id: lob.id,
@@ -382,7 +538,13 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err)
         await finish('failed', { error })
-        await logActivity('error', 'mail_send_failed', { error }, row.lead.id, db)
+        await logActivity(
+          'error',
+          'mail_send_failed',
+          { error, attempts: message.attempts, retry: canRetry(message) },
+          row.lead.id,
+          db,
+        )
         result.skipped++
       }
     } catch (err) {
