@@ -52,16 +52,30 @@ export const EnvSchema = z.object({
 export type Env = z.infer<typeof EnvSchema>
 
 /** Parse an env-like object. Exported so tests can build an Env without touching process.env. */
+/** Secret names Theo has used for the workspace (an ID or a workspace-scoped key). */
+const WORKSPACE_SECRETS = ['ANTHROPIC_WORKSPACE_ID', 'Claude_Workspace_ID', 'WORK_SPACE_CLAUDE']
+
 export function parseEnv(source: Record<string, string | undefined>): Env {
-  // Prop Archive's Replit secrets use these names; accept them so the same secrets work here.
+  // Accept the names Theo's Replit secrets use, so the same secrets work here.
   const pick = (...names: string[]) => names.map((n) => source[n]?.trim()).find(Boolean)
+  // A workspace secret can hold either the workspace ID (wrkspc_...) or a new key made inside a
+  // workspace (sk-ant-...). An ID becomes the anthropic-workspace-id header; a workspace key is
+  // used as the key, ahead of an organization key that Anthropic refuses without a workspace.
+  const workspaceValues = WORKSPACE_SECRETS.map((n) => source[n]?.trim()).filter((v): v is string =>
+    Boolean(v),
+  )
+  const workspaceKey = workspaceValues.find((v) => v.startsWith('sk-ant-'))
+  const workspaceId = workspaceValues.find((v) => !v.startsWith('sk-ant-'))
   const parsed = EnvSchema.parse({
     ...source,
-    ANTHROPIC_API_KEY: pick('ANTHROPIC_API_KEY', 'Claude_API', 'CLAUDE_API_KEY'),
-    ANTHROPIC_WORKSPACE_ID: pick('ANTHROPIC_WORKSPACE_ID', 'Claude_Workspace_ID'),
+    ANTHROPIC_API_KEY:
+      pick('ANTHROPIC_API_KEY') ?? workspaceKey ?? pick('Claude_API', 'CLAUDE_API_KEY'),
+    // The workspace header only goes with an organization key, never with a workspace key.
+    ANTHROPIC_WORKSPACE_ID: workspaceKey && !pick('ANTHROPIC_API_KEY') ? undefined : workspaceId,
   })
   if (!parsed.SESSION_SECRET) {
-    // A fresh secret per boot means sessions reset on restart. Fine for one user; set it in .env to keep logins.
+    // A fresh secret per boot means sessions reset on restart. Fine for one user; set
+    // SESSION_SECRET in Replit Secrets (or .env locally) to keep logins.
     parsed.SESSION_SECRET = randomBytes(32).toString('hex')
   }
   return parsed
@@ -86,9 +100,12 @@ export function presentProviders(e: Env = env): ProvidersPresent {
   }
 }
 
-/** The .env key a user has to add for a provider group. For "add KEY in Settings" messages. */
+/**
+ * The secret a user has to add for a provider group, named the way Theo adds it in Replit
+ * Secrets. CLAUDE_API_KEY is the name he uses (ANTHROPIC_API_KEY and Claude_API work too).
+ */
 export const PROVIDER_ENV_KEYS: Record<keyof ProvidersPresent, string[]> = {
-  anthropic: ['ANTHROPIC_API_KEY'],
+  anthropic: ['CLAUDE_API_KEY'],
   smtp: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS'],
   resend: ['RESEND_API_KEY'],
   imap: ['IMAP_HOST', 'IMAP_PORT', 'IMAP_USER', 'IMAP_PASS'],

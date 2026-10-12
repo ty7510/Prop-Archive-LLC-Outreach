@@ -112,8 +112,12 @@ export function publicBaseUrl(e: NodeJS.ProcessEnv = process.env, port: number =
   return `http://localhost:${port}`
 }
 
-export function anthropicLlm(apiKey: string): Llm {
-  const client = new Anthropic({ apiKey })
+export function anthropicLlm(apiKey: string, workspaceId?: string): Llm {
+  // An organization-level key is refused without the anthropic-workspace-id header.
+  const client = new Anthropic({
+    apiKey,
+    ...(workspaceId ? { defaultHeaders: { 'anthropic-workspace-id': workspaceId } } : {}),
+  })
   return {
     async text(prompt, opts) {
       const res = await client.messages.create({
@@ -201,7 +205,7 @@ export function defaultDeps(db: Db = getDb(), e: Env = env): OutreachDeps {
     fetch: (input, init) => globalThis.fetch(input, init),
     baseUrl: publicBaseUrl(process.env, e.PORT),
     smtp: hasSmtp ? () => smtpMailer(e) : null,
-    llm: e.ANTHROPIC_API_KEY ? anthropicLlm(e.ANTHROPIC_API_KEY) : null,
+    llm: e.ANTHROPIC_API_KEY ? anthropicLlm(e.ANTHROPIC_API_KEY, e.ANTHROPIC_WORKSPACE_ID) : null,
     imap: hasImap ? () => imapClient(e) : null,
     smtpForInbox: inboxMailer,
     imapForInbox: inboxImap,

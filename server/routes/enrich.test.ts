@@ -133,7 +133,7 @@ describe('GET /api/enrich/usage', () => {
     })
     expect(byId.pdl).toMatchObject({ used: 0, calls: 0, cap: 50 })
     expect(byId.li_license).toMatchObject({ cap: null, configured: true, env_keys: [] })
-    expect(byId.claude_research).toMatchObject({ cap: 200, env_keys: ['ANTHROPIC_API_KEY'] })
+    expect(byId.claude_research).toMatchObject({ cap: 200, env_keys: ['CLAUDE_API_KEY'] })
   })
 
   it('is 401 without a session', async () => {

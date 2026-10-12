@@ -33,6 +33,52 @@ function inboxNames(inboxes: SendingInbox[]): string {
   return inboxes.map((i) => i.email).join(', ')
 }
 
+const CLAUDE_CHECK_TTL_MS = 30 * 60_000
+let claudeCache: { at: number; ok: boolean; fix: string } | null = null
+
+/** For tests: forget the cached Claude answer. */
+export function resetClaudeCheck(): void {
+  claudeCache = null
+}
+
+/**
+ * Is the Claude key there AND accepted? A key that is present can still be refused (an
+ * organization key without a workspace, a key copied in part), and then nothing that uses Claude
+ * works. One tiny request, remembered for 30 minutes.
+ */
+export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean; fix: string }> {
+  const add =
+    'Add the Claude key in Replit Secrets as CLAUDE_API_KEY (Claude_API works too), then Publish.'
+  if (!deps.env.ANTHROPIC_API_KEY || !deps.llm) return { ok: false, fix: add }
+  const now = deps.now().getTime()
+  if (claudeCache && now - claudeCache.at < CLAUDE_CHECK_TTL_MS) return claudeCache
+  let result: { ok: boolean; fix: string }
+  try {
+    await deps.llm.text('Reply with the word ok.', { maxTokens: 16 })
+    result = { ok: true, fix: '' }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/not scoped to a workspace|anthropic-workspace-id/i.test(msg)) {
+      result = {
+        ok: false,
+        fix:
+          'Claude refused the key: it is an organization key. Easiest fix: at console.anthropic.com open API keys, ' +
+          'create a new key inside a workspace and paste it over CLAUDE_API_KEY in Replit Secrets. ' +
+          'Or add a Claude_Workspace_ID secret with the workspace ID (it starts with wrkspc_). Then Publish.',
+      }
+    } else if (/401|authentication|invalid x-api-key|api key/i.test(msg)) {
+      result = {
+        ok: false,
+        fix: 'Claude refused the key. Copy the whole key again into CLAUDE_API_KEY in Replit Secrets, then Publish.',
+      }
+    } else {
+      result = { ok: false, fix: `Claude did not answer: ${msg.slice(0, 160)}` }
+    }
+  }
+  claudeCache = { at: now, ...result }
+  return result
+}
+
 export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessItem[]> {
   const settings = await getSettings(deps.db)
   const senders = settings.sending_inboxes.filter(canSend)
@@ -41,6 +87,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
   const publicLinks = await linksArePublic(deps)
   const envSender = pickEmailProvider(deps, settings) !== null
   const channelsOn = (['email', 'linkedin', 'mail'] as const).filter((c) => !settings.channels[c])
+  const claude = await claudeKeyCheck(deps)
 
   return [
     {
@@ -100,10 +147,10 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
     },
     {
       key: 'enrich',
-      ok: deps.env.ANTHROPIC_API_KEY !== undefined,
+      ok: claude.ok,
       required: false,
       label: 'Claude key, so enrichment searches the web for emails and profiles',
-      fix: 'Add the Claude_API secret in Replit (and Claude_Workspace_ID for an organization key), then Publish.',
+      fix: claude.fix,
     },
     {
       key: 'autopilot',

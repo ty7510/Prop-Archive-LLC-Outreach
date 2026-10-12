@@ -38,16 +38,24 @@ const PROVIDER_INFO: Record<
   },
   claude_research: {
     label: 'Claude web research',
-    hint: 'Finds the public business presence. Uses the Anthropic key.',
+    hint: 'Finds and checks owner contacts on the web. Uses the Claude key; an organization key also needs Claude_Workspace_ID.',
     key: 'anthropic',
   },
   hunter: {
     label: 'Hunter',
-    hint: 'Finds and checks work emails when a website is known.',
+    hint: 'Finds and checks work emails when a website is known. Optional; needs a hunter.io account.',
     key: 'hunter',
   },
-  apollo: { label: 'Apollo', hint: 'Best for management companies.', key: 'apollo' },
-  pdl: { label: 'People Data Labs', hint: 'Person lookup by name and company.', key: 'pdl' },
+  apollo: {
+    label: 'Apollo',
+    hint: 'Best for management companies. Optional; needs an apollo.io account.',
+    key: 'apollo',
+  },
+  pdl: {
+    label: 'People Data Labs',
+    hint: 'Person lookup by name and company. Optional; needs a peopledatalabs.com account.',
+    key: 'pdl',
+  },
 }
 
 type CapKey = keyof SettingsT['enrichment']['monthly_credit_cap']
@@ -135,6 +143,13 @@ function SettingsForm({
 
   // The Live switch only saves live_mode, so the confirm must describe the SAVED settings:
   // those are what the next round runs with, whatever is still unsaved in the form.
+  // Warmed inboxes from Settings (a saved password shows as the mask, which still counts).
+  const sendingInboxes = saved.sending_inboxes.filter(
+    (i) => i.active && i.smtp_host && i.smtp_user && i.smtp_pass,
+  ).length
+  const readingInboxes = saved.sending_inboxes.filter(
+    (i) => i.imap_host && i.smtp_user && i.smtp_pass,
+  ).length
   const emailKeyPresent =
     saved.sending_inboxes.some((i) => i.active && i.smtp_host && i.smtp_user && i.smtp_pass) ||
     (saved.email_provider === 'smtp' ? providers?.smtp : providers?.resend)
@@ -379,23 +394,13 @@ function SettingsForm({
                 />
               </label>
               {c === 'email' ? (
-                <label className="flex items-center gap-2 text-sm text-stone-700">
-                  Send with
-                  <select
-                    className="input w-32"
-                    value={draft.email_provider}
-                    onChange={(e) =>
-                      set('email_provider', e.target.value as SettingsT['email_provider'])
-                    }
-                  >
-                    <option value="smtp">SMTP</option>
-                    <option value="resend">Resend</option>
-                  </select>
-                  <KeyBadge
-                    present={emailKeyPresent}
-                    keys={providers?.env_keys[draft.email_provider]}
-                  />
-                </label>
+                sendingInboxes > 0 ? (
+                  <Badge tone="green">
+                    Sends from {sendingInboxes} warmed {sendingInboxes === 1 ? 'inbox' : 'inboxes'}
+                  </Badge>
+                ) : (
+                  <Badge tone="amber">No sending inbox yet: add one under Sending inboxes</Badge>
+                )
               ) : null}
               {c === 'mail' ? (
                 <label className="flex items-center gap-2 text-sm text-stone-700">
@@ -518,7 +523,11 @@ function SettingsForm({
                   </label>
                 ) : null}
                 {info.key ? (
-                  <KeyBadge present={present} keys={providers?.env_keys[info.key]} />
+                  <KeyBadge
+                    present={present}
+                    keys={providers?.env_keys[info.key]}
+                    optional={info.key !== 'anthropic'}
+                  />
                 ) : (
                   <Badge tone="green">No key needed</Badge>
                 )}
@@ -526,9 +535,15 @@ function SettingsForm({
             )
           })}
         </div>
-        <p className="flex items-center gap-2 text-sm text-stone-600">
-          <KeyRound className="h-4 w-4" aria-hidden /> Reading replies needs the IMAP keys:
-          <KeyBadge present={providers?.imap} keys={providers?.env_keys.imap} />
+        <p className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
+          <KeyRound className="h-4 w-4" aria-hidden /> Reading replies:
+          {readingInboxes > 0 || providers?.imap ? (
+            <Badge tone="green">
+              Read from {readingInboxes || 1} {(readingInboxes || 1) === 1 ? 'inbox' : 'inboxes'}
+            </Badge>
+          ) : (
+            <Badge tone="amber">Fill in the IMAP server on each sending inbox</Badge>
+          )}
         </p>
       </Section>
 
@@ -731,12 +746,23 @@ function SettingsForm({
   )
 }
 
-function KeyBadge({ present, keys }: { present: boolean | undefined; keys: string[] | undefined }) {
+function KeyBadge({
+  present,
+  keys,
+  optional = false,
+}: {
+  present: boolean | undefined
+  keys: string[] | undefined
+  /** A paid add-on the app runs fine without: say so quietly instead of asking for a key. */
+  optional?: boolean
+}) {
   if (present === undefined) return <Badge>Checking</Badge>
   if (present) return <Badge tone="green">Key found</Badge>
+  if (optional) return <Badge>Optional, not set up</Badge>
   return (
     <Badge tone="amber">
-      Key missing{keys && keys.length ? `: add ${keys.join(', ')} to .env` : ''}
+      Key missing
+      {keys && keys.length ? `: add ${keys.join(', ')} in Replit Secrets, then Publish` : ''}
     </Badge>
   )
 }

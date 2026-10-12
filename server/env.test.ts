@@ -15,3 +15,22 @@ describe('parseEnv', () => {
     expect(parseEnv({}).ANTHROPIC_API_KEY).toBeUndefined()
   })
 })
+
+describe('the workspace secret', () => {
+  it('uses a workspace ID as the header with the organization key', () => {
+    const e = parseEnv({ CLAUDE_API_KEY: 'sk-ant-org', WORK_SPACE_CLAUDE: 'wrkspc_123' })
+    expect(e.ANTHROPIC_API_KEY).toBe('sk-ant-org')
+    expect(e.ANTHROPIC_WORKSPACE_ID).toBe('wrkspc_123')
+  })
+
+  it('uses a workspace-scoped key as the key, with no workspace header', () => {
+    const e = parseEnv({ CLAUDE_API_KEY: 'sk-ant-org', WORK_SPACE_CLAUDE: 'sk-ant-workspace' })
+    expect(e.ANTHROPIC_API_KEY).toBe('sk-ant-workspace')
+    expect(e.ANTHROPIC_WORKSPACE_ID).toBeUndefined()
+  })
+
+  it('reads Claude_Workspace_ID too', () => {
+    const e = parseEnv({ CLAUDE_API_KEY: 'sk-ant-org', Claude_Workspace_ID: 'wrkspc_9' })
+    expect(e.ANTHROPIC_WORKSPACE_ID).toBe('wrkspc_9')
+  })
+})

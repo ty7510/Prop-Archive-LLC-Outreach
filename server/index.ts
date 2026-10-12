@@ -30,7 +30,9 @@ async function seedOnFirstBoot(): Promise<void> {
 
 async function main(): Promise<void> {
   if (!env.APP_PASSWORD) {
-    console.warn('[boot] APP_PASSWORD is not set. Nobody can log in until you add it to .env.')
+    console.warn(
+      '[boot] APP_PASSWORD is not set. Nobody can log in until you add it in Replit Secrets (or .env locally).',
+    )
   }
 
   const db = getDb()

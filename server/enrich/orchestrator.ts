@@ -141,7 +141,10 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
         await logActivity(
           'info',
           'enrich.provider_not_configured',
-          { provider: provider.id, hint: 'add its key in .env to turn it on' },
+          {
+            provider: provider.id,
+            hint: 'add its key in Replit Secrets, then Publish, to turn it on',
+          },
           null,
           db,
         )

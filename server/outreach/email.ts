@@ -22,7 +22,8 @@ export function pickEmailProvider(deps: OutreachDeps, settings: Settings): Email
   return null
 }
 
-export const EMAIL_KEYS_HINT = 'add SMTP_HOST, SMTP_USER and SMTP_PASS or RESEND_API_KEY in .env'
+export const EMAIL_KEYS_HINT =
+  'add a sending inbox under Settings > Sending inboxes (or SMTP_HOST, SMTP_USER and SMTP_PASS in Replit Secrets, then Publish)'
 
 /** A minimal HTML twin of a plain text body: paragraphs and clickable links. */
 export function textToHtml(text: string): string {
