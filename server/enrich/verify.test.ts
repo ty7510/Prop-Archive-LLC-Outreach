@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { allowedUrl, pageText } from './pageCheck.ts'
+import http from 'node:http'
+import type { AddressInfo, LookupFunction } from 'node:net'
+import { allowedUrl, getOnce, pageText } from './pageCheck.ts'
 import {
   checkContacts,
   normaliseContact,
@@ -185,5 +187,56 @@ describe('opening source pages', () => {
     expect(
       pageText('<html><script>x()</script><p>1022 Pine&nbsp;St</p><b>(610) 209-5093</b></html>'),
     ).toBe('1022 Pine St (610) 209-5093')
+  })
+})
+
+describe('a hostile page cannot hold a research run', () => {
+  // Local test servers are private, so these tests pass a lookup that allows them.
+  const anyLookup: LookupFunction = (_host, opts, cb) => {
+    if ((opts as { all?: boolean }).all) {
+      ;(cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, [
+        { address: '127.0.0.1', family: 4 },
+      ])
+    } else cb(null, '127.0.0.1', 4)
+  }
+
+  async function serve(handler: http.RequestListener) {
+    const server = http.createServer(handler)
+    await new Promise<void>((ok) => server.listen(0, '127.0.0.1', ok))
+    const port = (server.address() as AddressInfo).port
+    return { server, url: new URL(`http://test.local:${port}/`) }
+  }
+
+  it('gives up on a page that drips one byte at a time, at the deadline', async () => {
+    const { server, url } = await serve((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      const t = setInterval(() => res.write('a'), 50)
+      res.on('close', () => clearInterval(t))
+    })
+    const started = Date.now()
+    await expect(getOnce(url, { lookup: anyLookup, deadlineMs: 400 })).rejects.toThrow('deadline')
+    expect(Date.now() - started).toBeLessThan(2000)
+    server.close()
+  })
+
+  it('stops reading a page bigger than the cap', async () => {
+    const { server, url } = await serve((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end('x'.repeat(3_000_000))
+    })
+    await expect(getOnce(url, { lookup: anyLookup })).rejects.toThrow('page too large')
+    server.close()
+  })
+
+  it('reads a normal page', async () => {
+    const { server, url } = await serve((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end('<p>1022 Pine St</p>')
+    })
+    await expect(getOnce(url, { lookup: anyLookup })).resolves.toMatchObject({
+      status: 200,
+      body: '<p>1022 Pine St</p>',
+    })
+    server.close()
   })
 })
