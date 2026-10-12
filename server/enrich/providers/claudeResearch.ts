@@ -12,6 +12,7 @@ import { clean, emptyResult, type EnrichProvider, type ProviderResult } from '..
 export const RESEARCH_MODEL = 'claude-opus-5-5'
 export const RESEARCH_MAX_TOKENS = 16000
 export const RESEARCH_MAX_WEB_SEARCHES = 20
+export const RESEARCH_MAX_WEB_FETCHES = 12
 /** A web search turn needs longer than the 10 s the plain HTTP providers get. */
 export const RESEARCH_TIMEOUT_MS = 300_000
 /** pause_turn resumes allowed before we give up on one lead. */
@@ -55,6 +56,10 @@ export const RESEARCH_SYSTEM = [
   'For a company (LLC), full_name is the owner, managing member or principal named by a source, else null.',
   'confidence is 0 to 1: how sure you are the presence you found is this exact owner.',
   'Return nulls freely. Wrong data is worse than no data.',
+  'What works for these owners (measured): plain web search rarely finds them and "corrects" rare surnames to famous',
+  'people, so check every hit against the mailing address or LLC name before using it. The OpenCorporates officer',
+  'search links in the prompt name LLC principals and their other LLCs; fetch them first, then follow company pages.',
+  'A licence "agent" or managing agent is not the owner unless a filing says so.',
 ].join(' ')
 
 /** The user prompt for one lead. Pure, unit tested. */
@@ -70,6 +75,7 @@ export function buildResearchPrompt(
     | 'property_count'
     | 'zips'
     | 'owner_kind'
+    | 'last_name'
   >,
 ): string {
   const who = clean(lead.company) ?? clean(lead.full_name) ?? 'this owner'
@@ -90,12 +96,35 @@ export function buildResearchPrompt(
   }
   if (lead.zips.length) lines.push(`Property zip codes: ${lead.zips.join(', ')}.`)
   if (mailing) lines.push(`Owner mailing address from public records: ${mailing}.`)
+  const links = researchLinks(lead)
+  if (links.length) {
+    lines.push('Fetch these public registry searches first:', ...links.map((u) => `- ${u}`))
+  }
   lines.push(
     'Find every one of these that a source states: business email, phone number, LinkedIn profile, Instagram page,',
     'Facebook page or profile, company website, the owner full name, mailing address, how many properties and',
     'units they own, and details about each property. Search hard and from several angles before returning null.',
   )
   return lines.join('\n')
+}
+
+const OC = 'https://opencorporates.com'
+
+/** Registry search URLs for this owner. web_fetch only opens URLs that appear in the conversation. */
+export function researchLinks(lead: Pick<Lead, 'full_name' | 'company' | 'last_name'>): string[] {
+  const q = (s: string) => encodeURIComponent(s.replace(/\s+/g, ' ').trim())
+  const links: string[] = []
+  const company = clean(lead.company)
+  if (company && isLlc(company)) {
+    links.push(`${OC}/companies/us_pa?q=${q(company)}`)
+  }
+  const person = clean(lead.full_name)
+  if (person && !isLlc(person)) {
+    links.push(`${OC}/officers?q=${q(person)}&jurisdiction_code=us_pa`)
+  } else if (clean(lead.last_name)) {
+    links.push(`${OC}/officers?q=${q(lead.last_name!)}&jurisdiction_code=us_pa`)
+  }
+  return links
 }
 
 /** What a parsed response looks like to this provider: the slice of the SDK message we read. */
@@ -148,6 +177,7 @@ export function buildResearchParams(
     messages: messages ?? [{ role: 'user', content: prompt }],
     tools: [
       { type: 'web_search_20260209', name: 'web_search', max_uses: RESEARCH_MAX_WEB_SEARCHES },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: RESEARCH_MAX_WEB_FETCHES },
     ],
     output_config: { effort: 'high', format: zodOutputFormat(ResearchSchema) },
   }

@@ -3,6 +3,7 @@ import { makeContext, makeLead, testEnv } from '../testing.ts'
 import {
   buildResearchParams,
   buildResearchPrompt,
+  researchLinks,
   createClaudeResearchProvider,
   mapResearchResult,
   RESEARCH_MAX_TOKENS,
@@ -106,6 +107,7 @@ describe('buildResearchPrompt and params', () => {
     )
     expect(params.tools).toEqual([
       { type: 'web_search_20260209', name: 'web_search', max_uses: 20 },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 12 },
     ])
     expect(params.messages).toEqual([{ role: 'user', content: 'hello' }])
     expect(ResearchSchema.safeParse(found).success).toBe(true)
@@ -218,5 +220,26 @@ describe('claude_research provider', () => {
     })
     const p = createClaudeResearchProvider({ clientFactory: factory })
     await expect(p.enrich(makeLead({ company: 'X LLC' }), ctx())).rejects.toThrow(/429/)
+  })
+})
+
+describe('researchLinks', () => {
+  it('builds OpenCorporates searches for the LLC and the person', () => {
+    expect(
+      researchLinks({
+        company: 'Third Few Units LLC',
+        full_name: 'Jonathan Potter',
+        last_name: 'Potter',
+      }),
+    ).toEqual([
+      'https://opencorporates.com/companies/us_pa?q=Third%20Few%20Units%20LLC',
+      'https://opencorporates.com/officers?q=Jonathan%20Potter&jurisdiction_code=us_pa',
+    ])
+    expect(researchLinks({ company: null, full_name: 'Acme LLC', last_name: null })).toEqual([])
+  })
+
+  it('puts the links into the prompt', () => {
+    const prompt = buildResearchPrompt(makeLead({ company: 'Glox LLC', owner_kind: 'llc' }))
+    expect(prompt).toContain('https://opencorporates.com/companies/us_pa?q=Glox%20LLC')
   })
 })
