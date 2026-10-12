@@ -36,6 +36,37 @@ describe('pickBatch', () => {
   })
 })
 
+describe('pickBatch after a key is added', () => {
+  it('picks leads enriched before Claude research had its turn, until they have contacts', async () => {
+    await updateSettings(
+      {
+        min_icp_score: 50,
+        personas: ['maya', 'ray', 'denise'],
+        enrichment: { providers: ['li_license', 'claude_research'] },
+      },
+      db,
+    )
+    const fetchedAt = { fetched_at: '2026-10-12T15:12:00Z', data: null }
+    const licenseOnly = await insertLead(db, {
+      status: 'enriched',
+      enrichment: { li_license: fetchedAt },
+    })
+    const inSequence = await insertLead(db, {
+      status: 'enrolled',
+      enrichment: { li_license: fetchedAt },
+    })
+    await insertLead(db, {
+      status: 'enriched',
+      enrichment: { li_license: fetchedAt, claude_research: fetchedAt },
+    }) // already researched
+    await insertLead(db, { status: 'contacted', enrichment: { li_license: fetchedAt } }) // further along
+    const noKey = { db, env: testEnv() }
+    expect(await pickBatch(10, noKey)).toEqual([])
+    const withKey = { db, env: testEnv({ ANTHROPIC_API_KEY: 'k' }) }
+    expect((await pickBatch(10, withKey)).sort()).toEqual([licenseOnly.id, inSequence.id].sort())
+  })
+})
+
 describe('enrichLeads', () => {
   it('runs providers in settings order, stores raw payloads, recomputes channels, sets enriched', async () => {
     await updateSettings(

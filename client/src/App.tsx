@@ -33,11 +33,13 @@ function StatusPills() {
       >
         {live ? 'Live' : 'Dry run'}
       </span>
-      <span
+      <Link
+        href="/go"
         className={clsx('pill', auto ? 'bg-sky-600 text-white' : 'bg-stone-200 text-stone-700')}
+        title="Switch Autopilot on or off on the Go page"
       >
         Autopilot {auto ? 'on' : 'off'}
-      </span>
+      </Link>
     </div>
   )
 }
