@@ -39,6 +39,7 @@ export interface Lead {
   phone_type: PhoneType
   linkedin_url: string | null
   instagram_url: string | null
+  facebook_url: string | null
   website: string | null
   mailing_street: string | null
   mailing_city: string | null

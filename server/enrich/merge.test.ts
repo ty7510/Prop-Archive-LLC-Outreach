@@ -198,10 +198,20 @@ describe('channels', () => {
     )
   })
 
-  it('hasEnoughContact needs email and linkedin or phone', () => {
-    expect(hasEnoughContact(makeLead({ email: 'a@b.co' }))).toBe(false)
-    expect(hasEnoughContact(makeLead({ linkedin_url: 'x', phone: '1' }))).toBe(false)
-    expect(hasEnoughContact(makeLead({ email: 'a@b.co', linkedin_url: 'x' }))).toBe(true)
-    expect(hasEnoughContact(makeLead({ email: 'a@b.co', phone: '2155550100' }))).toBe(true)
+  it('hasEnoughContact is true only when every wanted field is filled', () => {
+    const full = {
+      full_name: 'Jo Smith',
+      email: 'a@b.co',
+      phone: '2155550100',
+      linkedin_url: 'x',
+      instagram_url: 'y',
+      facebook_url: 'z',
+      website: 'w',
+      mailing_street: '1 Main St',
+      unit_count: 4,
+    }
+    expect(hasEnoughContact(makeLead({ email: 'a@b.co', phone: '2155550100' }))).toBe(false)
+    expect(hasEnoughContact(makeLead({ ...full, facebook_url: null }))).toBe(false)
+    expect(hasEnoughContact(makeLead(full))).toBe(true)
   })
 })

@@ -30,6 +30,7 @@ function lead(over: Partial<Lead> = {}): Lead {
     phone_type: 'unknown',
     linkedin_url: null,
     instagram_url: null,
+    facebook_url: null,
     website: null,
     mailing_street: '5214 Baltimore Ave',
     mailing_city: 'Philadelphia',

@@ -266,6 +266,7 @@ export function sampleLead(now: Date = new Date()): Lead {
     phone_type: 'mobile',
     linkedin_url: 'https://www.linkedin.com/in/example',
     instagram_url: null,
+    facebook_url: null,
     website: null,
     mailing_street: '1234 Example St',
     mailing_city: 'Philadelphia',

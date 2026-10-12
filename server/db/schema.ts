@@ -48,6 +48,7 @@ export const leads = pgTable(
     phone_type: text('phone_type').$type<PhoneType>().notNull().default('unknown'),
     linkedin_url: text('linkedin_url'),
     instagram_url: text('instagram_url'),
+    facebook_url: text('facebook_url'),
     website: text('website'),
 
     mailing_street: text('mailing_street'),

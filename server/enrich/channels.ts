@@ -27,7 +27,20 @@ export function computeChannels(lead: ChannelInput): LeadChannels {
   }
 }
 
-/** The orchestrator stops calling providers once this is true. */
-export function hasEnoughContact(lead: Pick<Lead, 'email' | 'linkedin_url' | 'phone'>): boolean {
-  return Boolean(lead.email) && (Boolean(lead.linkedin_url) || Boolean(lead.phone))
+/** Every field enrichment hunts for. The orchestrator keeps calling providers until all are filled. */
+export const WANTED_FIELDS = [
+  'full_name',
+  'email',
+  'phone',
+  'linkedin_url',
+  'instagram_url',
+  'facebook_url',
+  'website',
+  'mailing_street',
+  'unit_count',
+] as const
+
+/** True only when nothing is left to look for; enrichment tries every provider until then. */
+export function hasEnoughContact(lead: Pick<Lead, (typeof WANTED_FIELDS)[number]>): boolean {
+  return WANTED_FIELDS.every((f) => Boolean(lead[f]))
 }

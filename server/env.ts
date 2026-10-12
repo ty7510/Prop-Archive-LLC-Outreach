@@ -28,6 +28,8 @@ export const EnvSchema = z.object({
   ),
 
   ANTHROPIC_API_KEY: optional,
+  /** Needed when the key is organization-level, not scoped to a workspace. */
+  ANTHROPIC_WORKSPACE_ID: optional,
 
   SMTP_HOST: optional,
   SMTP_PORT: optionalPort,
@@ -51,7 +53,13 @@ export type Env = z.infer<typeof EnvSchema>
 
 /** Parse an env-like object. Exported so tests can build an Env without touching process.env. */
 export function parseEnv(source: Record<string, string | undefined>): Env {
-  const parsed = EnvSchema.parse(source)
+  // Prop Archive's Replit secrets use these names; accept them so the same secrets work here.
+  const pick = (...names: string[]) => names.map((n) => source[n]?.trim()).find(Boolean)
+  const parsed = EnvSchema.parse({
+    ...source,
+    ANTHROPIC_API_KEY: pick('ANTHROPIC_API_KEY', 'Claude_API', 'CLAUDE_API_KEY'),
+    ANTHROPIC_WORKSPACE_ID: pick('ANTHROPIC_WORKSPACE_ID', 'Claude_Workspace_ID'),
+  })
   if (!parsed.SESSION_SECRET) {
     // A fresh secret per boot means sessions reset on restart. Fine for one user; set it in .env to keep logins.
     parsed.SESSION_SECRET = randomBytes(32).toString('hex')

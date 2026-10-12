@@ -51,19 +51,19 @@ curl -s -b $J "$B/api/activity?limit=100"
 
 ## Scripts
 
-| Script                | What it does                                                               |
-| --------------------- | -------------------------------------------------------------------------- |
-| `npm run dev`         | server (tsx watch) + vite, both with reload                                |
-| `npm run build`       | client to `dist/client`, server to `dist/server`                           |
-| `npm start`           | run the built server, serves the built client, production                  |
-| `npm run check`       | TypeScript strict, client + server + tests                                 |
+| Script                | What it does                                                                |
+| --------------------- | --------------------------------------------------------------------------- |
+| `npm run dev`         | server (tsx watch) + vite, both with reload                                 |
+| `npm run build`       | client to `dist/client`, server to `dist/server`                            |
+| `npm start`           | run the built server, serves the built client, production                   |
+| `npm run check`       | TypeScript strict, client + server + tests                                  |
 | `npm test`            | vitest, isolated PostgreSQL test schemas; requires development DATABASE_URL |
-| `npm run lint`        | eslint                                                                     |
-| `npm run format`      | prettier write; `format:check` for CI                                      |
-| `npm run db:generate` | write a new migration from `server/db/schema.ts`                           |
-| `npm run db:push`     | push the schema straight to the db file (dev only)                         |
-| `npm run seed`        | run the seed by hand (idempotent; re-reads `content/sequences/*.md`)       |
-| `npm run smoke`       | boot on a random port, log in, import a 3-row CSV, tick in dry run, assert |
+| `npm run lint`        | eslint                                                                      |
+| `npm run format`      | prettier write; `format:check` for CI                                       |
+| `npm run db:generate` | write a new migration from `server/db/schema.ts`                            |
+| `npm run db:push`     | push the schema straight to the db file (dev only)                          |
+| `npm run seed`        | run the seed by hand (idempotent; re-reads `content/sequences/*.md`)        |
+| `npm run smoke`       | boot on a random port, log in, import a 3-row CSV, tick in dry run, assert  |
 
 The smoke script clears `target_zips` before the tick so it never calls the Carto API; it checks
 that 3 leads exist, the tick ran every job without an error, dry_run messages were written and
