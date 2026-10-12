@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, SECRET_MASK, type SendingInbox } from '../../shared/settings.ts'
-import { inboxProvider, maskSettings, pickInbox, restoreInboxSecrets } from './inboxes.ts'
+import { SendingInboxSchema } from '../../shared/settings.ts'
+import { testDeps } from './deps.ts'
+import {
+  inboxProvider,
+  isPrivateAddress,
+  mailHostProblem,
+  maskSettings,
+  pickInbox,
+  restoreInboxSecrets,
+} from './inboxes.ts'
 
 function inbox(email: string, patch: Partial<SendingInbox> = {}): SendingInbox {
   return {
@@ -66,5 +75,74 @@ describe('inbox passwords in the settings API', () => {
     ]
     const restored = restoreInboxSecrets(current, incoming) as SendingInbox[]
     expect(restored.map((i) => i.smtp_pass)).toEqual(['secret', 'new-one', ''])
+  })
+})
+
+describe('a stored password only goes where it was meant to', () => {
+  it('drops the stored password when a masked inbox comes back with another server or login', () => {
+    const current = [inbox('a@x.com')]
+    for (const change of [
+      { smtp_host: 'smtp.evil-example.com' },
+      { smtp_port: 587 },
+      { smtp_user: 'someone@x.com' },
+      { imap_host: 'imap.evil-example.com' },
+    ]) {
+      const [restored] = restoreInboxSecrets(current, [
+        { ...inbox('a@x.com'), ...change, smtp_pass: SECRET_MASK },
+      ]) as SendingInbox[]
+      expect(restored!.smtp_pass, JSON.stringify(change)).toBe('')
+    }
+  })
+
+  it('only accepts public mail server names on mail ports', () => {
+    const base = { id: 'x', email: 'a@x.com' }
+    for (const smtp_host of ['localhost', '127.0.0.1', '10.0.0.5', 'mail.corp', 'nodot']) {
+      expect(SendingInboxSchema.safeParse({ ...base, smtp_host }).success, smtp_host).toBe(false)
+    }
+    expect(SendingInboxSchema.safeParse({ ...base, smtp_host: 'smtp.gmail.com' }).success).toBe(
+      true,
+    )
+    expect(SendingInboxSchema.safeParse({ ...base, smtp_port: 22 }).success).toBe(false)
+    expect(SendingInboxSchema.safeParse({ ...base, imap_port: 6379 }).success).toBe(false)
+  })
+
+  it('refuses a server name that resolves to a private address', async () => {
+    const deps = (addresses: string[] | Error) =>
+      ({
+        ...testDeps(null as never),
+        lookupHost: async () => {
+          if (addresses instanceof Error) throw addresses
+          return addresses
+        },
+      }) as ReturnType<typeof testDeps>
+    expect(await mailHostProblem(deps(['10.1.2.3']), 'smtp.example.com')).toMatch(/private/)
+    expect(await mailHostProblem(deps(['203.0.113.9', '::1']), 'smtp.example.com')).toMatch(
+      /private/,
+    )
+    expect(await mailHostProblem(deps(new Error('ENOTFOUND')), 'smtp.nope.com')).toMatch(
+      /not found/,
+    )
+    expect(await mailHostProblem(deps(['142.250.1.108']), 'smtp.gmail.com')).toBeNull()
+  })
+
+  it('knows the private ranges', () => {
+    for (const ip of [
+      '127.0.0.1',
+      '10.0.0.1',
+      '172.16.5.4',
+      '192.168.1.1',
+      '169.254.169.254',
+      '100.64.0.1',
+      '0.0.0.0',
+      '::1',
+      'fd00::1',
+      'fe80::1',
+      '::ffff:10.0.0.1',
+    ]) {
+      expect(isPrivateAddress(ip), ip).toBe(true)
+    }
+    for (const ip of ['8.8.8.8', '142.250.1.108', '2607:f8b0:4004:c1b::6c']) {
+      expect(isPrivateAddress(ip), ip).toBe(false)
+    }
   })
 })

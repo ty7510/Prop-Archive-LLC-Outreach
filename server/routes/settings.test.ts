@@ -171,6 +171,33 @@ describe('sending inboxes in the settings API', () => {
     })
   })
 
+  it('Test login never sends the stored password to a server it was not saved for', async () => {
+    const { agent } = await loggedIn()
+    await agent.put('/api/settings').send({ sending_inboxes: [inbox] })
+    const res = await agent.post('/api/settings/inboxes/test').send({
+      ...inbox,
+      smtp_host: 'smtp.attacker-example.com',
+      smtp_pass: SECRET_MASK,
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.smtp).toEqual({
+      ok: false,
+      message: 'Fill in the SMTP server, login and app password',
+    })
+  })
+
+  it('refuses inbox servers on private names or non-mail ports', async () => {
+    const { agent } = await loggedIn()
+    for (const bad of [
+      { smtp_host: 'localhost' },
+      { smtp_host: '10.0.0.8' },
+      { smtp_port: 6379 },
+    ]) {
+      const res = await agent.put('/api/settings').send({ sending_inboxes: [{ ...inbox, ...bad }] })
+      expect(res.status, JSON.stringify(bad)).toBe(400)
+    }
+  })
+
   it('lists what the sequence still needs', async () => {
     const { agent } = await loggedIn()
     const res = await agent.get('/api/settings/readiness')

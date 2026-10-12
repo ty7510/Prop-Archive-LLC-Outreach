@@ -3,6 +3,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { SendingInbox } from '../../shared/settings.ts'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
+import { lookup } from 'node:dns/promises'
 import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
 import type { z } from 'zod'
@@ -92,6 +93,8 @@ export interface OutreachDeps {
   smtpForInbox: (inbox: SendingInbox) => Mailer & { verify?: () => Promise<unknown> }
   /** An IMAP client for one warmed inbox, logging in with its SMTP user and password. */
   imapForInbox: (inbox: SendingInbox) => ImapClient
+  /** Every address a host name resolves to, so inbox servers can be checked before we connect. */
+  lookupHost: (host: string) => Promise<string[]>
 }
 
 /** Where links in emails point. PUBLIC_URL wins, then Replit's domain, then localhost. */
@@ -190,6 +193,7 @@ export function defaultDeps(db: Db = getDb(), e: Env = env): OutreachDeps {
     imap: hasImap ? () => imapClient(e) : null,
     smtpForInbox: inboxMailer,
     imapForInbox: inboxImap,
+    lookupHost: async (host) => (await lookup(host, { all: true })).map((a) => a.address),
   }
 }
 
@@ -213,6 +217,8 @@ export function testDeps(db: Db, overrides: Partial<OutreachDeps> = {}): Outreac
     imapForInbox: () => {
       throw new Error('inbox IMAP is not available in this test')
     },
+    // A public address, so inbox servers in tests pass the private-network check without DNS.
+    lookupHost: async () => ['203.0.113.10'],
   }
   return { ...base, ...overrides }
 }

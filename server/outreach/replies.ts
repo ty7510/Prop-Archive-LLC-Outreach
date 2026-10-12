@@ -15,7 +15,7 @@ import { getSettings } from '../lib/settings.ts'
 import { normaliseEmail } from '../lib/text.ts'
 import type { ImapClient, ImapMessage, Llm, OutreachDeps } from './deps.ts'
 import { sendEmail, pickEmailProvider } from './email.ts'
-import { canRead, canSend } from './inboxes.ts'
+import { canRead, canSend, mailHostProblem } from './inboxes.ts'
 import { stopLead } from './enroll.ts'
 import { addSuppression } from './suppression.ts'
 
@@ -496,13 +496,24 @@ export async function processInboundMessage(
   })
 }
 
+interface ReplySource {
+  /** settings row holding this inbox's last sync time */
+  key: string
+  label: string
+  client: () => ImapClient
+  /** UIDs are only unique inside one mailbox; warmed inboxes pass their id. */
+  uidScope?: string
+  /** A warmed inbox's IMAP server, checked before connecting. */
+  host?: string
+}
+
 /**
  * Read replies from every inbox the app can log into: the .env IMAP inbox and each warmed inbox
  * with an IMAP server. Each keeps its own last-sync time.
  */
 export async function syncReplies(deps: OutreachDeps): Promise<{ received: number }> {
   const settings = await getSettings(deps.db)
-  const sources: { key: string; label: string; client: () => ImapClient; uidScope?: string }[] = []
+  const sources: ReplySource[] = []
   if (deps.imap) sources.push({ key: LAST_SYNC_KEY, label: 'env', client: deps.imap })
   for (const inbox of settings.sending_inboxes) {
     if (!canRead(inbox)) continue
@@ -511,6 +522,7 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
       label: inbox.email,
       client: () => deps.imapForInbox(inbox),
       uidScope: inbox.id,
+      host: inbox.imap_host,
     })
   }
   let received = 0
@@ -523,7 +535,7 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
 async function syncOneInbox(
   deps: OutreachDeps,
   settings: Settings,
-  source: { key: string; label: string; client: () => ImapClient; uidScope?: string },
+  source: ReplySource,
 ): Promise<number> {
   const { db } = deps
   const now = deps.now()
@@ -533,6 +545,9 @@ async function syncOneInbox(
   let received = 0
   let client: ImapClient | null = null
   try {
+    // A warmed inbox's IMAP server must be a public host before we log in with its password.
+    const problem = source.host ? await mailHostProblem(deps, source.host) : null
+    if (problem) throw new Error(problem)
     client = source.client()
     await client.connect()
     await client.mailboxOpen('INBOX')

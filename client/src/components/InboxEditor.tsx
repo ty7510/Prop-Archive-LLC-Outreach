@@ -111,6 +111,12 @@ function InboxCard({
   const [result, setResult] = useState<InboxTestResult | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
   const preset = presetOf(inbox)
+  // The server keeps a saved password only while the servers and login stay the same, so a change
+  // here clears it and the app password has to be typed again.
+  const retypePassword = inbox.smtp_pass === ''
+  function changeServer(patch: Partial<SendingInbox>) {
+    onChange(inbox.smtp_pass === SECRET_MASK ? { ...patch, smtp_pass: '' } : patch)
+  }
 
   async function runTest() {
     setTesting(true)
@@ -151,7 +157,8 @@ function InboxCard({
               const email = e.target.value.trim()
               // The login is the address for every common host; keep them together until edited.
               const userFollows = !inbox.smtp_user || inbox.smtp_user === inbox.email
-              onChange(userFollows ? { email, smtp_user: email } : { email })
+              if (userFollows) changeServer({ email, smtp_user: email })
+              else onChange({ email })
             }}
           />
         </Field>
@@ -169,10 +176,10 @@ function InboxCard({
             value={preset}
             onChange={(e) => {
               const key = e.target.value as PresetKey | 'other'
-              if (key === 'other') onChange({ smtp_host: '', imap_host: '' })
+              if (key === 'other') changeServer({ smtp_host: '', imap_host: '' })
               else {
                 const { label: _label, ...servers } = PRESETS[key]
-                onChange(servers)
+                changeServer(servers)
               }
             }}
           >
@@ -186,7 +193,11 @@ function InboxCard({
         </Field>
         <Field
           label="App password"
-          hint="Not your normal password. Google: Account > Security > App passwords. Stays on the server."
+          hint={
+            retypePassword && inbox.email
+              ? 'Type the app password (needed again after the server or login changes).'
+              : 'Not your normal password. Google: Account > Security > App passwords. Stays on the server.'
+          }
         >
           <input
             className="input"
@@ -201,7 +212,7 @@ function InboxCard({
           <input
             className="input"
             value={inbox.smtp_user}
-            onChange={(e) => onChange({ smtp_user: e.target.value.trim() })}
+            onChange={(e) => changeServer({ smtp_user: e.target.value.trim() })}
           />
         </Field>
         <Field label="Emails per day from this inbox" hint="Warmed inboxes: 20 to 40">
@@ -221,7 +232,7 @@ function InboxCard({
                 className="input"
                 value={inbox.smtp_host}
                 placeholder="smtp.example.com"
-                onChange={(e) => onChange({ smtp_host: e.target.value.trim() })}
+                onChange={(e) => changeServer({ smtp_host: e.target.value.trim() })}
               />
             </Field>
             <Field label="SMTP port" hint="465 or 587">
@@ -229,7 +240,7 @@ function InboxCard({
                 className="input"
                 type="number"
                 value={inbox.smtp_port}
-                onChange={(e) => onChange({ smtp_port: Number(e.target.value) || 587 })}
+                onChange={(e) => changeServer({ smtp_port: Number(e.target.value) || 587 })}
               />
             </Field>
             <Field label="IMAP server (reading replies)">
@@ -237,7 +248,7 @@ function InboxCard({
                 className="input"
                 value={inbox.imap_host}
                 placeholder="imap.example.com"
-                onChange={(e) => onChange({ imap_host: e.target.value.trim() })}
+                onChange={(e) => changeServer({ imap_host: e.target.value.trim() })}
               />
             </Field>
             <Field label="IMAP port" hint="Usually 993">
@@ -245,7 +256,7 @@ function InboxCard({
                 className="input"
                 type="number"
                 value={inbox.imap_port}
-                onChange={(e) => onChange({ imap_port: Number(e.target.value) || 993 })}
+                onChange={(e) => changeServer({ imap_port: Number(e.target.value) || 993 })}
               />
             </Field>
           </>

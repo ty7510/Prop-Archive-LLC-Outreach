@@ -1,5 +1,6 @@
 // Warmed sending inboxes (settings.sending_inboxes): rotation under each inbox's daily limit,
 // per-inbox counts, and the password mask the settings API puts on every response.
+import { isIP } from 'node:net'
 import { and, eq, gte, like, or } from 'drizzle-orm'
 import { SECRET_MASK, type SendingInbox, type Settings } from '../../shared/settings.ts'
 import type { InboxTestResult } from '../../shared/types.ts'
@@ -81,25 +82,81 @@ export function maskSettings(settings: Settings): Settings {
   }
 }
 
+/** Where a stored password gets sent. Change any of these and the password must be typed again. */
+const CONNECTION_FIELDS = ['smtp_host', 'smtp_port', 'smtp_user', 'imap_host', 'imap_port'] as const
+
 /**
- * A PUT carries inboxes as the API showed them. A masked or blank password means "keep the one
- * stored for this inbox id"; anything else replaces it.
+ * A PUT (or a Test) carries inboxes as the API showed them. A masked or blank password means
+ * "keep the one stored for this inbox id", but only while the servers and login are unchanged:
+ * otherwise the stored password could be sent to a server it was never meant for.
  */
 export function restoreInboxSecrets(current: readonly SendingInbox[], incoming: unknown): unknown {
   if (!Array.isArray(incoming)) return incoming
-  const stored = new Map(current.map((i) => [i.id, i.smtp_pass]))
+  const stored = new Map(current.map((i) => [i.id, i]))
   return incoming.map((item: unknown) => {
     if (typeof item !== 'object' || item === null) return item
     const inbox = item as Record<string, unknown>
     const pass = inbox.smtp_pass
-    if (
-      (pass === SECRET_MASK || pass === '' || pass === undefined) &&
-      typeof inbox.id === 'string'
-    ) {
-      return { ...inbox, smtp_pass: stored.get(inbox.id) ?? '' }
-    }
-    return inbox
+    if (pass !== SECRET_MASK && pass !== '' && pass !== undefined) return inbox
+    const prev = typeof inbox.id === 'string' ? stored.get(inbox.id) : undefined
+    const sameServers =
+      prev !== undefined &&
+      CONNECTION_FIELDS.every(
+        (f) =>
+          String(inbox[f] ?? '')
+            .trim()
+            .toLowerCase() === String(prev[f]).toLowerCase(),
+      )
+    return { ...inbox, smtp_pass: sameServers ? prev.smtp_pass : '' }
   })
+}
+
+/** Loopback, private, link-local, carrier-grade NAT and multicast addresses. */
+export function isPrivateAddress(ip: string): boolean {
+  const v = ip.toLowerCase()
+  if (v.startsWith('::ffff:')) return isPrivateAddress(v.slice(7))
+  if (isIP(v) === 4) {
+    const [a = 0, b = 0] = v.split('.').map(Number)
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a >= 224
+    )
+  }
+  return (
+    v === '::' ||
+    v === '::1' ||
+    v.startsWith('fc') ||
+    v.startsWith('fd') ||
+    v.startsWith('fe8') ||
+    v.startsWith('fe9') ||
+    v.startsWith('fea') ||
+    v.startsWith('feb') ||
+    v.startsWith('ff')
+  )
+}
+
+/**
+ * Why the app must not connect to this mail server, or null when it may: the name must resolve,
+ * and only to public addresses, so an inbox can never point the server into a private network.
+ */
+export async function mailHostProblem(deps: OutreachDeps, host: string): Promise<string | null> {
+  if (!host) return 'No server set'
+  if (isIP(host)) return 'Use the mail server name, not an IP address'
+  let addresses: string[]
+  try {
+    addresses = await deps.lookupHost(host)
+  } catch {
+    return `${host} was not found. Check the server name`
+  }
+  if (addresses.length === 0) return `${host} was not found. Check the server name`
+  if (addresses.some(isPrivateAddress)) return `${host} points at a private network address`
+  return null
 }
 
 function errorText(err: unknown): string {
@@ -120,8 +177,11 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
     smtp: { ok: false, message: '' },
     imap: { ok: false, message: 'No IMAP server, so replies to this inbox are not read' },
   }
+  const smtpProblem = inbox.smtp_host ? await mailHostProblem(deps, inbox.smtp_host) : null
   if (!inbox.smtp_host || !inbox.smtp_user || !inbox.smtp_pass) {
     result.smtp.message = 'Fill in the SMTP server, login and app password'
+  } else if (smtpProblem) {
+    result.smtp.message = smtpProblem
   } else {
     try {
       const mailer = deps.smtpForInbox(inbox)
@@ -131,7 +191,10 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
       result.smtp.message = errorText(err)
     }
   }
-  if (canRead(inbox)) {
+  const imapProblem = canRead(inbox) ? await mailHostProblem(deps, inbox.imap_host) : null
+  if (imapProblem) {
+    result.imap = { ok: false, message: imapProblem }
+  } else if (canRead(inbox)) {
     const client = deps.imapForInbox(inbox)
     try {
       await client.connect()
