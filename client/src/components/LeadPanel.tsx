@@ -196,12 +196,20 @@ function LeadBody({
           <ContactRow
             label="Email"
             value={lead.email}
-            note={lead.email_status !== 'unknown' ? humanise(lead.email_status) : undefined}
+            note={
+              lead.email_status !== 'unknown'
+                ? humanise(lead.email_status)
+                : proofNote(lead, 'email', lead.email)
+            }
           />
           <ContactRow
             label="Phone"
             value={lead.phone}
-            note={lead.phone_type !== 'unknown' ? humanise(lead.phone_type) : undefined}
+            note={
+              lead.phone_type !== 'unknown'
+                ? humanise(lead.phone_type)
+                : proofNote(lead, 'phone', lead.phone)
+            }
             link={
               lead.phone ? { href: telHref(lead.phone), label: 'Call', icon: Phone } : undefined
             }
@@ -209,6 +217,7 @@ function LeadBody({
           <ContactRow
             label="LinkedIn"
             value={lead.linkedin_url}
+            note={proofNote(lead, 'linkedin_url', lead.linkedin_url)}
             link={
               lead.linkedin_url
                 ? { href: ensureHttp(lead.linkedin_url), label: 'Open', icon: ExternalLink }
@@ -218,6 +227,7 @@ function LeadBody({
           <ContactRow
             label="Instagram"
             value={lead.instagram_url}
+            note={proofNote(lead, 'instagram_url', lead.instagram_url)}
             link={
               lead.instagram_url
                 ? { href: ensureHttp(lead.instagram_url), label: 'Open', icon: ExternalLink }
@@ -227,6 +237,7 @@ function LeadBody({
           <ContactRow
             label="Facebook"
             value={lead.facebook_url}
+            note={proofNote(lead, 'facebook_url', lead.facebook_url)}
             link={
               lead.facebook_url
                 ? { href: ensureHttp(lead.facebook_url), label: 'Open', icon: ExternalLink }
@@ -236,6 +247,7 @@ function LeadBody({
           <ContactRow
             label="Website"
             value={lead.website}
+            note={proofNote(lead, 'website', lead.website)}
             link={
               lead.website
                 ? { href: ensureHttp(lead.website), label: 'Open', icon: ExternalLink }
@@ -259,6 +271,35 @@ function LeadBody({
           />
         </dl>
       </section>
+
+      {otherContacts(lead).length ? (
+        <section>
+          <h3 className="mb-2 text-base font-semibold text-stone-700">Other ways in</h3>
+          <p className="mb-2 text-sm text-stone-600">
+            Property managers and agents who handle their rentals, and owner numbers or emails the
+            research could not prove. Check before using them.
+          </p>
+          <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200">
+            {otherContacts(lead).map((c) => (
+              <li
+                key={`${c.field}-${c.value}`}
+                className="flex flex-wrap items-baseline gap-x-2 px-3 py-2"
+              >
+                <span className="text-sm text-stone-500">{otherLabel(c)}</span>
+                <span className="min-w-0 break-words font-medium">{c.value}</span>
+                <a
+                  href={c.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-stone-500 underline"
+                >
+                  {sourceHost(c.source_url)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <h3 className="mb-2 text-base font-semibold text-stone-700">
@@ -504,4 +545,75 @@ function researchDetails(lead: {
   return Array.isArray(list)
     ? list.filter((d): d is string => typeof d === 'string').slice(0, 20)
     : []
+}
+
+interface CheckedContact {
+  field: string
+  value: string
+  role: 'owner' | 'manager' | 'agent'
+  source_url: string
+  verdict: 'verified' | 'likely' | 'rejected'
+  reason: string
+}
+
+/** Contacts the web research checked (server/enrich/verify.ts), from its stored result. */
+function checkedContacts(lead: {
+  enrichment: Record<string, { data?: unknown } | undefined>
+}): CheckedContact[] {
+  const data = lead.enrichment?.claude_research?.data as { checked?: unknown } | null
+  return Array.isArray(data?.checked) ? (data.checked as CheckedContact[]) : []
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return 'source'
+  }
+}
+
+function sameValue(field: string, a: string, b: string): boolean {
+  if (field === 'phone') return a.replace(/\D/g, '').endsWith(b.replace(/\D/g, '').slice(-10))
+  return a.trim().toLowerCase().replace(/\/+$/, '') === b.trim().toLowerCase().replace(/\/+$/, '')
+}
+
+/** "Verified on hotpads.com" when research proved this value belongs to the owner. */
+function proofNote(
+  lead: { enrichment: Record<string, { data?: unknown } | undefined> },
+  field: string,
+  value: string | null,
+): string | undefined {
+  if (!value) return undefined
+  const hit = checkedContacts(lead).find(
+    (c) =>
+      c.field === field &&
+      c.role === 'owner' &&
+      c.verdict !== 'rejected' &&
+      sameValue(field, value, c.value),
+  )
+  if (!hit) return undefined
+  return `${hit.verdict === 'verified' ? 'Verified' : 'Likely'} on ${sourceHost(hit.source_url)}`
+}
+
+/**
+ * Manager and agent contacts tied to their rentals, plus the owner's phones and emails that were
+ * only "likely" (too weak to save as theirs). Never shown as the owner's own.
+ */
+function otherContacts(lead: {
+  enrichment: Record<string, { data?: unknown } | undefined>
+}): CheckedContact[] {
+  return checkedContacts(lead)
+    .filter(
+      (c) =>
+        c.verdict !== 'rejected' &&
+        (c.role !== 'owner' ||
+          (c.verdict === 'likely' && (c.field === 'phone' || c.field === 'email'))),
+    )
+    .slice(0, 10)
+}
+
+function otherLabel(c: CheckedContact): string {
+  if (c.role === 'agent') return 'Agent'
+  if (c.role === 'manager') return 'Manager'
+  return 'Possibly theirs'
 }
