@@ -136,14 +136,15 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
   for (const provider of batch.ordered) {
     if (hasEnoughContact(current)) break
     if (!provider.isConfigured(env)) {
-      if (!batch.notConfigured.has(provider.id)) {
+      // Hunter, Apollo and People Data Labs are optional paid add-ons: skip them quietly.
+      if (provider.id === 'claude_research' && !batch.notConfigured.has(provider.id)) {
         batch.notConfigured.add(provider.id)
         await logActivity(
           'info',
           'enrich.provider_not_configured',
           {
             provider: provider.id,
-            hint: 'add its key in Replit Secrets, then Publish, to turn it on',
+            hint: 'add CLAUDE_API_KEY in Replit Secrets, then Publish, to turn it on',
           },
           null,
           db,

@@ -241,7 +241,7 @@ describe('enrichLeads', () => {
     expect(errors.some((e) => (e.detail as { error: string }).error === 'pdl: HTTP 500')).toBe(true)
   })
 
-  it('skips unknown ids and do_not_contact leads; unconfigured providers are logged once', async () => {
+  it('skips unknown ids and do_not_contact leads; optional unconfigured providers stay quiet', async () => {
     await updateSettings({ enrichment: { providers: ['hunter', 'li_license'] } }, db)
     const dnc = await insertLead(db, { do_not_contact: true, full_name: 'A B' })
     const a = await insertLead(db, { full_name: 'A B' })
@@ -260,7 +260,8 @@ describe('enrichLeads', () => {
     const notConfigured = (await listActivity(100, db)).filter(
       (x) => x.event === 'enrich.provider_not_configured',
     )
-    expect(notConfigured).toHaveLength(1)
+    // Hunter is an optional paid add-on: skipped quietly, nothing in the activity log.
+    expect(notConfigured).toHaveLength(0)
   })
 
   it('skips providers that do not apply without spending credits', async () => {

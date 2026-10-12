@@ -20,11 +20,7 @@ authRouter.post(
   '/login',
   asyncHandler(async (req, res) => {
     if (!env.APP_PASSWORD) {
-      throw new HttpError(
-        503,
-        'Add APP_PASSWORD in Replit Secrets (or .env when running locally), then restart',
-        'NO_PASSWORD',
-      )
+      throw new HttpError(503, 'Add APP_PASSWORD in Replit Secrets, then Publish', 'NO_PASSWORD')
     }
     const { password } = parseOr400(LoginBodySchema, req.body)
     const key = clientKey(req)

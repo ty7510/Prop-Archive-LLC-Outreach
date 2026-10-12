@@ -14,7 +14,7 @@ export const TEMPLATE_VARS: TemplateVar[] = [
   { name: 'unit_count', hint: 'Number of units' },
   { name: 'neighborhood', hint: 'Neighbourhood from the first zip' },
   { name: 'trigger_line', hint: 'One sentence about the trigger, empty when none' },
-  { name: 'ai_opener', hint: 'One AI written first line (needs the Anthropic key)' },
+  { name: 'ai_opener', hint: 'One AI written first line (needs the Claude key)' },
   { name: 'demo_link', hint: 'Tracked link to the demo page' },
   { name: 'beta_link', hint: 'Tracked link to join the beta' },
   { name: 'site_link', hint: 'Tracked link to the site' },
