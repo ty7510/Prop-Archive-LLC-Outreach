@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { allowedUrl, pageText } from './pageCheck.ts'
 import {
   checkContacts,
   normaliseContact,
@@ -17,15 +18,26 @@ const facts: OwnerFacts = {
   property_addresses: ['1022 PINE ST', '650 N 54TH ST'],
 }
 
+const LISTING = 'https://hotpads.com/1022-pine-st-phila-pa-19107-tnv33c/202/pad'
+
 function evidence(patch: Partial<ContactEvidence>): ContactEvidence {
   return {
     field: 'phone',
     value: '(610) 209-5093',
     role: 'owner',
-    source_url: 'https://hotpads.com/1022-pine-st-phila-pa-19107-tnv33c/202/pad',
-    quote: '1022 Pine St #202, Philadelphia, PA 19107. Property manager (610) 209-5093',
+    source_url: LISTING,
+    quote: '1022 Pine St #202, Philadelphia. Listed by Daniel Liez (610) 209-5093',
     ...patch,
   }
+}
+
+/** The source pages say exactly what their quotes say. */
+function pagesOf(list: ContactEvidence[]): Map<string, string | null> {
+  return new Map(list.map((e) => [e.source_url, e.quote]))
+}
+
+function check(list: ContactEvidence[], pages = pagesOf(list), f = facts) {
+  return checkContacts(list, f, pages)
 }
 
 describe('street keys', () => {
@@ -40,58 +52,75 @@ describe('street keys', () => {
 })
 
 describe('checkContacts', () => {
-  it('verifies a phone shown on a listing at their own property', () => {
-    const [c] = checkContacts([evidence({})], facts)
-    expect(c).toMatchObject({ value: '6102095093', verdict: 'verified' })
-    expect(c!.reason).toContain('1022 PINE ST')
+  it('verifies a phone the page shows at their property under their name', () => {
+    const [c] = check([evidence({})])
+    expect(c).toMatchObject({ value: '6102095093', verdict: 'verified', page: 'confirmed' })
   })
 
-  it('verifies a contact tied to their mailing address', () => {
-    const [c] = checkContacts(
-      [evidence({ quote: 'D. Liez, 4253 Regent Square, Philadelphia. Tel 610 209 5093' })],
-      facts,
-    )
+  it('keeps a listing phone with no owner name at "likely": it may be the leasing agent', () => {
+    const [c] = check([evidence({ quote: '1022 Pine St #202. Call (610) 209-5093' })])
+    expect(c).toMatchObject({ verdict: 'likely', page: 'confirmed' })
+    expect(c!.reason).toContain("not that it is the owner's own")
+  })
+
+  it('never verifies what the server could not open, and rejects what the page contradicts', () => {
+    const e = evidence({})
+    expect(check([e], new Map())[0]).toMatchObject({ verdict: 'likely', page: 'unreachable' })
+    const wrongPage = new Map([[LISTING, '1022 Pine St. Daniel Liez (610) 209-0000']])
+    expect(check([e], wrongPage)[0]).toMatchObject({ verdict: 'rejected', page: 'contradicted' })
+    const noTieOnPage = new Map([[LISTING, 'Call (610) 209-5093 for apartments']])
+    expect(check([e], noTieOnPage)[0]!.verdict).toBe('rejected')
+  })
+
+  it('verifies a contact the page ties to their mailing address', () => {
+    const [c] = check([
+      evidence({ quote: 'D. Liez, 4253 Regent Square, Philadelphia. Tel 610 209 5093' }),
+    ])
     expect(c!.verdict).toBe('verified')
   })
 
-  it('calls a name or company match likely, not verified', () => {
-    const [byName, byCompany] = checkContacts(
-      [
-        evidence({ quote: 'Daniel Liez, Keystone Floor Works, 610-209-5093' }),
-        evidence({ quote: 'Sunrise Center City LLC (610) 209-5093' }),
-      ],
-      facts,
-    )
+  it('calls a name or company match likely, never verified', () => {
+    const [byName, byCompany] = check([
+      evidence({ quote: 'Daniel Liez, Keystone Floor Works, 610-209-5093' }),
+      evidence({
+        source_url: 'https://example.com/b',
+        quote: 'Sunrise Center City LLC (610) 209-5093',
+      }),
+    ])
     expect(byName!.verdict).toBe('likely')
     expect(byCompany!.verdict).toBe('likely')
   })
 
-  it('verifies a site or email whose source shows an already verified phone', () => {
-    const checked = checkContacts(
-      [
-        evidence({
-          field: 'website',
-          value: 'keystonefloorworks.com',
-          source_url: 'https://www.keystonefloorworks.com/contact',
-          quote: 'Keystone Floor Works, keystonefloorworks.com, call 610-209-5093',
-        }),
-        evidence({}), // the phone, checked first whatever the order
-      ],
-      facts,
-    )
-    const site = checked.find((c) => c.field === 'website')
+  it('verifies a site whose page shows an already verified phone', () => {
+    const list = [
+      evidence({
+        field: 'website',
+        value: 'keystonefloorworks.com',
+        source_url: 'https://www.keystonefloorworks.com/contact',
+        quote: 'Keystone Floor Works, keystonefloorworks.com, call 610-209-5093',
+      }),
+      evidence({}), // the phone, checked first whatever the order
+    ]
+    const site = check(list).find((c) => c.field === 'website')
     expect(site).toMatchObject({ value: 'https://keystonefloorworks.com', verdict: 'verified' })
   })
 
+  it("verifies a manager's line at their property as the manager's, not the owner's", () => {
+    const [c] = check([
+      evidence({ role: 'manager', quote: '1022 Pine St, managed by Next Door, (610) 209-5093' }),
+    ])
+    expect(c).toMatchObject({ role: 'manager', verdict: 'verified' })
+  })
+
   it('rejects a value the quote does not show, a missing source, and an untied source', () => {
-    const [wrong, noSource, untied] = checkContacts(
-      [
-        evidence({ value: '610-209-0000' }),
-        evidence({ source_url: '' }),
-        evidence({ quote: 'Call 610-209-5093 for apartments in Center City' }),
-      ],
-      facts,
-    )
+    const [wrong, noSource, untied] = check([
+      evidence({ value: '610-209-0000' }),
+      evidence({ source_url: '' }),
+      evidence({
+        source_url: 'https://example.com/u',
+        quote: 'Call 610-209-5093 for apartments in Center City',
+      }),
+    ])
     expect(wrong!.verdict).toBe('rejected')
     expect(noSource!.verdict).toBe('rejected')
     expect(untied).toMatchObject({
@@ -102,10 +131,11 @@ describe('checkContacts', () => {
 
   it('needs both first and last name, and a company word longer than a few letters', () => {
     const shortCompany: OwnerFacts = { ...facts, first_name: null, company: 'M & M LLC' }
-    const [lastOnly, mm] = checkContacts(
-      [evidence({ quote: 'Liez 610-209-5093' }), evidence({ quote: 'M & M LLC 610-209-5093' })],
-      shortCompany,
-    )
+    const list = [
+      evidence({ quote: 'Liez 610-209-5093' }),
+      evidence({ source_url: 'https://example.com/m', quote: 'M & M LLC 610-209-5093' }),
+    ]
+    const [lastOnly, mm] = check(list, pagesOf(list), shortCompany)
     expect(lastOnly!.verdict).toBe('rejected')
     expect(mm!.verdict).toBe('rejected')
   })
@@ -132,5 +162,28 @@ describe('normaliseContact', () => {
     })
     expect('problem' in normaliseContact('phone', '555-0199')).toBe(true)
     expect('problem' in normaliseContact('email', 'not-an-email')).toBe(true)
+  })
+})
+
+describe('opening source pages', () => {
+  it('only opens public http(s) pages on the normal ports, never a numeric address', () => {
+    expect(allowedUrl('https://hotpads.com/x')).not.toBeNull()
+    for (const bad of [
+      'javascript:alert(1)',
+      'file:///etc/passwd',
+      'http://127.0.0.1/',
+      'http://[::1]/',
+      'http://169.254.169.254/latest',
+      'https://hotpads.com:8443/x',
+      'https://user:pass@hotpads.com/',
+    ]) {
+      expect(allowedUrl(bad), bad).toBeNull()
+    }
+  })
+
+  it('reads the words of a page', () => {
+    expect(
+      pageText('<html><script>x()</script><p>1022 Pine&nbsp;St</p><b>(610) 209-5093</b></html>'),
+    ).toBe('1022 Pine St (610) 209-5093')
   })
 })

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { EnrichContext } from '../types.ts'
+import { checkContacts } from '../verify.ts'
 import { makeContext, makeLead, testEnv } from '../testing.ts'
 import {
   buildResearchParams,
   buildResearchPrompt,
   researchLinks,
   createClaudeResearchProvider,
+  ownerFacts,
   mapResearchResult,
   RESEARCH_MAX_TOKENS,
   RESEARCH_MODEL,
@@ -27,7 +29,7 @@ const found: ResearchResult = {
       value: '(215) 555-0199',
       role: 'owner',
       source_url: 'https://hotpads.com/1022-pine-st-phila-pa-19107/202/pad',
-      quote: '1022 Pine St #202, Philadelphia, PA 19107. Contact the owner at (215) 555-0199.',
+      quote: 'Ray Torres rents 1022 Pine St #202, Philadelphia, PA 19107. Call (215) 555-0199.',
     },
     {
       field: 'website',
@@ -153,15 +155,21 @@ describe('buildResearchPrompt and params', () => {
 describe('mapResearchResult', () => {
   const lead = () =>
     makeLead({ owner_kind: 'llc', full_name: 'Ray Torres', first_name: 'Ray', last_name: 'Torres' })
+  const facts = () => ownerFacts(lead(), RENTALS)
+  /** Every source page shows exactly what its quote says (the honest case). */
+  const pagesFor = (r: ResearchResult) =>
+    new Map(r.contacts.map((c) => [c.source_url, c.quote] as [string, string | null]))
+  const map = (r: ResearchResult, pages = pagesFor(r)) =>
+    mapResearchResult(r, lead(), 1, checkContacts(r.contacts, facts(), pages))
 
-  it('saves the owner contacts the sources tie to them, never the manager line', () => {
-    const r = mapResearchResult(found, lead(), 1, RENTALS)
+  it('saves the owner contacts the opened pages prove are theirs, never the manager line', () => {
+    const r = map(found)
     expect(r).toMatchObject({
       full_name: 'Ray Torres',
       owner_kind: 'person',
       company: 'Torres Property Group LLC',
-      phone: '2155550199', // verified: the listing at their property shows it
-      website: 'https://torrespg.com', // verified: the site shows the verified phone
+      phone: '2155550199', // their rental address and their name, confirmed on the page
+      website: 'https://torrespg.com', // the page shows the verified phone
       linkedin_url: 'https://www.linkedin.com/in/raytorres', // likely: names Ray Torres
       phone_type: 'unknown',
       confidence: 0.8,
@@ -176,7 +184,26 @@ describe('mapResearchResult', () => {
     })
   })
 
-  it('saves an email when the source ties it to their property', () => {
+  it('saves no phone or email when the pages could not be opened to confirm them', () => {
+    const r = map(found, new Map())
+    expect(r.phone).toBeUndefined()
+    expect(r.email).toBeUndefined()
+    expect(r.linkedin_url).toBe('https://www.linkedin.com/in/raytorres') // likely is enough here
+  })
+
+  it('rejects a contact the page does not show, whatever the quote says', () => {
+    const pages = pagesFor(found)
+    pages.set(found.contacts[0]!.source_url, 'Ray Torres rents 1022 Pine St. Call 215-555-0000.')
+    const r = map(found, pages)
+    expect(r.phone).toBeUndefined()
+    const raw = r.raw as { checked: { value: string; verdict: string; page: string }[] }
+    expect(raw.checked.find((c) => c.value === '2155550199')).toMatchObject({
+      verdict: 'rejected',
+      page: 'contradicted',
+    })
+  })
+
+  it('saves an email when the page ties it to their mailing address', () => {
     const withEmail: ResearchResult = {
       ...found,
       contacts: [
@@ -184,44 +211,26 @@ describe('mapResearchResult', () => {
           field: 'email',
           value: 'ray@torrespg.com',
           role: 'owner',
-          source_url: 'https://www.zumper.com/x',
-          quote: '650 N 54th St for rent. Questions: ray@torrespg.com',
+          source_url: 'https://torrespg.com/contact',
+          quote: 'Torres Property Group, 55 Pine St, Philadelphia. ray@torrespg.com',
         },
       ],
     }
-    const r = mapResearchResult(withEmail, lead(), 1, RENTALS)
+    const r = mapResearchResult(
+      withEmail,
+      lead(),
+      1,
+      checkContacts(
+        withEmail.contacts,
+        { ...facts(), mailing_street: '55 Pine St' },
+        pagesFor(withEmail),
+      ),
+    )
     expect(r).toMatchObject({ email: 'ray@torrespg.com', email_status: 'unknown' })
   })
 
-  it('drops contacts the quote does not show or nothing ties to the owner, and clamps confidence', () => {
-    const r = mapResearchResult(
-      {
-        ...found,
-        confidence: 7,
-        contacts: [
-          {
-            field: 'phone',
-            value: '215-555-0111',
-            role: 'owner',
-            source_url: 'https://hotpads.com/x',
-            quote: '1022 Pine St, call 215-555-0999', // a different number
-          },
-          {
-            field: 'linkedin_url',
-            value: 'https://www.linkedin.com/in/someone-else',
-            role: 'owner',
-            source_url: 'https://www.linkedin.com/in/someone-else',
-            quote: 'Real estate investor in Philadelphia', // no name, no address
-          },
-        ],
-      },
-      lead(),
-      1,
-      RENTALS,
-    )
-    expect(r.phone).toBeUndefined()
-    expect(r.linkedin_url).toBeUndefined()
-    expect(r.confidence).toBe(1)
+  it('clamps confidence', () => {
+    expect(map({ ...found, confidence: 7 }).confidence).toBe(1)
   })
 })
 
@@ -236,7 +245,14 @@ describe('claude_research provider', () => {
 
   it('parses a structured result', async () => {
     const { factory, seen } = fakeFactory([{ stop_reason: 'end_turn', parsed_output: found }])
-    const p = createClaudeResearchProvider({ clientFactory: factory })
+    const opened: string[] = []
+    const p = createClaudeResearchProvider({
+      clientFactory: factory,
+      pageFetcher: async (url) => {
+        opened.push(url)
+        return found.contacts.find((c) => c.source_url === url)?.quote ?? null
+      },
+    })
     const properties = [{ address: '1022 PINE ST' }] as EnrichContext['properties']
     const r = await p.enrich(makeLead({ company: 'Torres Property Group LLC' }), {
       ...ctx(),
@@ -246,7 +262,8 @@ describe('claude_research provider', () => {
     expect(seen[0]?.output_config?.effort).toBe('high')
     // The rental addresses go into the prompt and tie the listing phone to this owner.
     expect(JSON.stringify(seen[0]?.messages)).toContain('1022 PINE ST')
-    expect(r.phone).toBe('2155550199')
+    expect(opened).toContain(found.contacts[0]!.source_url) // the server opened the source page
+    expect(r.raw).toMatchObject({ checked: expect.any(Array) })
     expect(r.credits_used).toBe(1)
   })
 

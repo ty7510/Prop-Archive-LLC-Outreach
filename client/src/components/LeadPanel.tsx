@@ -276,7 +276,8 @@ function LeadBody({
         <section>
           <h3 className="mb-2 text-base font-semibold text-stone-700">Other ways in</h3>
           <p className="mb-2 text-sm text-stone-600">
-            Property managers and agents who handle their rentals. Not the owner.
+            Property managers and agents who handle their rentals, and owner numbers or emails the
+            research could not prove. Check before using them.
           </p>
           <ul className="divide-y divide-stone-100 rounded-xl border border-stone-200">
             {otherContacts(lead).map((c) => (
@@ -284,9 +285,7 @@ function LeadBody({
                 key={`${c.field}-${c.value}`}
                 className="flex flex-wrap items-baseline gap-x-2 px-3 py-2"
               >
-                <span className="text-sm text-stone-500">
-                  {c.role === 'agent' ? 'Agent' : 'Manager'}
-                </span>
+                <span className="text-sm text-stone-500">{otherLabel(c)}</span>
                 <span className="min-w-0 break-words font-medium">{c.value}</span>
                 <a
                   href={c.source_url}
@@ -596,11 +595,25 @@ function proofNote(
   return `${hit.verdict === 'verified' ? 'Verified' : 'Likely'} on ${sourceHost(hit.source_url)}`
 }
 
-/** Manager and agent contacts the research tied to their rentals. Never shown as the owner's. */
+/**
+ * Manager and agent contacts tied to their rentals, plus the owner's phones and emails that were
+ * only "likely" (too weak to save as theirs). Never shown as the owner's own.
+ */
 function otherContacts(lead: {
   enrichment: Record<string, { data?: unknown } | undefined>
 }): CheckedContact[] {
   return checkedContacts(lead)
-    .filter((c) => c.role !== 'owner' && c.verdict !== 'rejected')
+    .filter(
+      (c) =>
+        c.verdict !== 'rejected' &&
+        (c.role !== 'owner' ||
+          (c.verdict === 'likely' && (c.field === 'phone' || c.field === 'email'))),
+    )
     .slice(0, 10)
+}
+
+function otherLabel(c: CheckedContact): string {
+  if (c.role === 'agent') return 'Agent'
+  if (c.role === 'manager') return 'Manager'
+  return 'Possibly theirs'
 }

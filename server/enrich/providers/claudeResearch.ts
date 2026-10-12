@@ -8,6 +8,7 @@ import type { Lead } from '../../db/schema.ts'
 import type { Env } from '../../env.ts'
 import { isLlc } from '../../lib/text.ts'
 import { clean, emptyResult, type EnrichProvider, type ProviderResult } from '../types.ts'
+import { fetchPublicPage, type PageFetcher } from '../pageCheck.ts'
 import {
   CONTACT_FIELDS,
   checkContacts,
@@ -275,9 +276,9 @@ export function mapResearchResult(
     'owner_kind' | 'full_name' | 'first_name' | 'last_name' | 'company' | 'mailing_street'
   >,
   credits_used: number,
-  rentalAddresses: string[] = [],
+  /** From checkContacts, with the source pages the server opened. */
+  checked: CheckedContact[],
 ): ProviderResult {
-  const checked = checkContacts(parsed.contacts, ownerFacts(lead, rentalAddresses))
   const raw: ResearchRaw = { ...parsed, checked }
   const result: ProviderResult = {
     raw,
@@ -299,12 +300,14 @@ export function mapResearchResult(
     result.unit_count = Math.round(parsed.unit_count)
   }
 
-  // Best owner contact per field: verified beats likely; email only when verified.
+  // Best owner contact per field: verified beats likely. Email and phone only when verified:
+  // the sequence emails automatically and a call to the wrong person is worse than no call.
   for (const field of CONTACT_FIELDS) {
     const owner = checked.filter((c) => c.field === field && c.role === 'owner')
+    const strict = field === 'email' || field === 'phone'
     const best =
       owner.find((c) => c.verdict === 'verified') ??
-      (field === 'email' ? undefined : owner.find((c) => c.verdict === 'likely'))
+      (strict ? undefined : owner.find((c) => c.verdict === 'likely'))
     if (!best) continue
     ;(result as unknown as Record<string, unknown>)[OWNER_FIELD[field]] = best.value
   }
@@ -316,6 +319,30 @@ export function mapResearchResult(
 
 export interface ClaudeResearchDeps {
   clientFactory?: ResearchClientFactory
+  /** Opens source pages to confirm quotes. Tests pass a fake. */
+  pageFetcher?: PageFetcher
+}
+
+/** Source pages opened per lead to confirm what the research quoted. */
+export const MAX_PAGE_CHECKS = 12
+
+/**
+ * Check the contacts twice: first on the quotes alone, then open the source page of each one that
+ * passed (at most MAX_PAGE_CHECKS, in parallel) and check again against the pages.
+ */
+export async function verifyContacts(
+  parsed: ResearchResult,
+  facts: OwnerFacts,
+  fetchPage: PageFetcher,
+): Promise<CheckedContact[]> {
+  const first = checkContacts(parsed.contacts, facts)
+  const urls = [
+    ...new Set(first.filter((c) => c.verdict !== 'rejected').map((c) => c.source_url)),
+  ].slice(0, MAX_PAGE_CHECKS)
+  const pages = new Map(
+    await Promise.all(urls.map(async (u) => [u, await fetchPage(u).catch(() => null)] as const)),
+  )
+  return checkContacts(parsed.contacts, facts, pages)
 }
 
 export function createClaudeResearchProvider(deps: ClaudeResearchDeps = {}): EnrichProvider {
@@ -353,7 +380,12 @@ export function createClaudeResearchProvider(deps: ClaudeResearchDeps = {}): Enr
         if (!message.parsed_output) {
           return emptyResult({ stop_reason: message.stop_reason, parsed_output: null }, calls)
         }
-        return mapResearchResult(message.parsed_output, lead, calls, rentals)
+        const checked = await verifyContacts(
+          message.parsed_output,
+          ownerFacts(lead, rentals),
+          deps.pageFetcher ?? fetchPublicPage,
+        )
+        return mapResearchResult(message.parsed_output, lead, calls, checked)
       }
       await ctx.log('warn', 'enrich.research_paused_too_long', { lead_id: lead.id })
       return emptyResult({ stop_reason: 'pause_turn' }, calls)

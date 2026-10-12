@@ -1,8 +1,12 @@
 // Contact verification for web research. Pure. Every phone, email and profile the research returns
-// must come with the exact words from its source and something that ties those words to THIS
-// owner. A value is only "verified" when the source also shows one of the owner's own addresses
-// (a rental listing at their property, their mailing address) or a phone already verified; a
-// name or company match alone is "likely"; anything else is rejected and never saved.
+// must come with its source page and the exact words that show it. Nothing is taken on trust:
+// - the quote must show the value and tie it to THIS owner (a rental address, their mailing
+//   address, a verified phone, or their full name or company);
+// - the source page itself, opened by the server (pageCheck.ts), must show the value and the tie
+//   too; a page that does not is a contradiction and the contact is rejected;
+// - "verified" also needs proof the contact is the owner's own: their mailing address, a verified
+//   phone, or a rental address together with their name. A listing phone next to a rental address
+//   alone is often the leasing agent's, so it is only "likely".
 import { normaliseEmail, normalisePhone, normaliseStreet } from '../lib/text.ts'
 
 export const CONTACT_FIELDS = [
@@ -28,10 +32,15 @@ export interface ContactEvidence {
   quote: string
 }
 
+/** What the server saw when it opened the source page. */
+export type PageResult = 'confirmed' | 'contradicted' | 'unreachable'
+
 export interface CheckedContact extends ContactEvidence {
   verdict: Verdict
   /** Plain words: what tied it to the owner, or why it was rejected. */
   reason: string
+  /** unreachable when the page was blocked or not opened. */
+  page: PageResult
 }
 
 export interface OwnerFacts {
@@ -123,13 +132,12 @@ export function normaliseContact(
   }
 }
 
-/** Does the quote really show this value? */
-function quoteShows(field: ContactField, value: string, quote: string, sourceUrl: string): boolean {
-  const q = quote.toLowerCase()
-  if (field === 'phone')
-    return normalisePhone(quote).includes(value) || q.replace(/\D/g, '').includes(value)
+/** Does this text (a quote or a whole page) really show this value? */
+function textShows(field: ContactField, value: string, text: string, sourceUrl: string): boolean {
+  const q = text.toLowerCase()
+  if (field === 'phone') return q.replace(/\D/g, '').includes(value)
   if (field === 'email') return q.includes(value.toLowerCase())
-  // Profiles and sites: the handle or host is in the quote, or the source is the page itself.
+  // Profiles and sites: the handle or host is in the text, or the source is the page itself.
   const host = hostOf(value)
   const path = value
     .replace(/^https?:\/\/[^/]+/i, '')
@@ -164,81 +172,134 @@ function companyTokens(company: string): string[] {
     .filter((t) => t && !COMPANY_NOISE.has(t))
 }
 
-/** What ties the quote to this owner, strongest first. null when nothing does. */
-function tieFor(
-  quote: string,
-  facts: OwnerFacts,
-  verifiedPhones: ReadonlySet<string>,
-): { strength: 'strong' | 'weak'; reason: string } | null {
-  const keys = streetKeysIn(quote)
-  for (const address of facts.property_addresses) {
-    const key = streetKey(address)
-    if (key && keys.has(key))
-      return { strength: 'strong', reason: `the source names their property at ${address}` }
-  }
-  const mailingKey = streetKey(facts.mailing_street)
-  if (mailingKey && keys.has(mailingKey)) {
-    return {
-      strength: 'strong',
-      reason: `the source shows their mailing address ${facts.mailing_street}`,
-    }
-  }
-  const digits = quote.replace(/\D/g, '')
-  for (const phone of verifiedPhones) {
-    if (digits.includes(phone))
-      return { strength: 'strong', reason: 'the source shows their verified phone' }
-  }
-  const upper = quote.toUpperCase()
+type TieKind = 'property' | 'mailing' | 'phone' | 'name' | 'company'
+
+interface Tie {
+  kind: TieKind
+  reason: string
+  /** The owner's full name or company is in the text too. */
+  named: boolean
+}
+
+function namedIn(text: string, facts: OwnerFacts): 'name' | 'company' | null {
+  const upper = text.toUpperCase()
   const last = (facts.last_name ?? '').trim().toUpperCase()
   const first = (facts.first_name ?? '').trim().toUpperCase()
   if (last.length >= 2 && first.length >= 2 && upper.includes(last) && upper.includes(first)) {
-    return { strength: 'weak', reason: `the source names ${facts.full_name ?? `${first} ${last}`}` }
+    return 'name'
   }
   const tokens = companyTokens(facts.company ?? '')
-  if (tokens.some((t) => t.length >= 4) && tokens.every((t) => upper.includes(t))) {
-    return { strength: 'weak', reason: `the source names ${facts.company}` }
+  if (tokens.some((t) => t.length >= 4) && tokens.every((t) => upper.includes(t))) return 'company'
+  return null
+}
+
+/** What ties a text to this owner, strongest first. null when nothing does. */
+function tieIn(text: string, facts: OwnerFacts, verifiedPhones: ReadonlySet<string>): Tie | null {
+  const named = namedIn(text, facts)
+  const keys = streetKeysIn(text)
+  const mailingKey = streetKey(facts.mailing_street)
+  if (mailingKey && keys.has(mailingKey)) {
+    return {
+      kind: 'mailing',
+      reason: `the source shows their mailing address ${facts.mailing_street}`,
+      named: named !== null,
+    }
+  }
+  const digits = text.replace(/\D/g, '')
+  for (const phone of verifiedPhones) {
+    if (digits.includes(phone)) {
+      return {
+        kind: 'phone',
+        reason: 'the source shows their verified phone',
+        named: named !== null,
+      }
+    }
+  }
+  for (const address of facts.property_addresses) {
+    const key = streetKey(address)
+    if (key && keys.has(key)) {
+      return {
+        kind: 'property',
+        reason: `the source names their property at ${address}`,
+        named: named !== null,
+      }
+    }
+  }
+  if (named === 'name') {
+    return { kind: 'name', reason: `the source names ${facts.full_name ?? 'them'}`, named: true }
+  }
+  if (named === 'company') {
+    return { kind: 'company', reason: `the source names ${facts.company}`, named: true }
   }
   return null
 }
 
+/** Is this contact proven to be the owner's own (not a manager or agent at their property)? */
+function provesOwner(tie: Tie): boolean {
+  return tie.kind === 'mailing' || tie.kind === 'phone' || (tie.kind === 'property' && tie.named)
+}
+
 /**
- * Check every contact the research returned. Phones are checked first, so a site or email that a
- * source ties to a verified phone counts as verified too.
+ * Check every contact. `pages` holds the text of each source page the server opened (null when it
+ * was blocked or failed); without it every page counts as unreachable, so nothing is verified.
+ * Phones are decided first, so a site or email shown next to a verified phone can be verified too.
  */
-export function checkContacts(evidence: ContactEvidence[], facts: OwnerFacts): CheckedContact[] {
+export function checkContacts(
+  evidence: ContactEvidence[],
+  facts: OwnerFacts,
+  pages: ReadonlyMap<string, string | null> = new Map(),
+): CheckedContact[] {
   const verifiedPhones = new Set<string>()
   const ordered = [...evidence].sort(
     (a, b) => Number(b.field === 'phone') - Number(a.field === 'phone'),
   )
   const out: CheckedContact[] = []
   for (const e of ordered) {
+    const reject = (reason: string, value = e.value, page: PageResult = 'unreachable') =>
+      out.push({ ...e, value, verdict: 'rejected', reason, page })
     const norm = normaliseContact(e.field, e.value ?? '')
     if ('problem' in norm) {
-      out.push({ ...e, verdict: 'rejected', reason: norm.problem })
+      reject(norm.problem)
       continue
     }
     const value = norm.value
+    const quote = e.quote ?? ''
     if (!/^https?:\/\//i.test(e.source_url ?? '')) {
-      out.push({ ...e, value, verdict: 'rejected', reason: 'no source link' })
+      reject('no source link', value)
       continue
     }
-    if (!quoteShows(e.field, value, e.quote ?? '', e.source_url)) {
-      out.push({ ...e, value, verdict: 'rejected', reason: 'the quoted words do not show it' })
+    if (!textShows(e.field, value, quote, e.source_url)) {
+      reject('the quoted words do not show it', value)
       continue
     }
-    const tie = tieFor(e.quote ?? '', facts, verifiedPhones)
+    const tie = tieIn(quote, facts, verifiedPhones)
     if (!tie) {
-      out.push({
-        ...e,
-        value,
-        verdict: 'rejected',
-        reason: 'nothing ties the source to this owner',
-      })
+      reject('nothing ties the source to this owner', value)
       continue
     }
-    const verdict: Verdict = tie.strength === 'strong' ? 'verified' : 'likely'
+    const pageText = pages.get(e.source_url) ?? null
+    let page: PageResult = 'unreachable'
+    if (pageText !== null) {
+      const onPage =
+        textShows(e.field, value, pageText, e.source_url) &&
+        tieIn(pageText, facts, verifiedPhones) !== null
+      page = onPage ? 'confirmed' : 'contradicted'
+    }
+    if (page === 'contradicted') {
+      reject('the source page does not show it', value, page)
+      continue
+    }
+    // Verified: the page confirms it, and for the owner's own fields, it is proven to be theirs.
+    const proven = e.role === 'owner' ? provesOwner(tie) : true
+    const verdict: Verdict = page === 'confirmed' && proven ? 'verified' : 'likely'
     if (e.field === 'phone' && verdict === 'verified') verifiedPhones.add(value)
-    out.push({ ...e, value, verdict, reason: tie.reason })
+    const why =
+      page === 'confirmed'
+        ? proven
+          ? tie.reason
+          : `${tie.reason}, but not that it is the owner's own`
+        : `${tie.reason}; the page could not be opened to confirm it`
+    out.push({ ...e, value, verdict, reason: why, page })
   }
   return out
 }
