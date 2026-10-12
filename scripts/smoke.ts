@@ -1,4 +1,4 @@
-// Smoke test: boot the whole app on a random port with an in-memory database, log in, set up
+// Smoke test: boot the whole app on a random port in an isolated PostgreSQL schema, log in, set up
 // settings, import a tiny CSV, run one autopilot tick in dry run and check the results.
 // Exit code 1 on any failure. Prints a one-screen summary.
 //
@@ -7,10 +7,8 @@
 //
 // Env is set before any server module loads, because server/env.ts reads process.env at import time.
 process.env.APP_PASSWORD = 'test'
-process.env.DATABASE_URL = 'file::memory:'
-process.env.OUTREACH_DATABASE_URL = 'file::memory:'
 process.env.SESSION_SECRET ||= 'smoke-session-secret-not-for-production'
-process.env.NODE_ENV ||= 'development'
+process.env.NODE_ENV = 'test'
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
@@ -289,6 +287,7 @@ async function main(): Promise<number> {
       return 'no sent messages'
     })
   } finally {
+    await (await import('../server/db/testing.ts')).closeTestDbs()
     modules.autopilot?.stop()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     rmSync(dir, { recursive: true, force: true })

@@ -41,8 +41,8 @@ thing that works and write it down in docs/DECISIONS.md.
 
 - Node 24, TypeScript (strict), ESM.
 - Server: Express 4. Client: React 18 + Vite 6 + Tailwind 3 + wouter + @tanstack/react-query.
-- Database: SQLite file at `data/outreach.db` through Drizzle ORM + `@libsql/client` (`file:` URL).
-  `npm run db:push` applies the schema (drizzle-kit). Tests use `file::memory:`.
+- Database: this project's Replit PostgreSQL through Drizzle ORM + `pg` (managed `DATABASE_URL`).
+  `npm run db:push` applies the development schema. Tests use isolated PostgreSQL schemas.
 - Validation: zod. Tests: vitest (+ supertest for API). Lint: eslint + prettier.
 - Email: nodemailer (SMTP) or Resend (HTTP). Inbox sync: imapflow (IMAP). Mail: Lob API via fetch.
 - AI: `@anthropic-ai/sdk`, model `claude-opus-5-5`, structured outputs via `output_config.format`,
@@ -83,7 +83,7 @@ Builders own only their directories plus the matching `server/routes/<name>.ts`.
 schema or dependency change, make it minimal and list it at the top of their report so the
 integrator can reconcile.
 
-## 4. Data model (Drizzle, SQLite)
+## 4. Data model (Drizzle, PostgreSQL)
 
 All ids are `text` ULIDs (use `ulid` package). Timestamps are ISO strings in `text` columns.
 JSON columns are `text` with `{ mode: 'json' }`.
@@ -212,8 +212,7 @@ notify_owner_on_reply: true          human_queue_webhook_url: ''
 webhook_secret: random on first boot
 ```
 
-Env keys (`.env.example`): `APP_PASSWORD`, `SESSION_SECRET`, `OUTREACH_DATABASE_URL` (empty means
-`file:./data/outreach.db`; `DATABASE_URL` is read only when it is a libsql or file address),
+Env keys (`.env.example`): `APP_PASSWORD`, `SESSION_SECRET`, `DATABASE_URL` (managed by Replit),
 `ANTHROPIC_API_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `RESEND_API_KEY`,
 `IMAP_HOST`, `IMAP_PORT`, `IMAP_USER`, `IMAP_PASS`, `LOB_API_KEY`, `HUNTER_API_KEY`,
 `APOLLO_API_KEY`, `PDL_API_KEY`, `PORT=5300`.

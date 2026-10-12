@@ -2,7 +2,7 @@
 // POST /:id/enroll, /:id/stop and /:id/outcome live in routes/sequences.ts (leadOutreachRouter),
 // mounted at /api/leads ahead of this router, so they are not repeated here.
 import { Router, type NextFunction, type Request, type Response } from 'express'
-import { and, desc, eq, getTableColumns, inArray, like, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, inArray, sql, or, type SQL } from 'drizzle-orm'
 import multer from 'multer'
 import { z } from 'zod'
 import {
@@ -79,12 +79,12 @@ leadsRouter.get(
     if (query.q) {
       const needle = `%${query.q.replace(/[%_]/g, ' ')}%`
       const match = or(
-        like(leads.full_name, needle),
-        like(leads.company, needle),
-        like(leads.email, needle),
-        like(leads.mailing_street, needle),
-        like(leads.mailing_zip, needle),
-        like(leads.phone, needle),
+        sql`lower(${leads.full_name}) like lower(${needle})`,
+        sql`lower(${leads.company}) like lower(${needle})`,
+        sql`lower(${leads.email}) like lower(${needle})`,
+        sql`lower(${leads.mailing_street}) like lower(${needle})`,
+        sql`lower(${leads.mailing_zip}) like lower(${needle})`,
+        sql`lower(${leads.phone}) like lower(${needle})`,
       )
       if (match) where.push(match)
     }

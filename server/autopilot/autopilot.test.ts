@@ -101,7 +101,7 @@ describe('Autopilot', () => {
     const s = await pilot.status()
     expect(s.on).toBe(true)
     expect(s.nextTick).toBe(new Date(INSIDE_WINDOW.getTime() + 15).toISOString())
-    await waitFor(() => calls.includes('send'))
+    await waitFor(() => calls.includes('sync_replies'))
     expect(calls.slice(0, 6)).toEqual([
       'discover',
       'pickBatch:10',

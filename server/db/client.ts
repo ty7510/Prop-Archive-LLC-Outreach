@@ -1,139 +1,51 @@
-// Drizzle + libsql client factory, migrations on boot, app singleton, test helper. Owned by the scaffold.
-import { existsSync, mkdirSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createClient } from '@libsql/client'
 import { sql } from 'drizzle-orm'
-import { drizzle, type LibSQLDatabase } from 'drizzle-orm/libsql'
-import { migrate } from 'drizzle-orm/libsql/migrator'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
 import * as schema from './schema.ts'
 
-export type Db = LibSQLDatabase<typeof schema>
+export type Db = NodePgDatabase<typeof schema>
+let defaultDb: Db | null = null
 
-export const DEFAULT_DATABASE_URL = 'file:./data/outreach.db'
-
-/** Make sure the folder for a `file:` URL exists. No-op for memory databases. */
-export function ensureDbFolder(url: string): void {
-  if (!url.startsWith('file:')) return
-  const path = url.slice('file:'.length).split('?')[0] ?? ''
-  if (!path || path === ':memory:' || path.startsWith(':')) return
-  const dir = dirname(resolve(process.cwd(), path))
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-}
-
-/**
- * Create a drizzle database for a libsql URL (`file:./data/outreach.db`, `file::memory:`, or a hosted
- * `libsql://` database, which also needs its auth token).
- */
-export function createDb(url: string, authToken?: string): Db {
-  ensureDbFolder(url)
-  const client = createClient(authToken ? { url, authToken } : { url })
-  return drizzle(client, { schema })
-}
-
-/**
- * Why this database must not be used here, or null when it is fine. A published Replit app loses the
- * files it writes on every publish and restart, so a `file:` database there would quietly wipe the
- * leads and settings.
- */
-export function ephemeralDbProblem(
-  url: string,
-  e: Record<string, string | undefined> = process.env,
-): string | null {
-  if (e.REPLIT_DEPLOYMENT !== '1' || !url.startsWith('file:')) return null
-  if (e.ALLOW_FILE_DB_IN_DEPLOYMENT === '1') return null
-  return (
-    'Published Replit apps lose their files on every publish and restart, so this file database ' +
-    'would be wiped. Set OUTREACH_DATABASE_URL to a hosted libsql database (for example Turso) and ' +
-    'OUTREACH_DATABASE_AUTH_TOKEN in the publishing secrets.'
-  )
-}
-
-function findMigrationsFolder(): string {
-  const candidates = [
-    resolve(process.cwd(), 'drizzle'),
-    fileURLToPath(new URL('../../drizzle', import.meta.url)),
-    fileURLToPath(new URL('../../../../drizzle', import.meta.url)),
-  ]
-  for (const c of candidates) {
-    if (existsSync(resolve(c, 'meta', '_journal.json'))) return c
+export function resolveDatabaseConfig(e: Record<string, string | undefined> = process.env) {
+  const url = e.DATABASE_URL?.trim()
+  if (!url || !/^postgres(?:ql)?:\/\//i.test(url)) {
+    throw new Error(
+      'Replit PostgreSQL DATABASE_URL is required. SQLite and Turso URLs are not supported.',
+    )
   }
-  throw new Error('drizzle/ migrations folder not found. Run: npm run db:generate')
+  return { url }
 }
 
-/** Run the SQL migrations in drizzle/ and turn on foreign keys. Safe to call on every boot. */
-export async function applyMigrations(db: Db): Promise<void> {
-  await db.run(sql`PRAGMA foreign_keys = ON`)
-  await migrate(db, { migrationsFolder: findMigrationsFolder() })
+export function createDb(url: string): Db {
+  const pool = new pg.Pool({
+    connectionString: url,
+    max: 5,
+    idleTimeoutMillis: 1000,
+    connectionTimeoutMillis: 10000,
+    allowExitOnIdle: true,
+  })
+  return drizzle(pool, { schema })
 }
 
-/** True when the database answers a trivial query. */
-export async function dbOk(db: Db): Promise<boolean> {
+export function getDb(): Db {
+  return (defaultDb ??= createDb(resolveDatabaseConfig().url))
+}
+export function setDefaultDb(db: Db | null): void {
+  defaultDb = db
+}
+export async function dbOk(db = getDb()): Promise<boolean> {
   try {
-    await db.run(sql`SELECT 1`)
+    await db.execute(sql`SELECT 1`)
     return true
   } catch {
     return false
   }
 }
-
-let defaultDb: Db | null = null
-
-/** URL schemes the libsql client opens. Anything else in DATABASE_URL is some other app's database. */
-const LIBSQL_URL = /^(file|libsql|https?|wss?):/i
-
-export interface DatabaseConfig {
-  url: string
-  authToken?: string
-  /** Set when DATABASE_URL held an address this app cannot open, so it was skipped. */
-  ignored?: string
+/** Verify schema availability; production DDL is owned by Replit's Publish flow. */
+export async function assertDatabaseReady(db = getDb()): Promise<void> {
+  await db.select().from(schema.settings).limit(1)
 }
-
-/**
- * Which database to open. OUTREACH_DATABASE_URL wins. DATABASE_URL counts only when libsql can open
- * it, because Replit sets DATABASE_URL to its own Postgres database in any Repl that has one.
- */
-export function resolveDatabaseConfig(
-  e: Record<string, string | undefined> = process.env,
-): DatabaseConfig {
-  const own = e.OUTREACH_DATABASE_URL?.trim()
-  const shared = e.DATABASE_URL?.trim()
-  const authToken = (e.OUTREACH_DATABASE_AUTH_TOKEN || e.DATABASE_AUTH_TOKEN)?.trim() || undefined
-  if (own) return { url: own, authToken }
-  if (shared && LIBSQL_URL.test(shared)) return { url: shared, authToken }
-  if (!shared) return { url: DEFAULT_DATABASE_URL }
-  return {
-    url: DEFAULT_DATABASE_URL,
-    ignored:
-      'DATABASE_URL is not a libsql or file address (Replit sets it for its own Postgres ' +
-      'database), so it is ignored and the app uses ' +
-      DEFAULT_DATABASE_URL +
-      '. Set OUTREACH_DATABASE_URL to use a hosted libsql database.',
-  }
-}
-
-/**
- * The app's database, created on first use (see resolveDatabaseConfig; default
- * file:./data/outreach.db). createApp(db) and tests call setDefaultDb so lib helpers share one
- * connection.
- */
-export function getDb(): Db {
-  if (!defaultDb) {
-    const { url, authToken } = resolveDatabaseConfig()
-    defaultDb = createDb(url, authToken)
-  }
-  return defaultDb
-}
-
-export function setDefaultDb(db: Db | null): void {
-  defaultDb = db
-}
-
-/** A fresh in-memory database with all migrations applied. One per test file or test. */
 export async function createTestDb(): Promise<Db> {
-  const db = createDb('file::memory:')
-  await applyMigrations(db)
-  return db
+  return (await import('./testing.ts')).createIsolatedTestDb()
 }
-
 export { schema }

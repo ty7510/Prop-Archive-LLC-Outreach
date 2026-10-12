@@ -1,10 +1,10 @@
-// Boot: .env -> env -> db + migrations -> seed on first boot -> app -> listen -> autopilot.
+// Boot: .env -> PostgreSQL readiness -> seed on first boot -> app -> listen -> autopilot.
 // Owned by the scaffold.
 import 'dotenv/config'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app.ts'
 import { modules } from './contracts.ts'
-import { applyMigrations, ephemeralDbProblem, getDb, resolveDatabaseConfig } from './db/client.ts'
+import { assertDatabaseReady, getDb } from './db/client.ts'
 import { settings as settingsTable } from './db/schema.ts'
 import { env, isProduction, presentProviders } from './env.ts'
 import { logActivity } from './lib/activity.ts'
@@ -29,19 +29,13 @@ async function seedOnFirstBoot(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const dbConfig = resolveDatabaseConfig()
-  if (dbConfig.ignored) console.warn(`[boot] ${dbConfig.ignored}`)
-  const dbProblem = ephemeralDbProblem(dbConfig.url)
-  if (dbProblem) {
-    console.error(`[boot] ${dbProblem}`)
-    process.exit(1)
-  }
   if (!env.APP_PASSWORD) {
     console.warn('[boot] APP_PASSWORD is not set. Nobody can log in until you add it to .env.')
   }
 
   const db = getDb()
-  await applyMigrations(db)
+  await assertDatabaseReady(db)
+  console.log('[boot] Replit PostgreSQL connected')
   await ensureWebhookSecret(db)
   await seedOnFirstBoot()
 

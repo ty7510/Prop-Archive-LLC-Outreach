@@ -1,17 +1,11 @@
+import 'dotenv/config'
 import { defineConfig } from 'drizzle-kit'
+import { resolveDatabaseConfig } from './server/db/client.ts'
 
 export default defineConfig({
-  dialect: 'sqlite',
+  dialect: 'postgresql',
   schema: './server/db/schema.ts',
-  out: './drizzle',
-  dbCredentials: {
-    // Same rule as server/db/client.ts: Replit's Postgres DATABASE_URL is not ours.
-    url:
-      process.env.OUTREACH_DATABASE_URL ||
-      (/^(file|libsql|https?|wss?):/i.test(process.env.DATABASE_URL ?? '')
-        ? process.env.DATABASE_URL!
-        : 'file:./data/outreach.db'),
-  },
-  strict: true,
-  verbose: true,
+  out: './drizzle/postgres',
+  dbCredentials: { url: resolveDatabaseConfig().url },
+  strict: false,
 })

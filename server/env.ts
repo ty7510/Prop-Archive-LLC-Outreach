@@ -24,7 +24,7 @@ export const EnvSchema = z.object({
   SESSION_SECRET: z.string().default(''),
   DATABASE_URL: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
-    z.string().default('file:./data/outreach.db'),
+    z.string().default(''),
   ),
 
   ANTHROPIC_API_KEY: optional,

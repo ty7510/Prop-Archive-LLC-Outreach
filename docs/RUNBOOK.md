@@ -6,19 +6,20 @@ How to run Prop Archive Outreach on your machine or on Replit. Every command bel
 ## First time
 
 1. Node 24 or newer. Check with `node --version`.
-2. `cp .env.example .env` and set at least `APP_PASSWORD`. Everything else can stay empty: a missing
-   key turns that feature off and Settings shows "Key missing: add X to .env" next to it.
-3. `npm install`
+2. Outside Replit, `cp .env.example .env` and set `APP_PASSWORD`, `SESSION_SECRET`, and a PostgreSQL
+   `DATABASE_URL`. In Replit, use Secrets for the login values; the database URL is managed.
+   Provider keys are optional: a missing key turns that provider off.
+3. `npm ci`, then `npm run db:push` to initialize the development database.
 4. `npm run dev`
    - Server on http://localhost:5300 (API), client on http://localhost:5173 (what you open).
    - `PORT=5311 npm run dev` moves the API; the Vite proxy follows `PORT`.
-   - The database file `data/outreach.db` is created and migrated on first boot. The 36 default
+   - PostgreSQL must have its schema applied before boot. The 36 default
      sequences (email, postcard, LinkedIn, call script, for Maya / Ray / Denise, with and without a
      trigger) are seeded on first boot and `settings.sequence_by_persona` is filled from them.
 5. Open http://localhost:5173, log in with `APP_PASSWORD`.
 
-`npm run db:push` is only needed if you change the schema and want to apply it without a migration.
-The normal path is `npm run db:generate` (writes `drizzle/*.sql`) and a restart.
+After changing the schema, run `npm run db:generate` (writes `drizzle/postgres/*.sql`) and
+`npm run db:push` for development. Replit's Publish flow applies the production schema diff.
 
 ## Every day
 
@@ -56,7 +57,7 @@ curl -s -b $J "$B/api/activity?limit=100"
 | `npm run build`       | client to `dist/client`, server to `dist/server`                           |
 | `npm start`           | run the built server, serves the built client, production                  |
 | `npm run check`       | TypeScript strict, client + server + tests                                 |
-| `npm test`            | vitest, in-memory sqlite, no network (425 tests on 2026-10-11)             |
+| `npm test`            | vitest, isolated PostgreSQL test schemas; requires development DATABASE_URL |
 | `npm run lint`        | eslint                                                                     |
 | `npm run format`      | prettier write; `format:check` for CI                                      |
 | `npm run db:generate` | write a new migration from `server/db/schema.ts`                           |
@@ -78,16 +79,19 @@ Postcards start with `Hi {{first_name}},`; a lead without a first name reads "Hi
 ## Production (Replit)
 
 - Run button and Preview: `npm ci && npm run build && npm start` with `PORT=5000` (port 5000 maps
-  to 80 for the Preview). In the workspace the sqlite file in `data/` persists.
+  to 80 for the Preview). Data lives in this project's Replit PostgreSQL database.
 - Publishing: Reserved VM, not Autoscale. The autopilot is a timer inside the server, so the app
   must stay up and run as exactly one copy. Build `npm ci && npm run build`, run `npm start`.
 - A published app loses the files it writes on every publish and restart, so it cannot use the
-  sqlite file. Before the first Publish, create a hosted libsql database (Turso), then add
-  `OUTREACH_DATABASE_URL` (`libsql://...`) and `OUTREACH_DATABASE_AUTH_TOKEN` to the publishing
-  secrets. The server refuses to start in a published app with a `file:` database (override, at
-  your own risk: `ALLOW_FILE_DB_IN_DEPLOYMENT=1`).
-- Replit sets `DATABASE_URL` to its own Postgres database when the Repl has one. This app cannot
-  open Postgres, so it ignores that value (a `[boot]` warning says so) and uses its own database.
+  SQLite file. Replit supplies the PostgreSQL `DATABASE_URL` automatically; no Turso tokens
+  or OUTREACH_DATABASE_URL settings are used. Apply development schema changes with
+  `npm run db:push`. Replit applies the development-to-production schema diff when you Publish.
+  Startup checks the schema but never runs DDL. Keep APP_PASSWORD and SESSION_SECRET in publishing
+  secrets. First boot seeds 36 default sequences; production data remains separate from Preview.
+  The old `data/outreach.db` is preserved as a backup. The development-only importer
+  `npx tsx scripts/import-sqlite.ts` refuses nonempty targets and never changes that file.
+- Replit sets `DATABASE_URL` to this project's PostgreSQL database. The app uses it directly.
+  Never substitute credentials belonging to the main Prop Archive app.
 - Secrets go in Replit Secrets with the same names as `.env.example`. Set `APP_PASSWORD` (nobody
   can log in without it) and `SESSION_SECRET` (or every restart logs you out). Set `PUBLIC_URL`
   when not on Replit, or unsubscribe and tracked links point at localhost.

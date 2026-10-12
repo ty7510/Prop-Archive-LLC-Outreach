@@ -1,4 +1,4 @@
-modules = ["nodejs-24", "python-base-3.13"]
+modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 hidden = [".config", "node_modules", "dist"]
 
 # Run and Preview use the production build, the same thing Publish runs, on port 5000.
@@ -10,8 +10,7 @@ localPort = 5000
 externalPort = 80
 
 # Reserved VM, not Autoscale: the autopilot is a timer inside the server, so exactly one copy must
-# stay up. A published app loses its files, so set OUTREACH_DATABASE_URL and
-# OUTREACH_DATABASE_AUTH_TOKEN (hosted libsql) before publishing; the server refuses a file database.
+# stay up. Use this project's managed Replit PostgreSQL DATABASE_URL; no Turso secrets are needed.
 [deployment]
 deploymentTarget = "vm"
 build = ["sh", "-c", "npm ci && npm run build"]
@@ -40,3 +39,6 @@ outputType = "webview"
 task = "shell.exec"
 args = "npm ci && npm run build && npm start"
 waitForPort = 5000
+
+[nix]
+channel = "stable-25_05"

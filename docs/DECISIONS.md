@@ -15,16 +15,16 @@ Things the spec left open, and what the scaffold chose. Dated. Builders add thei
 - **Three tsconfigs.** `tsconfig.json` is the client (Bundler resolution, react-jsx, DOM lib).
   `tsconfig.server.json` is NodeNext and emits to `dist/server`. `tsconfig.test.json` type-checks the
   tests. `npm run check` runs all three. `npm run build` is `vite build` + server tsc.
-- **Migrations, not push, on boot.** `drizzle/` holds generated SQL (`npm run db:generate`) and
-  `applyMigrations(db)` runs it on every boot and in `createTestDb()`. `npm run db:push` still works for
-  quick local schema pokes, but the committed migration is the source of truth. Schema changes =
-  edit `server/db/schema.ts`, run `npm run db:generate`, commit both.
-- **Foreign keys on.** `PRAGMA foreign_keys = ON` runs in `applyMigrations`. Deleting a lead cascades to
+- **PostgreSQL schema is applied before boot.** `npm run db:push` updates development.
+  Replit's Publish flow applies the schema diff to production. Startup only checks readiness.
+  `drizzle/postgres/` holds PostgreSQL migrations, also used to initialize isolated test schemas.
+  Historical SQLite migrations remain in `drizzle/` for the preserved SQLite backup only.
+- **Foreign keys on.** PostgreSQL enforces foreign keys. Deleting a lead cascades to
   its properties, enrollments, messages, events. Messages keep a null `enrollment_id`/`step_id` when
   a sequence is deleted.
-- **Default db singleton is lazy.** `getDb()` creates the libsql client on first use; `createApp(db)`
+- **Default db singleton is lazy.** `getDb()` creates a PostgreSQL pool on first use; `createApp(db)`
   calls `setDefaultDb(db)` so `lib/*` helpers (which take an optional trailing `db` argument) share the
-  app's connection. Tests pass an in-memory db explicitly or build an app with `createTestDb()`.
+  app's connection. Tests build isolated schemas with `createTestDb()` and drop them after each file.
 - **Settings are one row per key** (`settings.key` primary key, JSON value). `getSettings()` merges rows
   onto `DEFAULT_SETTINGS` and caches for 5 s per db instance. `updateSettings(partial)` deep-merges
   nested objects (so `{ channels: { mail: true } }` keeps the other channels), replaces arrays, rejects

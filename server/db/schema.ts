@@ -1,6 +1,6 @@
 // Every table (spec section 4) plus provider_usage. Owned by the scaffold.
-// Ids are text ULIDs. Timestamps are ISO strings in text columns. JSON columns use { mode: 'json' }.
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+// Ids are text ULIDs. Timestamps remain ISO strings; JSON and flags use native PostgreSQL types.
+import { index, integer, pgTable, text, boolean, jsonb, uniqueIndex } from 'drizzle-orm/pg-core'
 import type {
   ActivityLevel,
   Channel,
@@ -24,7 +24,7 @@ import type {
   SuppressionKind,
 } from '../../shared/types.ts'
 
-export const leads = sqliteTable(
+export const leads = pgTable(
   'leads',
   {
     id: text('id').primaryKey(),
@@ -54,26 +54,23 @@ export const leads = sqliteTable(
     mailing_city: text('mailing_city'),
     mailing_state: text('mailing_state'),
     mailing_zip: text('mailing_zip'),
-    mailing_verified: integer('mailing_verified', { mode: 'boolean' }).notNull().default(false),
+    mailing_verified: boolean('mailing_verified').notNull().default(false),
 
     property_count: integer('property_count').notNull().default(0),
     unit_count: integer('unit_count').notNull().default(0),
-    zips: text('zips', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    zips: jsonb('zips').$type<string[]>().notNull().default([]),
 
-    trigger: text('trigger', { mode: 'json' })
-      .$type<LeadTrigger>()
-      .notNull()
-      .default({ type: 'none' }),
-    channels: text('channels', { mode: 'json' })
+    trigger: jsonb('trigger').$type<LeadTrigger>().notNull().default({ type: 'none' }),
+    channels: jsonb('channels')
       .$type<LeadChannels>()
       .notNull()
       .default({ email: false, mail: false, linkedin: false, instagram: false, call: false }),
-    enrichment: text('enrichment', { mode: 'json' }).$type<LeadEnrichment>().notNull().default({}),
+    enrichment: jsonb('enrichment').$type<LeadEnrichment>().notNull().default({}),
 
-    tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    tags: jsonb('tags').$type<string[]>().notNull().default([]),
     notes: text('notes'),
 
-    do_not_contact: integer('do_not_contact', { mode: 'boolean' }).notNull().default(false),
+    do_not_contact: boolean('do_not_contact').notNull().default(false),
     unsubscribe_token: text('unsubscribe_token').notNull(),
 
     last_contacted_at: text('last_contacted_at'),
@@ -91,7 +88,7 @@ export const leads = sqliteTable(
   ],
 )
 
-export const properties = sqliteTable(
+export const properties = pgTable(
   'properties',
   {
     id: text('id').primaryKey(),
@@ -110,7 +107,7 @@ export const properties = sqliteTable(
     license_issue_date: text('license_issue_date'),
     license_expiry: text('license_expiry'),
     source: text('source').$type<LeadSource>().notNull().default('opa'),
-    raw: text('raw', { mode: 'json' }).$type<unknown>(),
+    raw: jsonb('raw').$type<unknown>(),
   },
   (t) => [
     index('properties_lead_id_idx').on(t.lead_id),
@@ -118,19 +115,19 @@ export const properties = sqliteTable(
   ],
 )
 
-export const sequences = sqliteTable('sequences', {
+export const sequences = pgTable('sequences', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   channel: text('channel').$type<Channel>().notNull(),
   persona: text('persona').$type<SequencePersona>().notNull().default('any'),
   trigger: text('trigger').$type<SequenceTrigger>().notNull().default('any'),
-  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  active: boolean('active').notNull().default(true),
   description: text('description'),
   created_at: text('created_at').notNull(),
   updated_at: text('updated_at').notNull(),
 })
 
-export const sequenceSteps = sqliteTable(
+export const sequenceSteps = pgTable(
   'sequence_steps',
   {
     id: text('id').primaryKey(),
@@ -147,7 +144,7 @@ export const sequenceSteps = sqliteTable(
   (t) => [uniqueIndex('sequence_steps_seq_index_uq').on(t.sequence_id, t.step_index)],
 )
 
-export const enrollments = sqliteTable(
+export const enrollments = pgTable(
   'enrollments',
   {
     id: text('id').primaryKey(),
@@ -171,7 +168,7 @@ export const enrollments = sqliteTable(
   ],
 )
 
-export const messages = sqliteTable(
+export const messages = pgTable(
   'messages',
   {
     id: text('id').primaryKey(),
@@ -199,7 +196,7 @@ export const messages = sqliteTable(
     /** How many times a provider was asked to carry this message. Bounded retries live in send.ts. */
     attempts: integer('attempts').notNull().default(0),
     classification: text('classification').$type<ReplyClassification>(),
-    raw: text('raw', { mode: 'json' }).$type<unknown>(),
+    raw: jsonb('raw').$type<unknown>(),
     created_at: text('created_at').notNull(),
   },
   (t) => [
@@ -210,19 +207,19 @@ export const messages = sqliteTable(
   ],
 )
 
-export const events = sqliteTable(
+export const events = pgTable(
   'events',
   {
     id: text('id').primaryKey(),
     lead_id: text('lead_id').references(() => leads.id, { onDelete: 'cascade' }),
     kind: text('kind').$type<EventKind>().notNull(),
-    detail: text('detail', { mode: 'json' }).$type<unknown>(),
+    detail: jsonb('detail').$type<unknown>(),
     at: text('at').notNull(),
   },
   (t) => [index('events_lead_id_idx').on(t.lead_id), index('events_kind_at_idx').on(t.kind, t.at)],
 )
 
-export const suppression = sqliteTable(
+export const suppression = pgTable(
   'suppression',
   {
     id: text('id').primaryKey(),
@@ -235,12 +232,12 @@ export const suppression = sqliteTable(
   (t) => [uniqueIndex('suppression_kind_value_uq').on(t.kind, t.value)],
 )
 
-export const settings = sqliteTable('settings', {
+export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
-  value: text('value', { mode: 'json' }).$type<unknown>(),
+  value: jsonb('value').$type<unknown>(),
 })
 
-export const jobRuns = sqliteTable(
+export const jobRuns = pgTable(
   'job_runs',
   {
     id: text('id').primaryKey(),
@@ -248,13 +245,13 @@ export const jobRuns = sqliteTable(
     started_at: text('started_at').notNull(),
     finished_at: text('finished_at'),
     status: text('status').$type<JobStatus>().notNull().default('running'),
-    summary: text('summary', { mode: 'json' }).$type<unknown>(),
+    summary: jsonb('summary').$type<unknown>(),
     error: text('error'),
   },
   (t) => [index('job_runs_job_started_idx').on(t.job, t.started_at)],
 )
 
-export const activityLog = sqliteTable(
+export const activityLog = pgTable(
   'activity_log',
   {
     id: text('id').primaryKey(),
@@ -262,12 +259,12 @@ export const activityLog = sqliteTable(
     level: text('level').$type<ActivityLevel>().notNull().default('info'),
     event: text('event').notNull(),
     lead_id: text('lead_id'),
-    detail: text('detail', { mode: 'json' }).$type<unknown>(),
+    detail: jsonb('detail').$type<unknown>(),
   },
   (t) => [index('activity_log_at_idx').on(t.at)],
 )
 
-export const imports = sqliteTable('imports', {
+export const imports = pgTable('imports', {
   id: text('id').primaryKey(),
   kind: text('kind').notNull(),
   filename: text('filename').notNull(),
@@ -276,11 +273,11 @@ export const imports = sqliteTable('imports', {
   merged: integer('merged').notNull().default(0),
   skipped: integer('skipped').notNull().default(0),
   at: text('at').notNull(),
-  errors: text('errors', { mode: 'json' }).$type<string[]>().notNull().default([]),
+  errors: jsonb('errors').$type<string[]>().notNull().default([]),
 })
 
 /** One row per paid provider call, so monthly credit caps can be counted. */
-export const providerUsage = sqliteTable(
+export const providerUsage = pgTable(
   'provider_usage',
   {
     id: text('id').primaryKey(),
