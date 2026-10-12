@@ -22,12 +22,12 @@ async function counts(): Promise<{ sequences: number; steps: number }> {
 describe('seed', () => {
   it('inserts every sequence file with its steps, all active', async () => {
     const result = await seed(db)
-    expect(result.sequences).toBe(36)
+    expect(result.sequences).toBe(37)
     expect(result.sequences_skipped).toBe(0)
     expect(result.leads).toBe(0)
     expect(result.skipped).toBe(false)
     // 9 email x 3 + 9 mail x 1 + 9 linkedin x 2 + 9 call x 1
-    expect(await counts()).toEqual({ sequences: 36, steps: 63 })
+    expect(await counts()).toEqual({ sequences: 37, steps: 66 })
 
     const rows = await db.select().from(sequences)
     expect(rows.every((r) => r.active)).toBe(true)
@@ -74,10 +74,10 @@ describe('seed', () => {
     const before = await loadSettings(db)
     const again = await seed(db)
     expect(again.sequences).toBe(0)
-    expect(again.sequences_skipped).toBe(36)
+    expect(again.sequences_skipped).toBe(37)
     expect(again.settings_filled).toEqual([])
     expect(again.skipped).toBe(true)
-    expect(await counts()).toEqual({ sequences: 36, steps: 63 })
+    expect(await counts()).toEqual({ sequences: 37, steps: 66 })
     expect((await loadSettings(db)).sequence_by_persona).toEqual(before.sequence_by_persona)
   })
 
@@ -94,7 +94,7 @@ describe('seed', () => {
       updated_at: now,
     })
     const result = await seed(db)
-    expect(result.sequences).toBe(35)
+    expect(result.sequences).toBe(36)
     expect(result.sequences_skipped).toBe(1)
     const ray = await findSequenceByName(db, 'Email, Ray, no trigger')
     expect(ray?.id).toBe('theo-edited-this')

@@ -13,8 +13,9 @@ import { logActivity } from '../lib/activity.ts'
 import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import { normaliseEmail } from '../lib/text.ts'
-import type { ImapMessage, Llm, OutreachDeps } from './deps.ts'
+import type { ImapClient, ImapMessage, Llm, OutreachDeps } from './deps.ts'
 import { sendEmail, pickEmailProvider } from './email.ts'
+import { canRead, canSend, resolveMailHost } from './inboxes.ts'
 import { stopLead } from './enroll.ts'
 import { addSuppression } from './suppression.ts'
 
@@ -410,15 +411,24 @@ export async function handleInboundReply(
 async function notifyOwner(deps: OutreachDeps, input: InboundInput): Promise<void> {
   const settings = await getSettings(deps.db)
   if (!settings.notify_owner_on_reply) return
-  if (!pickEmailProvider(deps, settings)) return
+  // The .env sender when there is one, else the first warmed inbox.
+  const inbox = pickEmailProvider(deps, settings)
+    ? null
+    : (settings.sending_inboxes.find(canSend) ?? null)
+  if (!inbox && !pickEmailProvider(deps, settings)) return
   const name = input.lead.full_name ?? input.lead.company ?? input.fromAddress ?? 'a lead'
   const snippet = input.text.replace(/\s+/g, ' ').trim().slice(0, 200)
   try {
-    await sendEmail(deps, settings, {
-      to: settings.owner_email,
-      subject: `Reply from ${name}: ${snippet.slice(0, 60)}`,
-      text: `Reply from ${name} (${input.fromAddress ?? 'no address'}), sorted as ${input.classification}.\n\n${snippet}\n\nAnswer them yourself from your inbox. This system never replies for you.`,
-    })
+    await sendEmail(
+      deps,
+      settings,
+      {
+        to: settings.owner_email,
+        subject: `Reply from ${name}: ${snippet.slice(0, 60)}`,
+        text: `Reply from ${name} (${input.fromAddress ?? 'no address'}), sorted as ${input.classification}.\n\n${snippet}\n\nAnswer them yourself from your inbox. This system never replies for you.`,
+      },
+      inbox,
+    )
   } catch (err) {
     await logActivity(
       'warn',
@@ -432,16 +442,16 @@ async function notifyOwner(deps: OutreachDeps, input: InboundInput): Promise<voi
 
 // ---------- IMAP sync ----------
 
-async function readLastSync(db: Db): Promise<Date | null> {
-  const rows = await db.select().from(settingsTable).where(eq(settingsTable.key, LAST_SYNC_KEY))
+async function readLastSync(db: Db, key: string = LAST_SYNC_KEY): Promise<Date | null> {
+  const rows = await db.select().from(settingsTable).where(eq(settingsTable.key, key))
   const v = rows[0]?.value
   return typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? new Date(v) : null
 }
 
-async function writeLastSync(db: Db, at: Date): Promise<void> {
+async function writeLastSync(db: Db, at: Date, key: string = LAST_SYNC_KEY): Promise<void> {
   await db
     .insert(settingsTable)
-    .values({ key: LAST_SYNC_KEY, value: at.toISOString() })
+    .values({ key, value: at.toISOString() })
     .onConflictDoUpdate({ target: settingsTable.key, set: { value: at.toISOString() } })
 }
 
@@ -450,10 +460,17 @@ export async function processInboundMessage(
   deps: OutreachDeps,
   settings: Settings,
   msg: ImapMessage,
+  /** UIDs are only unique inside one mailbox; warmed inboxes pass their id. */
+  uidScope?: string,
 ): Promise<boolean> {
   const mail = msg.source ? parseRawMail(msg.source, msg.envelope) : parseRawMail('', msg.envelope)
   const ownAddresses = new Set(
-    [settings.from_email, settings.reply_to, settings.owner_email].map((a) => normaliseEmail(a)),
+    [
+      settings.from_email,
+      settings.reply_to,
+      settings.owner_email,
+      ...settings.sending_inboxes.map((i) => i.email),
+    ].map((a) => normaliseEmail(a)),
   )
   if (mail.from && ownAddresses.has(mail.from)) return false
   const lead = await matchLead(deps.db, mail, ownAddresses)
@@ -472,23 +489,65 @@ export async function processInboundMessage(
     fromAddress: mail.from,
     fromName: mail.fromName,
     providerMessageId: mail.messageId,
-    idempotencyKey: mail.messageId ? `in:${mail.messageId}` : `in:uid:${msg.uid}`,
+    idempotencyKey: mail.messageId
+      ? `in:${mail.messageId}`
+      : `in:uid:${uidScope ? `${uidScope}:` : ''}${msg.uid}`,
     raw: { uid: msg.uid, date: mail.date },
   })
 }
 
-/** Search INBOX since the last sync (minus a day of slack), record each matched reply. */
+interface ReplySource {
+  /** settings row holding this inbox's last sync time */
+  key: string
+  label: string
+  client: () => ImapClient | Promise<ImapClient>
+  /** UIDs are only unique inside one mailbox; warmed inboxes pass their id. */
+  uidScope?: string
+}
+
+/**
+ * Read replies from every inbox the app can log into: the .env IMAP inbox and each warmed inbox
+ * with an IMAP server. Each keeps its own last-sync time.
+ */
 export async function syncReplies(deps: OutreachDeps): Promise<{ received: number }> {
-  if (!deps.imap) return { received: 0 }
+  const settings = await getSettings(deps.db)
+  const sources: ReplySource[] = []
+  if (deps.imap) sources.push({ key: LAST_SYNC_KEY, label: 'env', client: deps.imap })
+  for (const inbox of settings.sending_inboxes) {
+    if (!canRead(inbox)) continue
+    sources.push({
+      key: `${LAST_SYNC_KEY}:${inbox.id}`,
+      label: inbox.email,
+      // Resolve and check the IMAP server, then connect to exactly that address.
+      client: async () => {
+        const host = await resolveMailHost(deps, inbox.imap_host)
+        if (!host.ok) throw new Error(host.problem)
+        return deps.imapForInbox(inbox, host.address)
+      },
+      uidScope: inbox.id,
+    })
+  }
+  let received = 0
+  for (const source of sources) received += await syncOneInbox(deps, settings, source)
+  if (received > 0) await logActivity('info', 'sync_replies', { received }, null, deps.db)
+  return { received }
+}
+
+/** Search one INBOX since its last sync (minus a day of slack), record each matched reply. */
+async function syncOneInbox(
+  deps: OutreachDeps,
+  settings: Settings,
+  source: ReplySource,
+): Promise<number> {
   const { db } = deps
-  const settings = await getSettings(db)
   const now = deps.now()
-  const last = await readLastSync(db)
+  const last = await readLastSync(db, source.key)
   const since = new Date((last ?? new Date(now.getTime() - 7 * 86_400_000)).getTime() - 86_400_000)
 
-  const client = deps.imap()
   let received = 0
+  let client: ImapClient | null = null
   try {
+    client = await source.client()
     await client.connect()
     await client.mailboxOpen('INBOX')
     const found = await client.search({ since }, { uid: true })
@@ -506,30 +565,33 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
       )
       for (const msg of fetched) {
         try {
-          if (await processInboundMessage(deps, settings, msg)) received++
+          if (await processInboundMessage(deps, settings, msg, source.uidScope)) received++
         } catch (err) {
           await logActivity(
             'warn',
             'reply_process_failed',
-            { uid: msg.uid, error: err instanceof Error ? err.message : String(err) },
+            {
+              inbox: source.label,
+              uid: msg.uid,
+              error: err instanceof Error ? err.message : String(err),
+            },
             null,
             db,
           )
         }
       }
     }
-    await writeLastSync(db, now)
+    await writeLastSync(db, now, source.key)
   } catch (err) {
     await logActivity(
       'error',
       'reply_sync_failed',
-      { error: err instanceof Error ? err.message : String(err) },
+      { inbox: source.label, error: err instanceof Error ? err.message : String(err) },
       null,
       db,
     )
   } finally {
-    await client.logout().catch(() => undefined)
+    await client?.logout().catch(() => undefined)
   }
-  if (received > 0) await logActivity('info', 'sync_replies', { received }, null, db)
-  return { received }
+  return received
 }

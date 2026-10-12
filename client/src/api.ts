@@ -10,6 +10,7 @@ import type {
   EnrollBody,
   Health,
   ImportResult,
+  InboxTestResult,
   LeadPatch,
   LoginBody,
   Me,
@@ -18,11 +19,12 @@ import type {
   ProvidersResponse,
   Queue,
   QueueActionResult,
+  ReadinessItem,
   RenderedStep,
   SequenceCreate,
   SequenceUpdate,
 } from '@shared/types'
-import type { Settings } from '@shared/settings'
+import type { SendingInbox, Settings } from '@shared/settings'
 import type { Lead, LeadDetail, Sequence } from './types.ts'
 
 export class ApiRequestError extends Error {
@@ -105,6 +107,9 @@ export const getSettings = () => api<Settings>('/api/settings')
 export const putSettings = (patch: Partial<Settings>) =>
   api<Settings>('/api/settings', 'PUT', patch)
 export const getProviders = () => api<ProvidersResponse>('/api/settings/providers')
+export const getReadiness = () => api<ReadinessItem[]>('/api/settings/readiness')
+export const testInbox = (inbox: SendingInbox) =>
+  api<InboxTestResult>('/api/settings/inboxes/test', 'POST', inbox)
 
 // leads
 export interface LeadsParams extends Record<string, string | number | undefined> {

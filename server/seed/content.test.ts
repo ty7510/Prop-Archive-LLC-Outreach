@@ -53,20 +53,28 @@ const VANITY = [
 ]
 
 let files: SequenceFile[]
+/** One-channel files: the 3 x 3 x 4 grid. The per-channel rules below apply to these. */
+let single: SequenceFile[]
+/** Sequences whose steps change channel (email, then LinkedIn, then mail). */
+let multi: SequenceFile[]
 let steps: { file: string; channel: string; step: ParsedStep }[]
+
+const isMulti = (f: SequenceFile) => new Set(f.parsed.steps.map((s) => s.channel)).size > 1
 
 beforeAll(async () => {
   files = await loadSequenceFiles()
+  single = files.filter((f) => !isMulti(f))
+  multi = files.filter(isMulti)
   steps = files.flatMap((f) =>
-    f.parsed.steps.map((step) => ({ file: f.file, channel: f.parsed.channel, step })),
+    f.parsed.steps.map((step) => ({ file: f.file, channel: step.channel, step })),
   )
 })
 
 describe('content/sequences as a set', () => {
   it('has one file per persona, trigger and channel (3 x 3 x 4 = 36)', () => {
-    expect(files).toHaveLength(36)
+    expect(single).toHaveLength(36)
     const seen = new Set<string>()
-    for (const f of files) {
+    for (const f of single) {
       const key = `${f.parsed.persona}/${f.parsed.trigger}/${f.parsed.channel}`
       expect(seen.has(key), `duplicate ${key} in ${f.file}`).toBe(false)
       seen.add(key)
@@ -209,7 +217,7 @@ describe('content/sequences as a set', () => {
 
 describe('email sequences', () => {
   it('have three steps on day 0, 3 and 8, with subjects under 45 chars and bodies under 120 words', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'email')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'email')) {
       expect(
         f.parsed.steps.map((s) => s.delay_days),
         f.file,
@@ -224,7 +232,7 @@ describe('email sequences', () => {
   })
 
   it('name the pain before the product in step 1', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'email')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'email')) {
       const body = f.parsed.steps[0]?.body ?? ''
       const pain = body.indexOf('Prop Archive')
       const firstSentenceEnd = body.indexOf('.', body.indexOf('{{ai_opener}}'))
@@ -235,7 +243,7 @@ describe('email sequences', () => {
   })
 
   it('LinkedIn connection notes open about them, not about Theo', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'linkedin')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'linkedin')) {
       const body = f.parsed.steps[0]?.body ?? ''
       const afterGreeting = body.replace(/^Hi \{\{first_name\}\},\s*/, '')
       expect(/^I\b/.test(afterGreeting), `${f.file}: step 1 starts with "I"`).toBe(false)
@@ -246,7 +254,7 @@ describe('email sequences', () => {
   })
 
   it('step 1 asks for the look, step 2 points at the beta, step 3 is a break-up with no ask', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'email')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'email')) {
       const [s1, s2, s3] = f.parsed.steps
       expect(findVariables(s1?.body ?? '')).toContain('demo_link')
       expect(findVariables(s2?.body ?? '')).toContain('beta_link')
@@ -260,7 +268,7 @@ describe('email sequences', () => {
 
 describe('postcards', () => {
   it('are one step under 350 characters with a hand-written feel and one link line', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'mail')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'mail')) {
       expect(f.parsed.steps, f.file).toHaveLength(1)
       const body = f.parsed.steps[0]?.body ?? ''
       expect(body.length, `${f.file} is ${body.length} chars`).toBeLessThan(350)
@@ -273,7 +281,7 @@ describe('postcards', () => {
 
 describe('linkedin sequences', () => {
   it('are a connection note under 300 chars, then a message under 100 words with the link', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'linkedin')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'linkedin')) {
       expect(f.parsed.steps, f.file).toHaveLength(2)
       const [note, message] = f.parsed.steps
       expect(note?.delay_days).toBe(0)
@@ -289,7 +297,7 @@ describe('linkedin sequences', () => {
 
 describe('call scripts', () => {
   it('have the 10 second open, three questions, the ask and two objections', () => {
-    for (const f of files.filter((x) => x.parsed.channel === 'call')) {
+    for (const f of single.filter((x) => x.parsed.channel === 'call')) {
       expect(f.parsed.steps, f.file).toHaveLength(1)
       const body = f.parsed.steps[0]?.body ?? ''
       expect(body, f.file).toMatch(/^10 second open\n/)
@@ -326,5 +334,41 @@ describe('persona voice', () => {
     expect(denise).toMatch(/per unit|per-unit/i)
     expect(denise).toMatch(/compliance/i)
     expect(denise).toMatch(/staff/i)
+  })
+})
+
+describe('the multi-channel sequence', () => {
+  it('is one sequence: an email, a LinkedIn note, then a postcard', () => {
+    expect(multi).toHaveLength(1)
+    const f = multi[0]!
+    expect(f.parsed.steps.map((s) => s.channel)).toEqual(['email', 'linkedin', 'mail'])
+    expect(f.parsed.steps.map((s) => s.delay_days)).toEqual([0, 3, 5])
+    expect(f.parsed.persona).toBe('any')
+  })
+
+  it('keeps each step to the rules of its channel', () => {
+    const [email, note, card] = multi[0]!.parsed.steps
+    // Email: short subject, under 120 words, the pain before the product, one ask.
+    expect((email?.subject ?? '').length).toBeGreaterThan(0)
+    expect((email?.subject ?? '').length).toBeLessThan(45)
+    expect(wordCount(email?.body ?? '')).toBeLessThan(120)
+    const body = email?.body ?? ''
+    expect(body.indexOf('Prop Archive')).toBeGreaterThan(
+      body.indexOf('.', body.indexOf('{{ai_opener}}')),
+    )
+    expect(findVariables(body)).toContain('demo_link')
+    // LinkedIn: a connection note under 300 characters, about them first, no links.
+    const n = note?.body ?? ''
+    expect(n.length).toBeLessThan(300)
+    const afterGreeting = n.replace(/^Hi \{\{first_name\}\},\s*/, '')
+    expect(/^I\b/.test(afterGreeting)).toBe(false)
+    expect(afterGreeting.indexOf('I build')).toBeGreaterThan(afterGreeting.indexOf('.'))
+    expect(findVariables(n)).not.toContain('demo_link')
+    // Postcard: under 350 characters, hand-written greeting, one link, signed.
+    const c = card?.body ?? ''
+    expect(c.length).toBeLessThan(350)
+    expect(c.startsWith('Hi {{first_name}},')).toBe(true)
+    expect(findVariables(c)).toContain('demo_link')
+    expect(findVariables(c)).toContain('sender_name')
   })
 })

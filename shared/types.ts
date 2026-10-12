@@ -316,6 +316,8 @@ export type OutcomeBody = z.infer<typeof OutcomeBodySchema>
 export const SequenceStepInputSchema = z.object({
   step_index: z.number().int().min(0).optional(),
   delay_days: z.number().int().min(0).max(365),
+  /** A step may use another channel than its sequence (email, then LinkedIn, then mail). */
+  channel: ChannelSchema.optional(),
   subject: z.string().max(200).nullable().optional(),
   body: z.string().min(1).max(20_000),
   notes: z.string().max(2000).nullable().optional(),
@@ -346,10 +348,29 @@ export const RenderedStepSchema = z.object({
   step_id: z.string(),
   step_index: z.number().int(),
   delay_days: z.number().int(),
+  channel: ChannelSchema,
   subject: z.string().nullable(),
   body: z.string(),
 })
 export type RenderedStep = z.infer<typeof RenderedStepSchema>
+
+// ---------- sequence readiness ----------
+
+export const ReadinessItemSchema = z.object({
+  key: z.string(),
+  ok: z.boolean(),
+  /** false: recommended, the sequence still runs without it. */
+  required: z.boolean(),
+  label: z.string(),
+  fix: z.string(),
+})
+export type ReadinessItem = z.infer<typeof ReadinessItemSchema>
+
+export const InboxTestResultSchema = z.object({
+  smtp: z.object({ ok: z.boolean(), message: z.string() }),
+  imap: z.object({ ok: z.boolean(), message: z.string() }),
+})
+export type InboxTestResult = z.infer<typeof InboxTestResultSchema>
 
 // ---------- queue (human channels) ----------
 

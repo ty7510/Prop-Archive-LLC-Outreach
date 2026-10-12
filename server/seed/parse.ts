@@ -11,6 +11,7 @@
 //
 //   ## Step 1
 //   delay_days: 0
+//   channel: optional; a step may use another channel than the sequence (email, then LinkedIn, then mail)
 //   subject: only email uses this
 //   notes: optional, shown to Theo in the editor
 //
@@ -28,6 +29,8 @@ export interface ParsedStep {
   /** 0-based, matches sequence_steps.step_index and the idempotency key. */
   step_index: number
   delay_days: number
+  /** The step's own channel. Defaults to the sequence channel. */
+  channel: Channel
   subject: string | null
   body: string
   notes: string | null
@@ -80,7 +83,7 @@ export function findVariables(text: string): string[] {
 }
 
 const FRONT_MATTER_KEYS = new Set(['name', 'channel', 'persona', 'trigger', 'description'])
-const STEP_META_RE = /^(delay_days|subject|notes):[ \t]*(.*)$/
+const STEP_META_RE = /^(delay_days|channel|subject|notes):[ \t]*(.*)$/
 const STEP_HEADING_RE = /^##[ \t]+Step[ \t]+(\d+)[ \t]*$/
 
 function isOneOf<T extends string>(list: readonly T[], value: string): value is T {
@@ -110,9 +113,10 @@ function parseFrontMatter(lines: string[]): { meta: Record<string, string>; next
   throw new SequenceParseError('front matter block never closed with ---')
 }
 
-function parseStep(number: number, lines: string[]): ParsedStep {
+function parseStep(number: number, lines: string[], sequenceChannel: Channel): ParsedStep {
   let i = 0
   let delay: number | null = null
+  let channel: Channel = sequenceChannel
   let subject: string | null = null
   let notes: string | null = null
   // Meta lines sit at the top of the step. Blank lines between them are fine.
@@ -130,6 +134,13 @@ function parseStep(number: number, lines: string[]): ParsedStep {
         )
       }
       delay = Number(value)
+    } else if (key === 'channel') {
+      if (!isOneOf(CHANNELS, value)) {
+        throw new SequenceParseError(
+          `Step ${number}: channel must be one of ${CHANNELS.join(', ')}, got "${value}"`,
+        )
+      }
+      channel = value
     } else if (key === 'subject') {
       subject = value || null
     } else if (key === 'notes') {
@@ -143,7 +154,7 @@ function parseStep(number: number, lines: string[]): ParsedStep {
     .join('\n')
     .replace(/^\n+|\n+$/g, '')
   if (!body) throw new SequenceParseError(`Step ${number}: body is empty`)
-  return { step_index: number - 1, delay_days: delay, subject, body, notes }
+  return { step_index: number - 1, delay_days: delay, channel, subject, body, notes }
 }
 
 /** Parse one sequence file. Throws SequenceParseError with a plain message on any problem. */
@@ -197,7 +208,7 @@ export function parseSequenceMarkdown(text: string): ParsedSequence {
         `steps must be numbered 1, 2, 3 in order; found Step ${s.number}`,
       )
     }
-    return parseStep(s.number, s.lines)
+    return parseStep(s.number, s.lines, channel)
   })
 
   return {

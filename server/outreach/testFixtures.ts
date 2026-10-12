@@ -84,6 +84,8 @@ export async function insertLead(db: Db, patch: Partial<NewLead> = {}): Promise<
 
 export interface StepInput {
   delay_days: number
+  /** Defaults to the sequence channel. */
+  channel?: Sequence['channel']
   subject?: string | null
   body: string
 }
@@ -117,7 +119,7 @@ export async function insertSequence(
     delay_days: s.delay_days,
     subject: s.subject ?? null,
     body: s.body,
-    channel,
+    channel: s.channel ?? channel,
     notes: null,
   }))
   await db.insert(sequenceSteps).values(rows)

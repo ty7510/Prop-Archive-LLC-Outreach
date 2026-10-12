@@ -16,6 +16,7 @@ import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { EMAIL_KEYS_HINT, pickEmailProvider, sendEmail } from './email.ts'
+import { canSend } from './inboxes.ts'
 import { assertNoEmDash, renderStepForLead, sampleLead } from './templates.ts'
 
 export interface SequenceWithSteps extends Sequence {
@@ -80,26 +81,27 @@ function stepRows(
   channel: Sequence['channel'],
   steps: StepInput[],
 ): SequenceStep[] {
-  return steps.map((s, i) => ({
-    id: newId(),
-    sequence_id: sequenceId,
-    step_index: i,
-    delay_days: s.delay_days,
-    subject: channel === 'email' ? (s.subject ?? null) : null,
-    body: s.body,
-    channel,
-    notes: s.notes ?? null,
-  }))
+  return steps.map((s, i) => {
+    const stepChannel = s.channel ?? channel
+    return {
+      id: newId(),
+      sequence_id: sequenceId,
+      step_index: i,
+      delay_days: s.delay_days,
+      subject: stepChannel === 'email' ? (s.subject ?? null) : null,
+      body: s.body,
+      channel: stepChannel,
+      notes: s.notes ?? null,
+    }
+  })
 }
 
 function validateSteps(channel: Sequence['channel'], steps: StepInput[]): void {
-  if (channel === 'email') {
-    steps.forEach((s, i) => {
-      if (!s.subject || !s.subject.trim()) {
-        throw badRequest(`Step ${i + 1} needs a subject line`, 'VALIDATION')
-      }
-    })
-  }
+  steps.forEach((s, i) => {
+    if ((s.channel ?? channel) === 'email' && (!s.subject || !s.subject.trim())) {
+      throw badRequest(`Step ${i + 1} needs a subject line`, 'VALIDATION')
+    }
+  })
 }
 
 export async function createSequence(
@@ -207,7 +209,7 @@ export async function previewSequence(
       step,
       lead,
       settings,
-      { baseUrl: deps.baseUrl, channel: seq.channel, sequenceName: seq.name },
+      { baseUrl: deps.baseUrl, channel: step.channel, sequenceName: seq.name },
       deps.llm,
       { logWarn: false },
     )
@@ -215,6 +217,7 @@ export async function previewSequence(
       step_id: step.id,
       step_index: step.step_index,
       delay_days: step.delay_days,
+      channel: step.channel,
       subject: r.subject,
       body: r.body,
     })
@@ -248,7 +251,7 @@ export async function renderStep(
     step,
     lead,
     settings,
-    { baseUrl: deps.baseUrl, channel: seq.channel, sequenceName: seq.name },
+    { baseUrl: deps.baseUrl, channel: step.channel, sequenceName: seq.name },
     deps.llm,
   )
   return r.subject === null ? { body: r.body } : { subject: r.subject, body: r.body }
@@ -260,11 +263,17 @@ export async function renderStep(
  */
 export async function testSend(deps: OutreachDeps, id: string): Promise<{ ok: true; to: string }> {
   const seq = await getSequence(deps, id)
-  const first = seq.steps[0]
+  // The test is an email to Theo, so it uses the first email step (or step 1 when there is none).
+  const first = seq.steps.find((s) => s.channel === 'email') ?? seq.steps[0]
   if (!first) throw badRequest('This sequence has no steps yet', 'NO_STEPS')
   const settings = await getSettings(deps.db)
-  if (!pickEmailProvider(deps, settings)) {
-    throw badRequest(`No email provider yet: ${EMAIL_KEYS_HINT}`, 'NO_EMAIL_PROVIDER')
+  // A test goes out the way the sequence will: through the first warmed inbox when there is one.
+  const inbox = settings.sending_inboxes.find(canSend) ?? null
+  if (!inbox && !pickEmailProvider(deps, settings)) {
+    throw badRequest(
+      `No sending inbox yet: add one in Settings, or ${EMAIL_KEYS_HINT}`,
+      'NO_EMAIL_PROVIDER',
+    )
   }
   if (!settings.physical_address.trim()) {
     throw badRequest('Add your physical mailing address in Settings first', 'NO_ADDRESS')
@@ -274,17 +283,22 @@ export async function testSend(deps: OutreachDeps, id: string): Promise<{ ok: tr
     first,
     lead,
     settings,
-    { baseUrl: deps.baseUrl, channel: seq.channel, sequenceName: seq.name },
+    { baseUrl: deps.baseUrl, channel: first.channel, sequenceName: seq.name },
     deps.llm,
     { withFooter: true, logWarn: false },
   )
-  const subject = r.subject ?? `[Test] ${seq.name}, step 1 (${seq.channel})`
-  await sendEmail(deps, settings, {
-    to: settings.owner_email,
-    subject: `[Test] ${subject}`,
-    text: r.body,
-    unsubscribeUrl: `${deps.baseUrl}/u/${lead.unsubscribe_token}`,
-  })
+  const subject = r.subject ?? `[Test] ${seq.name}, step ${first.step_index + 1} (${first.channel})`
+  await sendEmail(
+    deps,
+    settings,
+    {
+      to: settings.owner_email,
+      subject: `[Test] ${subject}`,
+      text: r.body,
+      unsubscribeUrl: `${deps.baseUrl}/u/${lead.unsubscribe_token}`,
+    },
+    inbox,
+  )
   await logActivity(
     'info',
     'test_send',

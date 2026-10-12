@@ -175,3 +175,36 @@ describe('findVariables', () => {
     expect(findVariables('no vars here')).toEqual([])
   })
 })
+
+describe('per-step channels', () => {
+  const MIXED = `---
+name: Mixed
+channel: email
+persona: any
+trigger: none
+---
+
+## Step 1
+delay_days: 0
+subject: Hello
+
+Email body.
+
+## Step 2
+delay_days: 3
+channel: linkedin
+
+Note body.
+`
+
+  it('gives each step its own channel, defaulting to the sequence channel', () => {
+    const parsed = parseSequenceMarkdown(MIXED)
+    expect(parsed.steps.map((s) => s.channel)).toEqual(['email', 'linkedin'])
+  })
+
+  it('rejects an unknown step channel', () => {
+    expect(() => parseSequenceMarkdown(MIXED.replace('channel: linkedin', 'channel: fax'))).toThrow(
+      SequenceParseError,
+    )
+  })
+})

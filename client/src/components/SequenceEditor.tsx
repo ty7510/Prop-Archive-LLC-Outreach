@@ -71,6 +71,7 @@ function fromSequence(seq: Sequence | undefined): Draft {
         key: s.id,
         step_index: s.step_index,
         delay_days: s.delay_days,
+        channel: s.channel,
         subject: s.subject ?? '',
         body: s.body,
         notes: s.notes ?? '',
@@ -89,7 +90,8 @@ function toBody(d: Draft): SequenceCreate {
     steps: d.steps.map((s, i) => ({
       step_index: i,
       delay_days: Number(s.delay_days) || 0,
-      subject: d.channel === 'email' ? (s.subject ?? '').trim() || null : null,
+      channel: s.channel ?? d.channel,
+      subject: (s.channel ?? d.channel) === 'email' ? (s.subject ?? '').trim() || null : null,
       body: s.body,
       notes: (s.notes ?? '').trim() || null,
     })),
@@ -149,6 +151,7 @@ export default function SequenceEditor({ sequence }: { sequence?: Sequence }) {
           key: newKey(),
           step_index: d.steps.length,
           delay_days: 3,
+          channel: d.steps[d.steps.length - 1]?.channel ?? d.channel,
           subject: '',
           body: '',
           notes: '',
@@ -203,7 +206,7 @@ export default function SequenceEditor({ sequence }: { sequence?: Sequence }) {
                 placeholder="Maya, new license, email"
               />
             </Field>
-            <Field label="Channel">
+            <Field label="Channel" hint="Each step can use its own channel below">
               <select
                 className="input"
                 value={draft.channel}
@@ -263,7 +266,10 @@ export default function SequenceEditor({ sequence }: { sequence?: Sequence }) {
             <p className="text-sm text-stone-600">Click one to insert it where your cursor is.</p>
             <div className="flex flex-wrap gap-2">
               {TEMPLATE_VARS.filter(
-                (v) => v.name !== 'unsubscribe_link' || draft.channel === 'email',
+                (v) =>
+                  v.name !== 'unsubscribe_link' ||
+                  draft.channel === 'email' ||
+                  draft.steps.some((s) => s.channel === 'email'),
               ).map((v) => (
                 <Chip key={v.name} onClick={() => insertVar(v.name)} title={v.hint}>
                   {`{{${v.name}}}`}
@@ -297,8 +303,21 @@ export default function SequenceEditor({ sequence }: { sequence?: Sequence }) {
                     onChange={(e) => updateStep(i, { delay_days: Number(e.target.value) })}
                   />
                 </Field>
-                {draft.channel === 'email' ? (
-                  <Field label="Subject" className="sm:col-span-2">
+                <Field label="Channel for this step">
+                  <select
+                    className="input"
+                    value={s.channel ?? draft.channel}
+                    onChange={(e) => updateStep(i, { channel: e.target.value as Channel })}
+                  >
+                    {CHANNELS.map((c) => (
+                      <option key={c} value={c}>
+                        {CHANNEL_LABEL[c]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {(s.channel ?? draft.channel) === 'email' ? (
+                  <Field label="Subject">
                     <input
                       className="input"
                       value={s.subject ?? ''}
@@ -309,7 +328,7 @@ export default function SequenceEditor({ sequence }: { sequence?: Sequence }) {
                   </Field>
                 ) : null}
               </div>
-              <Field label={draft.channel === 'call' ? 'Call script' : 'Message'}>
+              <Field label={(s.channel ?? draft.channel) === 'call' ? 'Call script' : 'Message'}>
                 <textarea
                   className="input min-h-[160px] py-2 font-mono text-sm"
                   value={s.body}
@@ -427,7 +446,10 @@ function Preview({
   const showServer = Boolean(sequence) && !dirty && useServer && !serverPreview.isError
   const local = draft.steps.map((s) => ({
     delay: s.delay_days,
-    subject: draft.channel === 'email' && s.subject ? renderTemplate(s.subject, SAMPLE_VARS) : null,
+    subject:
+      (s.channel ?? draft.channel) === 'email' && s.subject
+        ? renderTemplate(s.subject, SAMPLE_VARS)
+        : null,
     body: renderTemplate(s.body, SAMPLE_VARS),
   }))
 

@@ -89,6 +89,58 @@ export const SequenceByPersonaSchema = z.object({
 })
 export type SequenceByPersona = z.infer<typeof SequenceByPersonaSchema>
 
+/** What the API shows instead of a stored inbox password. Sending it back keeps the stored one. */
+export const SECRET_MASK = '••••••••'
+
+/**
+ * One warmed inbox the sequence sends from. The app rotates across active inboxes, never past
+ * each one's daily limit, and reads replies from each over IMAP with the same login.
+ */
+/**
+ * A mail server name: letters, digits, dots and dashes with at least one dot. No IP addresses or
+ * local names, so an inbox can only point the server at a public mail host. Blank means unset.
+ */
+const MailHost = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(200)
+  .refine(
+    (v) =>
+      v === '' ||
+      (/^(?=.{1,200}$)([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(v) &&
+        !/\.(local|localhost|internal|lan|home|corp|test|invalid)$/.test(v)),
+    { message: 'use the mail server name, like smtp.gmail.com' },
+  )
+const SMTP_PORTS = [25, 465, 587, 2525] as const
+const IMAP_PORTS = [143, 993] as const
+
+export const SendingInboxSchema = z.object({
+  id: z.string().trim().min(1),
+  from_name: z.string().trim().max(120).default(''),
+  email: z.string().trim().email('use a full email address'),
+  smtp_host: MailHost.default(''),
+  smtp_port: z
+    .number()
+    .int()
+    .refine((p) => (SMTP_PORTS as readonly number[]).includes(p), 'SMTP port: 465, 587, 25 or 2525')
+    .default(587),
+  /** Usually the email address itself. */
+  smtp_user: z.string().trim().max(200).default(''),
+  /** App password. Never returned by the API (SECRET_MASK instead). */
+  smtp_pass: z.string().max(500).default(''),
+  /** Where replies are read. Blank means replies to this inbox are not tracked. */
+  imap_host: MailHost.default(''),
+  imap_port: z
+    .number()
+    .int()
+    .refine((p) => (IMAP_PORTS as readonly number[]).includes(p), 'IMAP port: 993 or 143')
+    .default(993),
+  daily_limit: z.number().int().min(0).max(500).default(30),
+  active: z.boolean().default(true),
+})
+export type SendingInbox = z.infer<typeof SendingInboxSchema>
+
 /** Links that leads click and hosts we post lead data to: https only, with a real host name. */
 export const HttpsUrl = z
   .string()
@@ -161,6 +213,15 @@ export const SettingsSchema = z.object({
     ray: EMPTY_PERSONA_SEQUENCES,
     denise: EMPTY_PERSONA_SEQUENCES,
   }),
+
+  /** Warmed inboxes the sequence sends from, in rotation. Empty: the .env SMTP or Resend sender. */
+  sending_inboxes: z.array(SendingInboxSchema).max(20).default([]),
+  /** The accounts Theo works the LinkedIn, Instagram and Facebook steps from. Shown on each task. */
+  my_linkedin_url: z.string().trim().max(300).default(''),
+  my_instagram: z.string().trim().max(300).default(''),
+  my_facebook: z.string().trim().max(300).default(''),
+  /** The one sequence the autopilot puts new leads into. null: per-channel sequence_by_persona. */
+  main_sequence_id: z.string().nullable().default(null),
 
   email_provider: z.enum(['smtp', 'resend']).default('smtp'),
   mail_provider: z.enum(['lob', 'print']).default('print'),

@@ -1,11 +1,13 @@
 // Email sending: SMTP (nodemailer) or Resend (HTTP). Builds the CAN-SPAM headers. (spec section 10)
-import type { Settings } from '../../shared/settings.ts'
+import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import type { OutgoingMail, OutreachDeps } from './deps.ts'
+import { inboxProvider, resolveMailHost } from './inboxes.ts'
 
 export type EmailProvider = 'smtp' | 'resend'
 
 export interface EmailSendResult {
-  provider: EmailProvider
+  /** 'smtp', 'resend', or 'smtp:<inbox email>' for mail sent through a warmed inbox. */
+  provider: string
   providerMessageId: string | null
 }
 
@@ -45,20 +47,29 @@ export interface EmailInput {
   messageId?: string | undefined
 }
 
-/** From, Reply-To and, for lead mail, the one-click unsubscribe headers. */
-export function buildMail(settings: Settings, input: EmailInput): OutgoingMail {
-  const from = `${settings.from_name} <${settings.from_email}>`
+/**
+ * From, Reply-To and, for lead mail, the one-click unsubscribe headers. Mail through a warmed
+ * inbox comes from that inbox and replies go back to it, where the reply sync reads them.
+ */
+export function buildMail(
+  settings: Settings,
+  input: EmailInput,
+  inbox?: SendingInbox | null,
+): OutgoingMail {
+  const fromEmail = inbox ? inbox.email : settings.from_email
+  const fromName = inbox?.from_name || settings.from_name
+  const replyTo = inbox ? inbox.email : settings.reply_to || settings.from_email
   const mail: OutgoingMail = {
-    from,
+    from: `${fromName} <${fromEmail}>`,
     to: input.to,
-    replyTo: settings.reply_to || settings.from_email,
+    replyTo,
     subject: input.subject,
     text: input.text,
     html: textToHtml(input.text),
   }
   if (input.unsubscribeUrl) {
     mail.headers = {
-      'List-Unsubscribe': `<mailto:${settings.reply_to || settings.from_email}?subject=unsubscribe>, <${input.unsubscribeUrl}>`,
+      'List-Unsubscribe': `<mailto:${replyTo}?subject=unsubscribe>, <${input.unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     }
   }
@@ -66,12 +77,24 @@ export function buildMail(settings: Settings, input: EmailInput): OutgoingMail {
   return mail
 }
 
-/** Send one email through the configured provider. Throws when nothing is configured or the provider fails. */
+/**
+ * Send one email. With an inbox it goes through that inbox's SMTP login; otherwise through the
+ * configured provider. Throws when nothing is configured or the provider fails.
+ */
 export async function sendEmail(
   deps: OutreachDeps,
   settings: Settings,
   input: EmailInput,
+  inbox?: SendingInbox | null,
 ): Promise<EmailSendResult> {
+  if (inbox) {
+    const host = await resolveMailHost(deps, inbox.smtp_host)
+    if (!host.ok) throw new Error(`Inbox ${inbox.email}: ${host.problem}`)
+    const info = await deps
+      .smtpForInbox(inbox, host.address)
+      .sendMail(buildMail(settings, input, inbox))
+    return { provider: inboxProvider(inbox), providerMessageId: info.messageId ?? null }
+  }
   const provider = pickEmailProvider(deps, settings)
   if (!provider) throw new Error(`No email provider: ${EMAIL_KEYS_HINT}`)
   const mail = buildMail(settings, input)

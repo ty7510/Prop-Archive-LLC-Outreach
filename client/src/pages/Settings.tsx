@@ -20,6 +20,8 @@ import { useToast } from '../components/Toast.tsx'
 import { Badge, Chip, Field, Section, Toggle } from '../components/Field.tsx'
 import Confirm from '../components/Confirm.tsx'
 import CopyButton from '../components/CopyButton.tsx'
+import InboxEditor from '../components/InboxEditor.tsx'
+import Readiness from '../components/Readiness.tsx'
 import { ErrorNote, Loading } from '../components/QueryState.tsx'
 import { CHANNEL_LABEL, PERSONA_LABEL, humanise } from '../lib/format.ts'
 
@@ -108,6 +110,7 @@ function SettingsForm({
       qc.setQueryData(['settings'], s)
       void qc.invalidateQueries({ queryKey: ['health'] })
       void qc.invalidateQueries({ queryKey: ['autopilot'] })
+      void qc.invalidateQueries({ queryKey: ['readiness'] })
     },
   })
 
@@ -132,13 +135,17 @@ function SettingsForm({
 
   // The Live switch only saves live_mode, so the confirm must describe the SAVED settings:
   // those are what the next round runs with, whatever is still unsaved in the form.
-  const emailKeyPresent = saved.email_provider === 'smtp' ? providers?.smtp : providers?.resend
+  const emailKeyPresent =
+    saved.sending_inboxes.some((i) => i.active && i.smtp_host && i.smtp_user && i.smtp_pass) ||
+    (saved.email_provider === 'smtp' ? providers?.smtp : providers?.resend)
   const mailKeyPresent = saved.mail_provider === 'lob' ? providers?.lob : true
   const enabledChannels = CHANNELS.filter((c) => saved.channels[c])
 
   return (
     <div className="space-y-4 pb-24">
       <h1>Settings</h1>
+
+      <Readiness />
 
       <Section
         title="Who you are"
@@ -193,6 +200,49 @@ function SettingsForm({
               value={draft.physical_address}
               onChange={(e) => set('physical_address', e.target.value)}
               placeholder="Street, city, state, zip"
+            />
+          </Field>
+        </div>
+      </Section>
+
+      <Section
+        title="Sending inboxes"
+        intro="The warmed addresses the sequence emails from. The app takes turns between them, never sends more than each one's daily limit, and reads replies from each one so a lead who answers gets nothing more. Press Save after adding."
+      >
+        <InboxEditor
+          inboxes={draft.sending_inboxes}
+          defaultFromName={draft.owner_name}
+          onChange={(next) => set('sending_inboxes', next)}
+        />
+      </Section>
+
+      <Section
+        title="Your accounts for the sequence"
+        intro="The app cannot post on LinkedIn, Instagram or Facebook for you. Each day Go lists who to message and what to send, and shows the account to send it from."
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Your LinkedIn profile" hint="The account you send connection notes from">
+            <input
+              className="input"
+              value={draft.my_linkedin_url}
+              placeholder="https://www.linkedin.com/in/your-name"
+              onChange={(e) => set('my_linkedin_url', e.target.value)}
+            />
+          </Field>
+          <Field label="Your Instagram account">
+            <input
+              className="input"
+              value={draft.my_instagram}
+              placeholder="@proparchive"
+              onChange={(e) => set('my_instagram', e.target.value)}
+            />
+          </Field>
+          <Field label="Your Facebook page or profile">
+            <input
+              className="input"
+              value={draft.my_facebook}
+              placeholder="https://www.facebook.com/proparchive"
+              onChange={(e) => set('my_facebook', e.target.value)}
             />
           </Field>
         </div>
@@ -420,7 +470,7 @@ function SettingsForm({
 
       <Section
         title="Finding people"
-        intro="Providers run in this order and stop once a lead has an email and a LinkedIn or phone."
+        intro="Providers run in this order and keep going until a lead has every contact field, or none is left to try."
       >
         <div className="divide-y divide-stone-100">
           {ENRICH_PROVIDER_IDS.map((id) => {
@@ -484,7 +534,11 @@ function SettingsForm({
 
       <Section
         title="Which sequence each persona gets"
-        intro="Start sequence and the autopilot pick from this table."
+        intro={
+          saved.main_sequence_id
+            ? 'Not in use while the main sequence is on: every new lead goes into it. This table applies again if you turn it off.'
+            : 'Start sequence and the autopilot pick from this table.'
+        }
       >
         {!sequences ? (
           <Loading text="Loading sequences" />

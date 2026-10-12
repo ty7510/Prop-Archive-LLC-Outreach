@@ -2,11 +2,11 @@
 // Owned by the content builder. Spec section 13.
 // Idempotent: server/index.ts calls seed(db) on first boot and `npm run seed` runs it by hand.
 // A sequence whose name already exists is left alone, so Theo's edits in the UI survive a re-seed.
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { PERSONAS, type Channel, type Persona } from '../../shared/types.ts'
 import type { PersonaSequences, SequenceByPersona } from '../../shared/settings.ts'
 import type { Db } from '../db/client.ts'
-import { sequenceSteps, sequences } from '../db/schema.ts'
+import { sequenceSteps, sequences, settings as settingsTable } from '../db/schema.ts'
 import { newId } from '../lib/ids.ts'
 import { loadSettings, updateSettings } from '../lib/settings.ts'
 import { nowIso } from '../lib/time.ts'
@@ -59,9 +59,9 @@ async function insertSequence(db: Db, file: SequenceFile): Promise<string> {
         sequence_id: id,
         step_index: s.step_index,
         delay_days: s.delay_days,
-        subject: parsed.channel === 'email' ? s.subject : null,
+        subject: s.channel === 'email' ? s.subject : null,
         body: s.body,
-        channel: parsed.channel,
+        channel: s.channel,
         notes: s.notes,
       })),
     )
@@ -141,4 +141,62 @@ export async function seed(db: Db): Promise<SeedResult> {
 export async function findSequenceByName(db: Db, name: string) {
   const rows = await db.select().from(sequences).where(eq(sequences.name, name))
   return rows[0] ?? null
+}
+
+/** The one sequence Theo runs: email, then LinkedIn, then mail (content/sequences/main-*.md). */
+export const MAIN_SEQUENCE_NAME = 'Email, LinkedIn, then mail'
+const MAIN_SETUP_KEY = '_main_sequence_setup_v1'
+
+/**
+ * Make sure the main sequence exists, and once per database switch everything over to it: the
+ * main sequence on, every other sequence off, new leads go into it, and the channels it uses on
+ * (Instagram and calls off). Runs on every boot; after the first time it only re-adds the
+ * sequence if it was deleted, so Theo's later toggles stay as he left them.
+ */
+export async function ensureMainSequence(
+  db: Db,
+): Promise<{ id: string; created: boolean; switched: boolean }> {
+  const existing = await db
+    .select({ id: sequences.id })
+    .from(sequences)
+    .where(eq(sequences.name, MAIN_SEQUENCE_NAME))
+    .limit(1)
+  let id = existing[0]?.id
+  let created = false
+  if (!id) {
+    const file = (await loadSequenceFiles()).find((f) => f.parsed.name === MAIN_SEQUENCE_NAME)
+    if (!file) throw new Error(`content/sequences has no "${MAIN_SEQUENCE_NAME}" file`)
+    id = await insertSequence(db, file)
+    created = true
+  }
+
+  const done = await db
+    .select({ key: settingsTable.key })
+    .from(settingsTable)
+    .where(eq(settingsTable.key, MAIN_SETUP_KEY))
+    .limit(1)
+  if (done.length > 0) {
+    // Deleted and re-added: point the autopilot at the new copy.
+    if (created) await updateSettings({ main_sequence_id: id }, db)
+    return { id, created, switched: false }
+  }
+
+  const now = nowIso()
+  await db
+    .update(sequences)
+    .set({ active: false, updated_at: now })
+    .where(and(ne(sequences.id, id), eq(sequences.active, true)))
+  await db.update(sequences).set({ active: true, updated_at: now }).where(eq(sequences.id, id))
+  await updateSettings(
+    {
+      main_sequence_id: id,
+      channels: { email: true, linkedin: true, mail: true, instagram: false, call: false },
+    },
+    db,
+  )
+  await db
+    .insert(settingsTable)
+    .values({ key: MAIN_SETUP_KEY, value: now })
+    .onConflictDoNothing({ target: settingsTable.key })
+  return { id, created, switched: true }
 }
