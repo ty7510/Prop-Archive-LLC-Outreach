@@ -14,7 +14,8 @@ export interface SequencePick {
   reason: string
 }
 
-type PickSettings = Pick<Settings, 'sequence_by_persona' | 'channels'>
+type PickSettings = Pick<Settings, 'sequence_by_persona' | 'channels'> &
+  Partial<Pick<Settings, 'main_sequence_id'>>
 
 /**
  * Pick the first enabled channel the lead can use that has a sequence for the lead's persona.
@@ -29,6 +30,12 @@ export function pickSequence(
   if (lead.do_not_contact) {
     return { lead, channel: null, sequence: null, reason: 'Marked do not contact' }
   }
+  // One main sequence for everyone (email, then LinkedIn, then mail) wins when it is on.
+  const main = settings.main_sequence_id
+    ? sequences.find((s) => s.id === settings.main_sequence_id && s.active)
+    : undefined
+  if (main)
+    return { lead, channel: main.steps[0]?.channel ?? main.channel, sequence: main, reason: '' }
   if (lead.persona === 'unknown') {
     return { lead, channel: null, sequence: null, reason: 'Persona unknown (no property count)' }
   }

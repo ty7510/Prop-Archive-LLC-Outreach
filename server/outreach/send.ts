@@ -4,7 +4,7 @@
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
 import { and, asc, eq, lte } from 'drizzle-orm'
-import type { Settings } from '../../shared/settings.ts'
+import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
   enrollments,
@@ -28,6 +28,7 @@ import { sendEmail } from './email.ts'
 import { contactBlocker, stopLead } from './enroll.ts'
 import { postalAddressFor, sendViaLob } from './mail.ts'
 import { countTodayByChannel, nextSendAt, remainingToday } from './scheduler.ts'
+import { canSend, inboxProvider, pickInbox, sentTodayByInbox } from './inboxes.ts'
 import { renderStepForLead } from './templates.ts'
 
 export interface SendDueResult {
@@ -110,7 +111,8 @@ async function endEnrollment(deps: OutreachDeps, enrollmentId: string): Promise<
     .where(eq(enrollments.id, enrollmentId))
 }
 
-type AdvanceOutcome = 'sent' | 'queued' | 'dry_run' | 'skipped'
+/** 'unreachable': the lead cannot get this step's channel, so the next step goes without waiting. */
+type AdvanceOutcome = 'sent' | 'queued' | 'dry_run' | 'skipped' | 'unreachable'
 
 /**
  * Move the enrollment to the next step or mark it done. Only a real send stamps the lead as
@@ -125,10 +127,13 @@ async function advance(
 ): Promise<void> {
   const { db } = deps
   const now = deps.now()
+  const channel =
+    steps.find((s) => s.step_index === row.enrollment.current_step)?.channel ?? row.sequence.channel
   const nextIndex = row.enrollment.current_step + 1
   const next = steps.find((s) => s.step_index === nextIndex)
   if (next) {
-    const at = nextSendAt(settings, now, next.delay_days, deps.random)
+    const delay = outcome === 'unreachable' ? 0 : next.delay_days
+    const at = nextSendAt(settings, now, delay, deps.random)
     await db
       .update(enrollments)
       .set({ current_step: nextIndex, next_send_at: at ? at.toISOString() : null })
@@ -159,7 +164,7 @@ async function advance(
       kind: outcome,
       detail: {
         sequence: row.sequence.name,
-        channel: row.sequence.channel,
+        channel,
         step: row.enrollment.current_step,
       },
       at: now.toISOString(),
@@ -192,6 +197,13 @@ function humanAddress(lead: Lead, channel: Channel): string | null {
     default:
       return null
   }
+}
+
+/** Can this step's channel reach the lead at all? Human channels always can (Theo finds them). */
+function reachable(lead: Lead, channel: Channel): boolean {
+  if (channel === 'email') return Boolean(lead.email) && lead.email_status !== 'invalid'
+  if (channel === 'mail') return postalAddressFor(lead) !== null
+  return true
 }
 
 const PRIVATE_HOST_RE =
@@ -295,6 +307,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
   const stepsCache = new Map<string, SequenceStep[]>()
   const refusedNoAddress = new Set<Channel>()
+  let sentByInbox: Map<string, number> | null = null
 
   const refuseNoAddress = async (channel: Channel, leadId: string) => {
     if (refusedNoAddress.has(channel)) return
@@ -312,7 +325,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   }
 
   for (const row of due) {
-    const channel = row.sequence.channel
+    let channel: Channel = row.sequence.channel
     try {
       const blocker = await contactBlocker(db, row.lead)
       if (blocker) {
@@ -320,7 +333,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         result.skipped++
         continue
       }
-      if (!row.sequence.active || !settings.channels[channel]) {
+      if (!row.sequence.active) {
         result.skipped++
         continue
       }
@@ -337,6 +350,12 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
           .set({ status: 'done', ended_at: now.toISOString(), next_send_at: null })
           .where(eq(enrollments.id, row.enrollment.id))
         result.skipped++
+        continue
+      }
+      // Each step carries its own channel, so one sequence can email, then LinkedIn, then mail.
+      channel = step.channel
+      if (!settings.channels[channel]) {
+        result.skipped++ // the channel is switched off: the step waits until it is back on
         continue
       }
 
@@ -385,8 +404,17 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
             .set({ status: 'failed', error })
             .where(eq(messages.id, existing.id))
         }
-        await endEnrollment(deps, row.enrollment.id)
-        await logActivity('warn', 'send_step_impossible', { channel, error }, row.lead.id, db)
+        // A later step on another channel can still reach them (no email: LinkedIn, then mail).
+        const laterReachable = steps.some(
+          (s) => s.step_index > step.step_index && reachable(row.lead, s.channel),
+        )
+        if (laterReachable) {
+          await advance(deps, settings, row, steps, 'unreachable')
+          await logActivity('info', 'send_step_skipped', { channel, error }, row.lead.id, db)
+        } else {
+          await endEnrollment(deps, row.enrollment.id)
+          await logActivity('warn', 'send_step_impossible', { channel, error }, row.lead.id, db)
+        }
         result.skipped++
         continue
       }
@@ -488,19 +516,40 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         continue // message stays queued, nothing was asked of a provider
       }
 
+      // Warmed inboxes take turns, each under its own daily limit. With none usable, the .env
+      // sender (if any) carries the mail as before.
+      let inbox: SendingInbox | null = null
+      if (channel === 'email') {
+        sentByInbox ??= await sentTodayByInbox(db, settings, now)
+        inbox = pickInbox(settings.sending_inboxes, sentByInbox)
+        if (!inbox && settings.sending_inboxes.some(canSend)) {
+          result.skipped++ // every inbox hit its limit today; the message stays queued
+          continue
+        }
+      }
+
       // Claim the attempt before the provider is called, so a crash leaves a `sending` row.
       await finish('sending', { attempts: message.attempts + 1 })
 
       if (channel === 'email') {
         const unsubscribeUrl = `${deps.baseUrl}/u/${row.lead.unsubscribe_token}`
         try {
-          const sent = await sendEmail(deps, settings, {
-            to: row.lead.email ?? '',
-            subject: rendered.subject ?? '',
-            text: rendered.body,
-            unsubscribeUrl,
-            messageId: `<${key}@${hostOf(deps.baseUrl)}>`,
-          })
+          const sent = await sendEmail(
+            deps,
+            settings,
+            {
+              to: row.lead.email ?? '',
+              subject: rendered.subject ?? '',
+              text: rendered.body,
+              unsubscribeUrl,
+              messageId: `<${key}@${hostOf(deps.baseUrl)}>`,
+            },
+            inbox,
+          )
+          if (inbox && sentByInbox) {
+            const k = inboxProvider(inbox)
+            sentByInbox.set(k, (sentByInbox.get(k) ?? 0) + 1)
+          }
           await finish('sent', {
             provider: sent.provider,
             provider_message_id: sent.providerMessageId,

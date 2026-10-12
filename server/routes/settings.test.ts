@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
-import { DEFAULT_SETTINGS } from '../../shared/settings.ts'
+import { DEFAULT_SETTINGS, SECRET_MASK } from '../../shared/settings.ts'
 import { createApp } from '../app.ts'
 import { createTestDb } from '../db/client.ts'
+import { getSettings } from '../lib/settings.ts'
 
 async function loggedIn() {
   const db = await createTestDb()
@@ -131,5 +132,52 @@ describe('settings routes', () => {
       .send('{not json')
     expect(res.status).toBe(400)
     expect(res.body.code).toBe('BAD_JSON')
+  })
+})
+
+describe('sending inboxes in the settings API', () => {
+  const inbox = {
+    id: 'inbox-1',
+    from_name: 'Theo Young',
+    email: 'theo@warm.com',
+    smtp_host: 'smtp.gmail.com',
+    smtp_port: 465,
+    smtp_user: 'theo@warm.com',
+    smtp_pass: 'real-app-password',
+    imap_host: 'imap.gmail.com',
+    imap_port: 993,
+    daily_limit: 30,
+    active: true,
+  }
+
+  it('stores the app password but never sends it back, and a masked save keeps it', async () => {
+    const { agent, db } = await loggedIn()
+    const put = await agent.put('/api/settings').send({ sending_inboxes: [inbox] })
+    expect(put.status).toBe(200)
+    expect(put.body.sending_inboxes[0].smtp_pass).toBe(SECRET_MASK)
+
+    const get = await agent.get('/api/settings')
+    expect(JSON.stringify(get.body)).not.toContain('real-app-password')
+
+    // The form sends the masked inbox back with a new daily limit.
+    const again = await agent
+      .put('/api/settings')
+      .send({ sending_inboxes: [{ ...get.body.sending_inboxes[0], daily_limit: 20 }] })
+    expect(again.status).toBe(200)
+    const stored = await getSettings(db)
+    expect(stored.sending_inboxes[0]).toMatchObject({
+      daily_limit: 20,
+      smtp_pass: 'real-app-password',
+    })
+  })
+
+  it('lists what the sequence still needs', async () => {
+    const { agent } = await loggedIn()
+    const res = await agent.get('/api/settings/readiness')
+    expect(res.status).toBe(200)
+    const byKey = Object.fromEntries(
+      (res.body as { key: string; ok: boolean }[]).map((i) => [i.key, i.ok]),
+    )
+    expect(byKey).toMatchObject({ inbox: false, address: false, live: false })
   })
 })

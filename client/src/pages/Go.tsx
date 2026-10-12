@@ -9,6 +9,7 @@ import {
   getActivity,
   getAutopilot,
   getQueue,
+  getSettings,
   printQueueUrl,
   queueDone,
   queueSkip,
@@ -251,8 +252,28 @@ function QueueCard({ item }: { item: QueueItem }) {
   const busy = done.busy || skip.busy
   const notBuilt = done.notBuilt || skip.notBuilt
 
+  // The accounts Theo works these steps from, from Settings > Your accounts.
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const fromAccount =
+    item.channel === 'linkedin'
+      ? settings.data?.my_linkedin_url
+      : item.channel === 'instagram'
+        ? settings.data?.my_instagram
+        : undefined
+
   const link = useMemo(() => {
-    if (!item.to_address) return null
+    if (!item.to_address) {
+      // No profile on file: search LinkedIn for them by name (Theo picks the right one).
+      if (item.channel === 'linkedin') {
+        const keywords = `${item.person} Philadelphia`
+        return {
+          href: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`,
+          label: 'Find on LinkedIn',
+          icon: ExternalLink,
+        }
+      }
+      return null
+    }
     if (item.channel === 'call')
       return { href: telHref(item.to_address), label: `Call ${item.to_address}`, icon: Phone }
     if (item.channel === 'linkedin' || item.channel === 'instagram')
@@ -290,6 +311,9 @@ function QueueCard({ item }: { item: QueueItem }) {
       </header>
       {item.channel === 'mail' && postalAddress(item.to_address) ? (
         <p className="break-words text-sm text-stone-600">To: {postalAddress(item.to_address)}</p>
+      ) : null}
+      {fromAccount ? (
+        <p className="break-words text-sm text-stone-600">Send from: {fromAccount}</p>
       ) : null}
       {item.subject ? <p className="break-words font-medium">{item.subject}</p> : null}
       <p className="whitespace-pre-wrap break-words text-stone-800">{item.body}</p>

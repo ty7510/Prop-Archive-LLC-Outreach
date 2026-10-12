@@ -17,6 +17,7 @@ import {
   sequences,
   type Lead,
   type Sequence,
+  sequenceSteps,
 } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { badRequest, conflict, notFound } from '../lib/http.ts'
@@ -288,6 +289,29 @@ export async function stopLead(
   return open.length
 }
 
+/**
+ * settings.main_sequence_id when it names an active sequence, with the channels its steps use.
+ * null means the per-channel sequence_by_persona choice applies.
+ */
+export async function mainSequence(
+  db: Db,
+  settings: Settings,
+): Promise<{ id: string; channels: Channel[] } | null> {
+  if (!settings.main_sequence_id) return null
+  const rows = await db
+    .select({ id: sequences.id, active: sequences.active })
+    .from(sequences)
+    .where(eq(sequences.id, settings.main_sequence_id))
+    .limit(1)
+  const seq = rows[0]
+  if (!seq?.active) return null
+  const steps = await db
+    .select({ channel: sequenceSteps.channel })
+    .from(sequenceSteps)
+    .where(eq(sequenceSteps.sequence_id, seq.id))
+  return { id: seq.id, channels: [...new Set(steps.map((s) => s.channel))] }
+}
+
 /** Channels the autopilot would enrol this lead in, in order, given the settings. */
 export function pickChannels(lead: Lead, settings: Settings): Channel[] {
   const out: Channel[] = []
@@ -325,11 +349,30 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
     )
     .limit(200)
 
+  const main = await mainSequence(db, settings)
+
   let enrolled = 0
   for (const lead of candidates) {
     if (lead.icp_score < settings.min_icp_score) continue
     if (lead.persona === 'unknown') continue
     if (await contactBlocker(db, lead)) continue
+    if (main) {
+      // One sequence for everyone: email, then LinkedIn, then mail. Steps a lead cannot get are
+      // skipped when they come due (send.ts), so anyone reachable on one switched-on channel goes in.
+      if (!main.channels.some((c) => settings.channels[c] && lead.channels[c])) continue
+      try {
+        if (await enrollLead(deps, lead.id, main.id, { startAt: now, quiet: true })) enrolled++
+      } catch (err) {
+        await logActivity(
+          'warn',
+          'enroll_failed',
+          { sequence: main.id, error: err instanceof Error ? err.message : String(err) },
+          lead.id,
+          db,
+        )
+      }
+      continue
+    }
     const byChannel = settings.sequence_by_persona[lead.persona as Persona]
     let count = 0
     for (const channel of pickChannels(lead, settings)) {
