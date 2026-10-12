@@ -10,6 +10,10 @@ export default defineConfig({
     },
   },
   test: {
+    maxWorkers: 2,
+    testTimeout: 30000,
+    hookTimeout: 30000,
+    setupFiles: ['server/db/testSetup.ts'],
     environment: 'node',
     include: ['server/**/*.test.ts', 'shared/**/*.test.ts', 'client/src/**/*.test.ts'],
     globals: true,
@@ -17,7 +21,6 @@ export default defineConfig({
       NODE_ENV: 'test',
       APP_PASSWORD: 'test-password',
       SESSION_SECRET: 'test-session-secret-that-is-long-enough',
-      DATABASE_URL: 'file::memory:',
     },
   },
 })
