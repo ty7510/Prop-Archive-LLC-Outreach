@@ -57,25 +57,44 @@ async function makeBatch(deps: OrchestratorDeps): Promise<BatchState> {
   }
 }
 
-/** Leads ready for enrichment: new, scored high enough, a wanted persona, contactable. Oldest first. */
+/**
+ * Leads ready for enrichment, oldest first: scored high enough, a wanted persona, contactable, and
+ * either never enriched, or enriched before Claude web research had its turn (its key was added
+ * later) while contact fields are still missing. Without that second case, leads enriched before
+ * the Claude key existed would never be researched. Only Claude counts here: it applies to every
+ * lead, so a lead it has researched is never picked again (a provider that skips a lead would
+ * otherwise bring it back every round).
+ */
 export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Promise<string[]> {
   const db = deps.db ?? getDb()
+  const env = deps.env ?? processEnv
   const settings = await getSettings(db)
   if (settings.personas.length === 0 || limit <= 0) return []
+  const all = { ...createProviders(), ...deps.providers }
+  const research =
+    settings.enrichment.providers.includes('claude_research') &&
+    Boolean(all.claude_research?.isConfigured(env))
   const rows = await db
-    .select({ id: leads.id })
+    .select()
     .from(leads)
     .where(
       and(
-        eq(leads.status, 'new'),
+        inArray(leads.status, ['new', 'enriched', 'enrolled']),
         eq(leads.do_not_contact, false),
         inArray(leads.persona, settings.personas),
         gte(leads.icp_score, settings.min_icp_score),
       ),
     )
     .orderBy(asc(leads.created_at), asc(leads.id))
-    .limit(limit)
-  return rows.map((r) => r.id)
+    .limit(Math.min(limit * 20, 2000))
+  return rows
+    .filter(
+      (r) =>
+        r.status === 'new' ||
+        (research && !hasEnoughContact(r) && !(r.enrichment ?? {}).claude_research),
+    )
+    .slice(0, limit)
+    .map((r) => r.id)
 }
 
 async function applyPropertyUpdates(

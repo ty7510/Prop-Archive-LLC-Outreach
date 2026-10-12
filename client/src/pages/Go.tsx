@@ -52,6 +52,7 @@ export default function Go() {
   const on = auto.data?.on ?? false
 
   const applyStatus = (s: AutopilotStatus) => {
+    void qc.invalidateQueries({ queryKey: ['readiness'] })
     qc.setQueryData(['autopilot'], s)
     void qc.invalidateQueries({ queryKey: ['health'] })
   }
