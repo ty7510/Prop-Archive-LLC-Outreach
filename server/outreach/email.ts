@@ -1,7 +1,7 @@
 // Email sending: SMTP (nodemailer) or Resend (HTTP). Builds the CAN-SPAM headers. (spec section 10)
 import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import type { OutgoingMail, OutreachDeps } from './deps.ts'
-import { inboxProvider, mailHostProblem } from './inboxes.ts'
+import { inboxProvider, resolveMailHost } from './inboxes.ts'
 
 export type EmailProvider = 'smtp' | 'resend'
 
@@ -88,9 +88,11 @@ export async function sendEmail(
   inbox?: SendingInbox | null,
 ): Promise<EmailSendResult> {
   if (inbox) {
-    const problem = await mailHostProblem(deps, inbox.smtp_host)
-    if (problem) throw new Error(`Inbox ${inbox.email}: ${problem}`)
-    const info = await deps.smtpForInbox(inbox).sendMail(buildMail(settings, input, inbox))
+    const host = await resolveMailHost(deps, inbox.smtp_host)
+    if (!host.ok) throw new Error(`Inbox ${inbox.email}: ${host.problem}`)
+    const info = await deps
+      .smtpForInbox(inbox, host.address)
+      .sendMail(buildMail(settings, input, inbox))
     return { provider: inboxProvider(inbox), providerMessageId: info.messageId ?? null }
   }
   const provider = pickEmailProvider(deps, settings)

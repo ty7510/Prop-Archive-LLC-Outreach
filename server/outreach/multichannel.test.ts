@@ -43,12 +43,12 @@ const MIXED_STEPS = [
 
 /** A fixture whose warmed inboxes record what each one sent. */
 async function inboxSetup(at: { now: Date }) {
-  const sent: { from: string; mail: OutgoingMail }[] = []
+  const sent: { from: string; address: string; mail: OutgoingMail }[] = []
   const fx = await setup({
     now: () => at.now,
-    smtpForInbox: (i) => ({
+    smtpForInbox: (i, address) => ({
       async sendMail(mail) {
-        sent.push({ from: i.email, mail })
+        sent.push({ from: i.email, address, mail })
         return { messageId: `<${sent.length}@inbox.test>` }
       },
     }),
@@ -74,6 +74,7 @@ describe('a sequence that changes channel step by step', () => {
     expect(await sendDue(deps)).toMatchObject({ sent: 1 })
     expect(sent).toHaveLength(1)
     expect(sent[0]!.from).toBe('theo@warm-one.com')
+    expect(sent[0]!.address).toBe('142.250.1.108') // the checked address, not a fresh lookup
     expect(sent[0]!.mail.from).toBe('Theo Young <theo@warm-one.com>')
     expect(sent[0]!.mail.replyTo).toBe('theo@warm-one.com')
     const [email] = await db.select().from(messages)

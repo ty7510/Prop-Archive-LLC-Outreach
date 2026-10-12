@@ -5,9 +5,10 @@ import { testDeps } from './deps.ts'
 import {
   inboxProvider,
   isPrivateAddress,
-  mailHostProblem,
+  ipv6Groups,
   maskSettings,
   pickInbox,
+  resolveMailHost,
   restoreInboxSecrets,
 } from './inboxes.ts'
 
@@ -106,7 +107,7 @@ describe('a stored password only goes where it was meant to', () => {
     expect(SendingInboxSchema.safeParse({ ...base, imap_port: 6379 }).success).toBe(false)
   })
 
-  it('refuses a server name that resolves to a private address', async () => {
+  it('refuses a server name that resolves to a private address, and pins a public one', async () => {
     const deps = (addresses: string[] | Error) =>
       ({
         ...testDeps(null as never),
@@ -115,17 +116,26 @@ describe('a stored password only goes where it was meant to', () => {
           return addresses
         },
       }) as ReturnType<typeof testDeps>
-    expect(await mailHostProblem(deps(['10.1.2.3']), 'smtp.example.com')).toMatch(/private/)
-    expect(await mailHostProblem(deps(['203.0.113.9', '::1']), 'smtp.example.com')).toMatch(
-      /private/,
+    expect(await resolveMailHost(deps(['10.1.2.3']), 'smtp.example.com')).toMatchObject({
+      ok: false,
+      problem: expect.stringMatching(/private/),
+    })
+    // One private answer among public ones is enough to refuse.
+    expect((await resolveMailHost(deps(['142.250.1.108', '::1']), 'smtp.example.com')).ok).toBe(
+      false,
     )
-    expect(await mailHostProblem(deps(new Error('ENOTFOUND')), 'smtp.nope.com')).toMatch(
-      /not found/,
-    )
-    expect(await mailHostProblem(deps(['142.250.1.108']), 'smtp.gmail.com')).toBeNull()
+    expect(await resolveMailHost(deps(new Error('ENOTFOUND')), 'smtp.nope.com')).toMatchObject({
+      ok: false,
+      problem: expect.stringMatching(/not found/),
+    })
+    expect(await resolveMailHost(deps(['142.250.1.108']), 'smtp.gmail.com')).toEqual({
+      ok: true,
+      address: '142.250.1.108',
+    })
+    expect((await resolveMailHost(deps(['142.250.1.108']), '10.0.0.1')).ok).toBe(false)
   })
 
-  it('knows the private ranges', () => {
+  it('blocks every address that is not the public internet, in any spelling', () => {
     for (const ip of [
       '127.0.0.1',
       '10.0.0.1',
@@ -134,15 +144,38 @@ describe('a stored password only goes where it was meant to', () => {
       '169.254.169.254',
       '100.64.0.1',
       '0.0.0.0',
+      '198.18.0.1',
+      '192.0.2.1',
+      '203.0.113.7',
+      '224.0.0.1',
+      '255.255.255.255',
+      '::',
       '::1',
       'fd00::1',
       'fe80::1',
+      'fec0::1',
+      'ff02::1',
       '::ffff:10.0.0.1',
+      '::ffff:7f00:1', // loopback written in hex inside IPv6
+      '::127.0.0.1',
+      '64:ff9b::a00:1', // NAT64 of 10.0.0.1
+      '2002:a00:1::1', // 6to4 of 10.0.0.1
+      '2001:0:4136:e378::1', // Teredo
+      '2001:db8::1',
+      'not-an-ip',
     ]) {
       expect(isPrivateAddress(ip), ip).toBe(true)
     }
-    for (const ip of ['8.8.8.8', '142.250.1.108', '2607:f8b0:4004:c1b::6c']) {
+    for (const ip of ['8.8.8.8', '142.250.1.108', '2607:f8b0:4004:c1b::6c', '2a00:1450::5']) {
       expect(isPrivateAddress(ip), ip).toBe(false)
     }
+  })
+
+  it('parses IPv6 in its compressed and dotted forms', () => {
+    expect(ipv6Groups('::1')).toEqual([0, 0, 0, 0, 0, 0, 0, 1])
+    expect(ipv6Groups('::ffff:10.0.0.1')).toEqual([0, 0, 0, 0, 0, 0xffff, 0x0a00, 1])
+    expect(ipv6Groups('2607:f8b0::6c')).toEqual([0x2607, 0xf8b0, 0, 0, 0, 0, 0, 0x6c])
+    expect(ipv6Groups('1::2::3')).toBeNull()
+    expect(ipv6Groups('12345::1')).toBeNull()
   })
 })

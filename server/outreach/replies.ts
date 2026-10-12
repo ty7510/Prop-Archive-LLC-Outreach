@@ -15,7 +15,7 @@ import { getSettings } from '../lib/settings.ts'
 import { normaliseEmail } from '../lib/text.ts'
 import type { ImapClient, ImapMessage, Llm, OutreachDeps } from './deps.ts'
 import { sendEmail, pickEmailProvider } from './email.ts'
-import { canRead, canSend, mailHostProblem } from './inboxes.ts'
+import { canRead, canSend, resolveMailHost } from './inboxes.ts'
 import { stopLead } from './enroll.ts'
 import { addSuppression } from './suppression.ts'
 
@@ -500,11 +500,9 @@ interface ReplySource {
   /** settings row holding this inbox's last sync time */
   key: string
   label: string
-  client: () => ImapClient
+  client: () => ImapClient | Promise<ImapClient>
   /** UIDs are only unique inside one mailbox; warmed inboxes pass their id. */
   uidScope?: string
-  /** A warmed inbox's IMAP server, checked before connecting. */
-  host?: string
 }
 
 /**
@@ -520,9 +518,13 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
     sources.push({
       key: `${LAST_SYNC_KEY}:${inbox.id}`,
       label: inbox.email,
-      client: () => deps.imapForInbox(inbox),
+      // Resolve and check the IMAP server, then connect to exactly that address.
+      client: async () => {
+        const host = await resolveMailHost(deps, inbox.imap_host)
+        if (!host.ok) throw new Error(host.problem)
+        return deps.imapForInbox(inbox, host.address)
+      },
       uidScope: inbox.id,
-      host: inbox.imap_host,
     })
   }
   let received = 0
@@ -545,10 +547,7 @@ async function syncOneInbox(
   let received = 0
   let client: ImapClient | null = null
   try {
-    // A warmed inbox's IMAP server must be a public host before we log in with its password.
-    const problem = source.host ? await mailHostProblem(deps, source.host) : null
-    if (problem) throw new Error(problem)
-    client = source.client()
+    client = await source.client()
     await client.connect()
     await client.mailboxOpen('INBOX')
     const found = await client.search({ since }, { uid: true })

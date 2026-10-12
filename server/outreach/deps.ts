@@ -89,10 +89,16 @@ export interface OutreachDeps {
   llm: Llm | null
   /** null when IMAP_* is not set. */
   imap: (() => ImapClient) | null
-  /** A transport for one warmed inbox from settings.sending_inboxes. */
-  smtpForInbox: (inbox: SendingInbox) => Mailer & { verify?: () => Promise<unknown> }
-  /** An IMAP client for one warmed inbox, logging in with its SMTP user and password. */
-  imapForInbox: (inbox: SendingInbox) => ImapClient
+  /**
+   * A transport for one warmed inbox, connecting to `address` (the checked IP of smtp_host, see
+   * resolveMailHost) while TLS still verifies the certificate against the server name.
+   */
+  smtpForInbox: (
+    inbox: SendingInbox,
+    address: string,
+  ) => Mailer & { verify?: () => Promise<unknown> }
+  /** An IMAP client for one warmed inbox at `address`, logging in with its SMTP user and password. */
+  imapForInbox: (inbox: SendingInbox, address: string) => ImapClient
   /** Every address a host name resolves to, so inbox servers can be checked before we connect. */
   lookupHost: (host: string) => Promise<string[]>
 }
@@ -147,20 +153,26 @@ export function smtpMailer(e: Env): Mailer {
   })
 }
 
-export function inboxMailer(inbox: SendingInbox): Mailer & { verify: () => Promise<unknown> } {
+export function inboxMailer(
+  inbox: SendingInbox,
+  address: string,
+): Mailer & { verify: () => Promise<unknown> } {
   return nodemailer.createTransport({
-    host: inbox.smtp_host,
+    host: address,
     port: inbox.smtp_port,
     secure: inbox.smtp_port === 465,
+    tls: { servername: inbox.smtp_host },
     auth: { user: inbox.smtp_user, pass: inbox.smtp_pass },
   })
 }
 
-export function inboxImap(inbox: SendingInbox): ImapClient {
+export function inboxImap(inbox: SendingInbox, address: string): ImapClient {
   return new ImapFlow({
-    host: inbox.imap_host,
+    host: address,
+    servername: inbox.imap_host,
     port: inbox.imap_port,
     secure: inbox.imap_port === 993,
+    tls: { servername: inbox.imap_host },
     auth: { user: inbox.smtp_user, pass: inbox.smtp_pass },
     logger: false,
   })
@@ -218,7 +230,7 @@ export function testDeps(db: Db, overrides: Partial<OutreachDeps> = {}): Outreac
       throw new Error('inbox IMAP is not available in this test')
     },
     // A public address, so inbox servers in tests pass the private-network check without DNS.
-    lookupHost: async () => ['203.0.113.10'],
+    lookupHost: async () => ['142.250.1.108'],
   }
   return { ...base, ...overrides }
 }
