@@ -59,7 +59,11 @@ export const RESEARCH_SYSTEM = [
   'What works for these owners (measured): plain web search rarely finds them and "corrects" rare surnames to famous',
   'people, so check every hit against the mailing address or LLC name before using it. The OpenCorporates officer',
   'search links in the prompt name LLC principals and their other LLCs; fetch them first, then follow company pages.',
-  'A licence "agent" or managing agent is not the owner unless a filing says so.',
+  'A licence "agent" or managing agent is not the owner unless a filing says so, and a registered office',
+  'that turns out to be a law firm is counsel, not the owner.',
+  'Once you have the owner name: the Elementix investor page links them to their other LLCs and an email domain;',
+  'search site:linkedin.com/in, site:facebook.com and site:instagram.com with the full name plus Philadelphia;',
+  'search the head-office address, which often leads to the property manager website, inbox and phone.',
 ].join(' ')
 
 /** The user prompt for one lead. Pure, unit tested. */
@@ -121,6 +125,13 @@ export function researchLinks(lead: Pick<Lead, 'full_name' | 'company' | 'last_n
   const person = clean(lead.full_name)
   if (person && !isLlc(person)) {
     links.push(`${OC}/officers?q=${q(person)}&jurisdiction_code=us_pa`)
+    const slug = person
+      .toLowerCase()
+      .replace(/[^a-z\s-]/g, '')
+      .trim()
+      .split(/\s+/)
+      .join('-')
+    if (slug.includes('-')) links.push(`https://elementix.com/investors/pa/${slug}`)
   } else if (clean(lead.last_name)) {
     links.push(`${OC}/officers?q=${q(lead.last_name!)}&jurisdiction_code=us_pa`)
   }

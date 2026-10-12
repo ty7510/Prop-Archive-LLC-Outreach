@@ -234,6 +234,7 @@ describe('researchLinks', () => {
     ).toEqual([
       'https://opencorporates.com/companies/us_pa?q=Third%20Few%20Units%20LLC',
       'https://opencorporates.com/officers?q=Jonathan%20Potter&jurisdiction_code=us_pa',
+      'https://elementix.com/investors/pa/jonathan-potter',
     ])
     expect(researchLinks({ company: null, full_name: 'Acme LLC', last_name: null })).toEqual([])
   })
