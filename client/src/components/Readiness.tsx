@@ -5,7 +5,13 @@ import { getReadiness } from '../api.ts'
 import { ErrorNote, Loading } from './QueryState.tsx'
 
 export default function Readiness() {
-  const q = useQuery({ queryKey: ['readiness'], queryFn: getReadiness })
+  // Always fresh: each line reflects what you just did on another page.
+  const q = useQuery({
+    queryKey: ['readiness'],
+    queryFn: getReadiness,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  })
   if (q.isLoading) return <Loading />
   if (q.error || !q.data) return <ErrorNote error={q.error} retry={() => void q.refetch()} />
   const items = q.data
@@ -14,7 +20,17 @@ export default function Readiness() {
   return (
     <section className="card space-y-3" aria-labelledby="readiness-title">
       <div>
-        <h2 id="readiness-title">Ready to run the sequence?</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="readiness-title">Ready to run the sequence?</h2>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => void q.refetch()}
+            disabled={q.isFetching}
+          >
+            {q.isFetching ? 'Checking' : 'Check again'}
+          </button>
+        </div>
         <p className="mt-1 text-stone-600">
           {done === required.length
             ? 'Everything is set. The sequence runs every send window.'

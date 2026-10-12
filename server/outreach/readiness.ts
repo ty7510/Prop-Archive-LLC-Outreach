@@ -184,7 +184,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       ok: settings.autopilot_on,
       required: true,
       label: 'Autopilot is on, so the app works the sequence every send window',
-      fix: 'Press the Autopilot off button at the top right to turn it on.',
+      fix: 'Open Go and switch on Autopilot.',
     },
     {
       key: 'live',
