@@ -34,48 +34,75 @@ function inboxNames(inboxes: SendingInbox[]): string {
 }
 
 const CLAUDE_CHECK_TTL_MS = 30 * 60_000
-let claudeCache: { at: number; ok: boolean; fix: string } | null = null
+/** Busy, rate limited or unreachable: check again soon instead of reporting it for 30 minutes. */
+const CLAUDE_RETRY_MS = 60_000
+const CLAUDE_CHECK_TIMEOUT_MS = 15_000
+let claudeCache: { at: number; ttl: number; ok: boolean; fix: string } | null = null
 
 /** For tests: forget the cached Claude answer. */
 export function resetClaudeCheck(): void {
   claudeCache = null
 }
 
+function statusOf(err: unknown, msg: string): number | null {
+  const s = (err as { status?: unknown }).status
+  if (typeof s === 'number') return s
+  const m = /^(\d{3})\b/.exec(msg)
+  return m ? Number(m[1]) : null
+}
+
 /**
  * Is the Claude key there AND accepted? A key that is present can still be refused (an
  * organization key without a workspace, a key copied in part), and then nothing that uses Claude
- * works. One tiny request, remembered for 30 minutes.
+ * works. One tiny request: a clear answer is remembered for 30 minutes, a passing problem for one.
  */
 export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean; fix: string }> {
-  const add =
-    'Add the Claude key in Replit Secrets as CLAUDE_API_KEY (Claude_API works too), then Publish.'
-  if (!deps.env.ANTHROPIC_API_KEY || !deps.llm) return { ok: false, fix: add }
+  if (!deps.env.ANTHROPIC_API_KEY || !deps.llm) {
+    return {
+      ok: false,
+      fix: 'Add the Claude key in Replit Secrets as CLAUDE_API_KEY, then Publish.',
+    }
+  }
+  const secret = deps.env.ANTHROPIC_KEY_SECRET ?? 'CLAUDE_API_KEY'
   const now = deps.now().getTime()
-  if (claudeCache && now - claudeCache.at < CLAUDE_CHECK_TTL_MS) return claudeCache
+  if (claudeCache && now - claudeCache.at < claudeCache.ttl) return claudeCache
   let result: { ok: boolean; fix: string }
+  let ttl = CLAUDE_CHECK_TTL_MS
   try {
-    await deps.llm.text('Reply with the word ok.', { maxTokens: 16 })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), CLAUDE_CHECK_TIMEOUT_MS)
+    })
+    try {
+      await Promise.race([deps.llm.text('Reply with the word ok.', { maxTokens: 16 }), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
     result = { ok: true, fix: '' }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    const status = statusOf(err, msg)
     if (/not scoped to a workspace|anthropic-workspace-id/i.test(msg)) {
       result = {
         ok: false,
-        fix:
-          'Claude refused the key: it is an organization key. Easiest fix: at console.anthropic.com open API keys, ' +
-          'create a new key inside a workspace and paste it over CLAUDE_API_KEY in Replit Secrets. ' +
-          'Or add a Claude_Workspace_ID secret with the workspace ID (it starts with wrkspc_). Then Publish.',
+        fix: secret.match(/WORK_SPACE|Workspace/i)
+          ? `${secret} holds an organization key. Put the workspace ID there instead (it starts with wrkspc_), then Publish.`
+          : 'Claude needs the workspace for this organization key: add a secret WORK_SPACE_CLAUDE with the workspace ID (it starts with wrkspc_), then Publish.',
       }
-    } else if (/401|authentication|invalid x-api-key|api key/i.test(msg)) {
+    } else if (status === 401 || status === 403 || /invalid x-api-key/i.test(msg)) {
       result = {
         ok: false,
-        fix: 'Claude refused the key. Copy the whole key again into CLAUDE_API_KEY in Replit Secrets, then Publish.',
+        fix: `Claude refused the key in ${secret}. Copy the whole key again into ${secret} in Replit Secrets, then Publish.`,
       }
     } else {
-      result = { ok: false, fix: `Claude did not answer: ${msg.slice(0, 160)}` }
+      ttl = CLAUDE_RETRY_MS
+      result = {
+        ok: false,
+        fix: 'Claude is busy or could not be reached just now. This checks again in a minute.',
+      }
     }
   }
-  claudeCache = { at: now, ...result }
+  claudeCache = { at: now, ttl, ...result }
   return result
 }
 
@@ -157,7 +184,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       ok: settings.autopilot_on,
       required: true,
       label: 'Autopilot is on, so the app works the sequence every send window',
-      fix: 'Press Autopilot at the top of the page.',
+      fix: 'Press the Autopilot off button at the top right to turn it on.',
     },
     {
       key: 'live',

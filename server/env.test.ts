@@ -34,3 +34,13 @@ describe('the workspace secret', () => {
     expect(e.ANTHROPIC_WORKSPACE_ID).toBe('wrkspc_9')
   })
 })
+
+describe('which secret the Claude key came from', () => {
+  it('records it, so messages can name it', () => {
+    expect(parseEnv({ CLAUDE_API_KEY: 'sk-ant-a' }).ANTHROPIC_KEY_SECRET).toBe('CLAUDE_API_KEY')
+    expect(
+      parseEnv({ CLAUDE_API_KEY: 'sk-ant-a', WORK_SPACE_CLAUDE: 'sk-ant-w' }).ANTHROPIC_KEY_SECRET,
+    ).toBe('WORK_SPACE_CLAUDE')
+    expect(parseEnv({}).ANTHROPIC_KEY_SECRET).toBeUndefined()
+  })
+})

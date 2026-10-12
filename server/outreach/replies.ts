@@ -512,7 +512,7 @@ interface ReplySource {
 export async function syncReplies(deps: OutreachDeps): Promise<{ received: number }> {
   const settings = await getSettings(deps.db)
   const sources: ReplySource[] = []
-  if (deps.imap) sources.push({ key: LAST_SYNC_KEY, label: 'env', client: deps.imap })
+  if (deps.imap) sources.push({ key: LAST_SYNC_KEY, label: 'the IMAP secrets', client: deps.imap })
   for (const inbox of settings.sending_inboxes) {
     if (!canRead(inbox)) continue
     sources.push({

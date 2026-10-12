@@ -14,7 +14,7 @@ import {
   type ProvidersResponse,
 } from '@shared/types'
 import type { Sequence } from '../types.ts'
-import { getProviders, getSettings, listSequences, putSettings } from '../api.ts'
+import { getProviders, getReadiness, getSettings, listSequences, putSettings } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { useToast } from '../components/Toast.tsx'
 import { Badge, Chip, Field, Section, Toggle } from '../components/Field.tsx'
@@ -145,15 +145,17 @@ function SettingsForm({
   // those are what the next round runs with, whatever is still unsaved in the form.
   // Warmed inboxes from Settings (a saved password shows as the mask, which still counts).
   const sendingInboxes = saved.sending_inboxes.filter(
-    (i) => i.active && i.smtp_host && i.smtp_user && i.smtp_pass,
+    (i) => i.active && i.daily_limit > 0 && i.smtp_host && i.smtp_user && i.smtp_pass,
   ).length
-  const readingInboxes = saved.sending_inboxes.filter(
-    (i) => i.imap_host && i.smtp_user && i.smtp_pass,
-  ).length
-  const emailKeyPresent =
-    saved.sending_inboxes.some((i) => i.active && i.smtp_host && i.smtp_user && i.smtp_pass) ||
-    (saved.email_provider === 'smtp' ? providers?.smtp : providers?.resend)
-  const mailKeyPresent = saved.mail_provider === 'lob' ? providers?.lob : true
+  const readingInboxes =
+    saved.sending_inboxes.filter((i) => i.imap_host && i.smtp_user && i.smtp_pass).length +
+    (providers?.imap ? 1 : 0)
+  // Same fallback as the server: an SMTP or Resend secret sends when no inbox can.
+  const secretSender = Boolean(providers?.smtp || providers?.resend)
+  const mailKeyPresent = draft.mail_provider === 'lob' ? providers?.lob : true
+  // The Claude row says whether the key WORKS, from the checklist's live test.
+  const readiness = useQuery({ queryKey: ['readiness'], queryFn: getReadiness })
+  const claudeItem = readiness.data?.find((r) => r.key === 'enrich')
   const enabledChannels = CHANNELS.filter((c) => saved.channels[c])
 
   return (
@@ -398,6 +400,12 @@ function SettingsForm({
                   <Badge tone="green">
                     Sends from {sendingInboxes} warmed {sendingInboxes === 1 ? 'inbox' : 'inboxes'}
                   </Badge>
+                ) : saved.sending_inboxes.length > 0 ? (
+                  <Badge tone="amber">
+                    No inbox can send: switch one on, or type its app password again
+                  </Badge>
+                ) : secretSender ? (
+                  <Badge tone="green">Sends with the email secrets in Replit</Badge>
                 ) : (
                   <Badge tone="amber">No sending inbox yet: add one under Sending inboxes</Badge>
                 )
@@ -523,11 +531,21 @@ function SettingsForm({
                   </label>
                 ) : null}
                 {info.key ? (
-                  <KeyBadge
-                    present={present}
-                    keys={providers?.env_keys[info.key]}
-                    optional={info.key !== 'anthropic'}
-                  />
+                  info.key === 'anthropic' && present && claudeItem ? (
+                    claudeItem.ok ? (
+                      <Badge tone="green">Key works</Badge>
+                    ) : (
+                      <Badge tone="amber">
+                        Key found but not working: see the checklist at the top
+                      </Badge>
+                    )
+                  ) : (
+                    <KeyBadge
+                      present={present}
+                      keys={providers?.env_keys[info.key]}
+                      optional={info.key !== 'anthropic'}
+                    />
+                  )
                 ) : (
                   <Badge tone="green">No key needed</Badge>
                 )}
@@ -537,12 +555,15 @@ function SettingsForm({
         </div>
         <p className="flex flex-wrap items-center gap-2 text-sm text-stone-600">
           <KeyRound className="h-4 w-4" aria-hidden /> Reading replies:
-          {readingInboxes > 0 || providers?.imap ? (
+          {readingInboxes > 0 ? (
             <Badge tone="green">
-              Read from {readingInboxes || 1} {(readingInboxes || 1) === 1 ? 'inbox' : 'inboxes'}
+              Read from {readingInboxes} {readingInboxes === 1 ? 'inbox' : 'inboxes'}
             </Badge>
           ) : (
-            <Badge tone="amber">Fill in the IMAP server on each sending inbox</Badge>
+            <Badge tone="amber">
+              Not read yet: give each sending inbox its IMAP server and app password, then Test
+              login
+            </Badge>
           )}
         </p>
       </Section>
@@ -692,11 +713,16 @@ function SettingsForm({
         <ul className="list-disc space-y-1 pl-5">
           {saved.channels.email ? (
             <li>
-              Email, up to {saved.daily_caps.email} a day, through{' '}
-              {saved.email_provider === 'smtp' ? 'SMTP' : 'Resend'}
-              {emailKeyPresent === false ? (
-                <span className="text-red-700"> (key missing, sends will fail)</span>
-              ) : null}
+              Email, up to {saved.daily_caps.email} a day,{' '}
+              {sendingInboxes > 0 ? (
+                `from your ${sendingInboxes} warmed ${sendingInboxes === 1 ? 'inbox' : 'inboxes'}`
+              ) : secretSender ? (
+                'through the email secrets in Replit'
+              ) : (
+                <span className="text-red-700">
+                  but no inbox can send yet, so sends will fail: add one under Sending inboxes
+                </span>
+              )}
             </li>
           ) : null}
           {saved.channels.mail ? (

@@ -218,3 +218,45 @@ describe('the Claude key check', () => {
     expect(r).toMatchObject({ ok: false, fix: expect.stringMatching(/CLAUDE_API_KEY/) })
   })
 })
+
+describe('the Claude key check names the right secret and retries passing trouble', () => {
+  const failing = (err: Error, secret?: string) => {
+    let calls = 0
+    const base = testDeps(null as never)
+    const deps = {
+      ...base,
+      env: { ...base.env, ANTHROPIC_API_KEY: 'sk-ant-x', ANTHROPIC_KEY_SECRET: secret },
+      llm: {
+        text: async () => {
+          calls++
+          throw err
+        },
+        structured: async () => null,
+      },
+    } as ReturnType<typeof testDeps>
+    return { deps, calls: () => calls }
+  }
+
+  it('names the secret the key came from when Claude refuses it', async () => {
+    const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
+    resetClaudeCheck()
+    const err = Object.assign(new Error('401 invalid x-api-key'), { status: 401 })
+    const r = await claudeKeyCheck(failing(err, 'WORK_SPACE_CLAUDE').deps)
+    expect(r.fix).toContain('WORK_SPACE_CLAUDE')
+    resetClaudeCheck()
+  })
+
+  it('checks a busy or unreachable Claude again after a minute, not 30', async () => {
+    const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
+    resetClaudeCheck()
+    const err = Object.assign(new Error('529 overloaded'), { status: 529 })
+    const f = failing(err)
+    let now = new Date('2026-10-13T14:00:00.000Z')
+    const deps = { ...f.deps, now: () => now }
+    expect((await claudeKeyCheck(deps)).fix).toMatch(/busy/)
+    now = new Date('2026-10-13T14:02:00.000Z')
+    await claudeKeyCheck(deps)
+    expect(f.calls()).toBe(2)
+    resetClaudeCheck()
+  })
+})

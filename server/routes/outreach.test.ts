@@ -171,7 +171,7 @@ describe('sequences routes', () => {
     const res = await agent.post(`/api/sequences/${created.body.id}/test-send`)
     expect(res.status).toBe(400)
     expect(res.body.code).toBe('NO_EMAIL_PROVIDER')
-    expect(res.body.error).toContain('SMTP_HOST')
+    expect(res.body.error).toContain('Sending inboxes')
   })
 })
 

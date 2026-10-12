@@ -30,6 +30,8 @@ export const EnvSchema = z.object({
   ANTHROPIC_API_KEY: optional,
   /** Needed when the key is organization-level, not scoped to a workspace. */
   ANTHROPIC_WORKSPACE_ID: optional,
+  /** Which secret name the Claude key came from, so fix messages name the right one. */
+  ANTHROPIC_KEY_SECRET: optional,
 
   SMTP_HOST: optional,
   SMTP_PORT: optionalPort,
@@ -66,8 +68,14 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   )
   const workspaceKey = workspaceValues.find((v) => v.startsWith('sk-ant-'))
   const workspaceId = workspaceValues.find((v) => !v.startsWith('sk-ant-'))
+  const keyName =
+    (source.ANTHROPIC_API_KEY?.trim() && 'ANTHROPIC_API_KEY') ||
+    (workspaceKey && WORKSPACE_SECRETS.find((n) => source[n]?.trim() === workspaceKey)) ||
+    ['Claude_API', 'CLAUDE_API_KEY'].find((n) => source[n]?.trim()) ||
+    undefined
   const parsed = EnvSchema.parse({
     ...source,
+    ANTHROPIC_KEY_SECRET: keyName,
     ANTHROPIC_API_KEY:
       pick('ANTHROPIC_API_KEY') ?? workspaceKey ?? pick('Claude_API', 'CLAUDE_API_KEY'),
     // The workspace header only goes with an organization key, never with a workspace key.
