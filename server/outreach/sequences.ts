@@ -270,10 +270,7 @@ export async function testSend(deps: OutreachDeps, id: string): Promise<{ ok: tr
   // A test goes out the way the sequence will: through the first warmed inbox when there is one.
   const inbox = settings.sending_inboxes.find(canSend) ?? null
   if (!inbox && !pickEmailProvider(deps, settings)) {
-    throw badRequest(
-      `No sending inbox yet: add one in Settings, or ${EMAIL_KEYS_HINT}`,
-      'NO_EMAIL_PROVIDER',
-    )
+    throw badRequest(`No sending inbox yet: ${EMAIL_KEYS_HINT}`, 'NO_EMAIL_PROVIDER')
   }
   if (!settings.physical_address.trim()) {
     throw badRequest('Add your physical mailing address in Settings first', 'NO_ADDRESS')

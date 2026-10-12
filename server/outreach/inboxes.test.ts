@@ -133,6 +133,10 @@ describe('a stored password only goes where it was meant to', () => {
       address: '142.250.1.108',
     })
     expect((await resolveMailHost(deps(['142.250.1.108']), '10.0.0.1')).ok).toBe(false)
+    // IPv6 first in the answer: still connect over IPv4 (Replit cannot reach IPv6).
+    expect(
+      await resolveMailHost(deps(['2607:f8b0:4002:c06::6d', '142.250.9.109']), 'smtp.gmail.com'),
+    ).toEqual({ ok: true, address: '142.250.9.109' })
   })
 
   it('blocks every address that is not the public internet, in any spelling', () => {
@@ -177,5 +181,40 @@ describe('a stored password only goes where it was meant to', () => {
     expect(ipv6Groups('2607:f8b0::6c')).toEqual([0x2607, 0xf8b0, 0, 0, 0, 0, 0, 0x6c])
     expect(ipv6Groups('1::2::3')).toBeNull()
     expect(ipv6Groups('12345::1')).toBeNull()
+  })
+})
+
+describe('the Claude key check', () => {
+  it('names the fix when Claude refuses an organization key, and remembers the answer', async () => {
+    const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
+    resetClaudeCheck()
+    let calls = 0
+    const deps = {
+      ...testDeps(null as never),
+      env: { ...testDeps(null as never).env, ANTHROPIC_API_KEY: 'sk-test' },
+      llm: {
+        text: async () => {
+          calls++
+          throw new Error(
+            '400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header"}}',
+          )
+        },
+        structured: async () => null,
+      },
+    } as ReturnType<typeof testDeps>
+    const first = await claudeKeyCheck(deps)
+    expect(first.ok).toBe(false)
+    expect(first.fix).toMatch(/organization key/)
+    expect(first.fix).toMatch(/workspace/)
+    await claudeKeyCheck(deps)
+    expect(calls).toBe(1) // cached for 30 minutes
+    resetClaudeCheck()
+  })
+
+  it('says how to add the key when there is none', async () => {
+    const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
+    resetClaudeCheck()
+    const r = await claudeKeyCheck({ ...testDeps(null as never), llm: null })
+    expect(r).toMatchObject({ ok: false, fix: expect.stringMatching(/CLAUDE_API_KEY/) })
   })
 })

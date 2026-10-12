@@ -25,7 +25,8 @@ const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
     if (list.length === 0 || list.some((a) => isPrivateAddress(a.address))) {
       return callback(new Error(`${hostname} is not a public address`), '', 4)
     }
-    const first = list[0]!
+    // Replit has no IPv6 route, so connect over IPv4 when the name has an IPv4 address.
+    const first = list.find((a) => a.family === 4) ?? list[0]!
     if ((options as { all?: boolean }).all) {
       ;(callback as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, [
         first,

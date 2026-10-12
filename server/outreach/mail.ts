@@ -71,7 +71,7 @@ export async function sendViaLob(
   idempotencyKey: string,
 ): Promise<LobResult> {
   const key = deps.env.LOB_API_KEY
-  if (!key) throw new Error('No mail provider: add LOB_API_KEY in .env')
+  if (!key) throw new Error('No mail provider: add LOB_API_KEY in Replit Secrets, then Publish')
   const kind: LobResult['kind'] = body.length > POSTCARD_MAX_CHARS ? 'letter' : 'postcard'
   const html = `<html><body style="font-family:Georgia,serif;font-size:14px;white-space:pre-wrap;padding:0.5in">${escapeHtml(body)}</body></html>`
   const payload: Record<string, unknown> =
