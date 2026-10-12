@@ -13,6 +13,8 @@ export type PageFetcher = (url: string) => Promise<string | null>
 
 const MAX_BYTES = 1_500_000
 const TIMEOUT_MS = 8000
+/** The most one page may take from connect to last byte. */
+const DEADLINE_MS = 10_000
 const MAX_REDIRECTS = 3
 
 /** A lookup that refuses names with any private address and pins the first public one. */
@@ -46,47 +48,74 @@ export function allowedUrl(raw: string): URL | null {
   }
 }
 
-function getOnce(url: URL): Promise<{ status: number; location?: string; body: string }> {
+/** Test seams only: production always uses the public-only lookup and the 10 s deadline. */
+export interface GetOptions {
+  lookup?: LookupFunction
+  deadlineMs?: number
+}
+
+export function getOnce(
+  url: URL,
+  opts: GetOptions = {},
+): Promise<{ status: number; location?: string; body: string }> {
   const lib = url.protocol === 'https:' ? https : http
   return new Promise((resolve, reject) => {
+    // Settle exactly once, whatever happens: end, error, close, size cap or the deadline.
+    let settled = false
+    const done = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      fn()
+    }
+    const fail = (err: Error) => {
+      done(() => reject(err))
+      req.destroy()
+    }
+    // A hard deadline for the whole request. The socket timeout alone restarts on every byte, so
+    // a page that drips one byte at a time could otherwise hold a research run forever.
+    const deadline = setTimeout(() => fail(new Error('deadline')), opts.deadlineMs ?? DEADLINE_MS)
     const req = lib.get(
       url,
       {
-        lookup: publicOnlyLookup,
+        lookup: opts.lookup ?? publicOnlyLookup,
         timeout: TIMEOUT_MS,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; ProparchiveOutreach/1.0; contact check)',
           Accept: 'text/html,text/plain;q=0.9,*/*;q=0.1',
+          'Accept-Encoding': 'identity',
         },
       },
       (res) => {
         const status = res.statusCode ?? 0
         const location = res.headers.location
         const type = String(res.headers['content-type'] ?? '')
+        const declared = Number(res.headers['content-length'] ?? 0)
         if (status >= 300 && status < 400) {
           res.resume()
-          return resolve({ status, ...(location ? { location } : {}), body: '' })
+          return done(() => resolve({ status, ...(location ? { location } : {}), body: '' }))
         }
-        if (!/text\/|html|json|xml/i.test(type)) {
-          res.resume()
-          return resolve({ status, body: '' })
+        if (!/text\/|html|json|xml/i.test(type) || declared > MAX_BYTES) {
+          res.destroy()
+          return done(() => resolve({ status, body: '' }))
         }
         let size = 0
         const chunks: Buffer[] = []
         res.on('data', (c: Buffer) => {
           size += c.length
-          if (size > MAX_BYTES) {
-            req.destroy()
-            return
-          }
+          if (size > MAX_BYTES) return fail(new Error('page too large'))
           chunks.push(c)
         })
-        res.on('end', () => resolve({ status, body: Buffer.concat(chunks).toString('utf8') }))
-        res.on('error', reject)
+        res.on('end', () =>
+          done(() => resolve({ status, body: Buffer.concat(chunks).toString('utf8') })),
+        )
+        res.on('error', (err) => fail(err))
+        res.on('close', () => fail(new Error('closed')))
       },
     )
-    req.on('timeout', () => req.destroy(new Error('timeout')))
-    req.on('error', reject)
+    req.on('timeout', () => fail(new Error('timeout')))
+    req.on('error', (err) => fail(err))
+    req.on('close', () => fail(new Error('closed')))
   })
 }
 
@@ -105,6 +134,7 @@ export function pageText(html: string): string {
 
 /** The real fetcher. Never throws. */
 export const fetchPublicPage: PageFetcher = async (raw) => {
+  // Redirect hops each get their own deadline; MAX_REDIRECTS keeps the total bounded too.
   let url = allowedUrl(raw)
   for (let hop = 0; url && hop <= MAX_REDIRECTS; hop++) {
     try {
