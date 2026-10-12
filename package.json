@@ -20,7 +20,8 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "seed": "tsx server/seed/run.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "enrich:eval": "tsx scripts/enrich-eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
