@@ -20,6 +20,14 @@ const found: ResearchResult = {
   website: 'https://torrespg.com',
   linkedin_url: 'https://www.linkedin.com/in/raytorres',
   instagram_url: null,
+  facebook_url: null,
+  mailing_street: null,
+  mailing_city: null,
+  mailing_state: null,
+  mailing_zip: null,
+  property_count: null,
+  unit_count: null,
+  property_details: [],
   business_email: 'ray@torrespg.com',
   business_phone: '(215) 555-0199',
   confidence: 0.8,
@@ -67,12 +75,12 @@ describe('buildResearchPrompt and params', () => {
     expect(prompt).toContain('55 Pine St, Philadelphia, PA, 19146')
   })
 
-  it('uses the spec shape: model, effort low, json schema format, web search with max_uses 5', () => {
+  it('uses the spec shape: model, effort high, json schema format, web search with max_uses 20', () => {
     const params = buildResearchParams('hello')
     expect(params.model).toBe(RESEARCH_MODEL)
     expect(params.model).toBe('claude-opus-5-5')
     expect(params.max_tokens).toBe(RESEARCH_MAX_TOKENS)
-    expect(params.output_config?.effort).toBe('low')
+    expect(params.output_config?.effort).toBe('high')
     expect(params.output_config?.format?.type).toBe('json_schema')
     const schema = params.output_config?.format?.schema as Record<string, unknown>
     expect(Object.keys(schema.properties as object).sort()).toEqual(
@@ -83,12 +91,22 @@ describe('buildResearchPrompt and params', () => {
         'confidence',
         'full_name',
         'instagram_url',
+        'facebook_url',
+        'mailing_street',
+        'mailing_city',
+        'mailing_state',
+        'mailing_zip',
+        'property_count',
+        'unit_count',
+        'property_details',
         'linkedin_url',
         'sources',
         'website',
       ].sort(),
     )
-    expect(params.tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }])
+    expect(params.tools).toEqual([
+      { type: 'web_search_20260209', name: 'web_search', max_uses: 20 },
+    ])
     expect(params.messages).toEqual([{ role: 'user', content: 'hello' }])
     expect(ResearchSchema.safeParse(found).success).toBe(true)
   })
@@ -138,7 +156,7 @@ describe('claude_research provider', () => {
     const p = createClaudeResearchProvider({ clientFactory: factory })
     const r = await p.enrich(makeLead({ company: 'Torres Property Group LLC' }), ctx())
     expect(seen).toHaveLength(1)
-    expect(seen[0]?.output_config?.effort).toBe('low')
+    expect(seen[0]?.output_config?.effort).toBe('high')
     expect(r.email).toBe('ray@torrespg.com')
     expect(r.credits_used).toBe(1)
   })
@@ -183,7 +201,7 @@ describe('claude_research provider', () => {
     const pausedForever = fakeFactory([{ stop_reason: 'pause_turn', parsed_output: null }])
     const p1 = createClaudeResearchProvider({ clientFactory: pausedForever.factory })
     const r1 = await p1.enrich(makeLead({ company: 'X LLC' }), ctx())
-    expect(pausedForever.seen).toHaveLength(3)
+    expect(pausedForever.seen).toHaveLength(8)
     expect(r1.confidence).toBe(0)
 
     const truncated = fakeFactory([{ stop_reason: 'max_tokens', parsed_output: null }])

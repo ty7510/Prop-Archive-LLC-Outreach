@@ -91,7 +91,7 @@ describe('enrichLeads', () => {
     ])
   })
 
-  it('stops early once the lead has email and linkedin', async () => {
+  it('keeps trying every provider until the lead is complete', async () => {
     await updateSettings({ enrichment: { providers: ['claude_research', 'hunter', 'apollo'] } }, db)
     const lead = await insertLead(db, {
       full_name: 'Ray Torres',
@@ -112,24 +112,30 @@ describe('enrichLeads', () => {
       now,
     })
     expect(research.calls).toHaveLength(1)
-    expect(hunter.calls).toHaveLength(0)
-    expect(apollo.calls).toHaveLength(0)
-    expect((await getLead(lead.id)).email).toBe('ray@torrespg.com')
+    expect(hunter.calls).toHaveLength(1)
+    expect(apollo.calls).toHaveLength(1)
+    const after = await getLead(lead.id)
+    expect(after.phone).toBe('2155550100')
+    expect(after.channels.linkedin).toBe(true)
   })
 
-  it('stops early with email and phone too, but keeps going with only an email', async () => {
+  it('stops once every wanted field is filled', async () => {
     await updateSettings({ enrichment: { providers: ['pdl', 'apollo'] } }, db)
     const a = await insertLead(db, { full_name: 'A B' })
-    const b = await insertLead(db, { full_name: 'C D' })
     const env = testEnv({ PDL_API_KEY: 'k', APOLLO_API_KEY: 'k' })
     const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/x' })
-    const pdlFull = fakeProvider('pdl', { email: 'a@b.co', phone: '2155550100' })
+    const pdlFull = fakeProvider('pdl', {
+      email: 'a@b.co',
+      phone: '2155550100',
+      linkedin_url: 'https://linkedin.com/in/a',
+      instagram_url: 'https://instagram.com/a',
+      facebook_url: 'https://facebook.com/a',
+      website: 'https://a.co',
+      mailing_street: '1 Main St',
+      unit_count: 4,
+    })
     await enrichLeads([a.id], { db, env, providers: { pdl: pdlFull, apollo }, now })
     expect(apollo.calls).toHaveLength(0)
-    const pdlEmailOnly = fakeProvider('pdl', { email: 'c@d.co' })
-    await enrichLeads([b.id], { db, env, providers: { pdl: pdlEmailOnly, apollo }, now })
-    expect(apollo.calls).toHaveLength(1)
-    expect((await getLead(b.id)).channels.linkedin).toBe(true)
   })
 
   it('respects monthly credit caps and logs the cap once per batch', async () => {

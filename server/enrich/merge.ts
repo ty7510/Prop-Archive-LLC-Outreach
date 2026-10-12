@@ -50,6 +50,7 @@ const TEXT_FIELDS: TextField[] = [
   'company',
   'linkedin_url',
   'instagram_url',
+  'facebook_url',
   'website',
   'mailing_street',
   'mailing_city',

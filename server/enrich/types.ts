@@ -17,6 +17,7 @@ export type LeadContactFields = Pick<
   | 'phone_type'
   | 'linkedin_url'
   | 'instagram_url'
+  | 'facebook_url'
   | 'website'
   | 'mailing_street'
   | 'mailing_city'

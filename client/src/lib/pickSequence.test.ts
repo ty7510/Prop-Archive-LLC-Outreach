@@ -23,6 +23,7 @@ const lead = (over: Partial<Lead> = {}): Lead => ({
   phone_type: 'unknown',
   linkedin_url: null,
   instagram_url: null,
+  facebook_url: null,
   website: null,
   mailing_street: null,
   mailing_city: null,

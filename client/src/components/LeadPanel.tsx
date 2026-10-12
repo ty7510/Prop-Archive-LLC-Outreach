@@ -225,6 +225,15 @@ function LeadBody({
             }
           />
           <ContactRow
+            label="Facebook"
+            value={lead.facebook_url}
+            link={
+              lead.facebook_url
+                ? { href: ensureHttp(lead.facebook_url), label: 'Open', icon: ExternalLink }
+                : undefined
+            }
+          />
+          <ContactRow
             label="Website"
             value={lead.website}
             link={
@@ -240,6 +249,14 @@ function LeadBody({
           />
           <ContactRow label="Full name" value={lead.full_name} />
           <ContactRow label="Company" value={lead.company} />
+          <ContactRow
+            label="Properties / units"
+            value={
+              lead.property_count || lead.unit_count
+                ? `${lead.property_count} properties, ${lead.unit_count} units`
+                : null
+            }
+          />
         </dl>
       </section>
 
@@ -247,6 +264,13 @@ function LeadBody({
         <h3 className="mb-2 text-base font-semibold text-stone-700">
           Properties <span className="font-normal text-stone-500">({lead.properties.length})</span>
         </h3>
+        {researchDetails(lead).length ? (
+          <ul className="mb-2 list-disc pl-5 text-sm text-stone-600">
+            {researchDetails(lead).map((d) => (
+              <li key={d}>{d}</li>
+            ))}
+          </ul>
+        ) : null}
         {lead.properties.length === 0 ? (
           <p className="text-stone-500">No properties on file.</p>
         ) : (
@@ -469,4 +493,15 @@ function Timeline({ lead }: { lead: LeadDetail }) {
       )}
     </ol>
   )
+}
+
+/** Property notes the web research found, stored with its raw result. */
+function researchDetails(lead: {
+  enrichment: Record<string, { data?: unknown } | undefined>
+}): string[] {
+  const data = lead.enrichment?.claude_research?.data as { property_details?: unknown } | null
+  const list = data?.property_details
+  return Array.isArray(list)
+    ? list.filter((d): d is string => typeof d === 'string').slice(0, 20)
+    : []
 }

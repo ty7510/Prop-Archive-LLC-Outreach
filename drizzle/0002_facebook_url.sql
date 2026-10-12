@@ -1,0 +1,1 @@
+ALTER TABLE `leads` ADD `facebook_url` text;
