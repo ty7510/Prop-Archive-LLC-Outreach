@@ -1,4 +1,4 @@
-modules = ["nodejs-24"]
+modules = ["nodejs-24", "python-base-3.13"]
 hidden = [".config", "node_modules", "dist"]
 
 # Run and Preview use the production build, the same thing Publish runs, on port 5000.
