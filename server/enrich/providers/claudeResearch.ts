@@ -111,11 +111,17 @@ export interface ResearchClient {
   parse(params: ResearchParams): Promise<ResearchMessage>
 }
 
-export type ResearchClientFactory = (apiKey: string) => ResearchClient
+export type ResearchClientFactory = (apiKey: string, workspaceId?: string) => ResearchClient
 
 /** The real SDK client. Tests inject a fake through createClaudeResearchProvider({ clientFactory }). */
-export const defaultClientFactory: ResearchClientFactory = (apiKey) => {
-  const client = new Anthropic({ apiKey, timeout: RESEARCH_TIMEOUT_MS, maxRetries: 2 })
+export const defaultClientFactory: ResearchClientFactory = (apiKey, workspaceId) => {
+  const client = new Anthropic({
+    apiKey,
+    timeout: RESEARCH_TIMEOUT_MS,
+    maxRetries: 2,
+    // An organization-level key is rejected without this header.
+    ...(workspaceId ? { defaultHeaders: { 'anthropic-workspace-id': workspaceId } } : {}),
+  })
   return {
     async parse(params) {
       const message = await client.messages.parse({
@@ -213,7 +219,7 @@ export function createClaudeResearchProvider(deps: ClaudeResearchDeps = {}): Enr
     async enrich(lead, ctx) {
       const apiKey = ctx.env.ANTHROPIC_API_KEY
       if (!apiKey) throw new Error('claude_research: ANTHROPIC_API_KEY is missing')
-      const client = factory(apiKey)
+      const client = factory(apiKey, ctx.env.ANTHROPIC_WORKSPACE_ID)
       const prompt = buildResearchPrompt(lead)
       let messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: prompt }]
       let calls = 0
