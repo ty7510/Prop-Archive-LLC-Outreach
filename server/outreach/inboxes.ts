@@ -205,7 +205,8 @@ export async function resolveMailHost(deps: OutreachDeps, host: string): Promise
   if (addresses.some(isPrivateAddress)) {
     return { ok: false, problem: `${host} points at a private network address` }
   }
-  return { ok: true, address: addresses[0]! }
+  // Replit has no IPv6 route (connecting over IPv6 fails with EAFNOSUPPORT), so take IPv4 when there is one.
+  return { ok: true, address: addresses.find((a) => isIP(a) === 4) ?? addresses[0]! }
 }
 
 function errorText(err: unknown): string {

@@ -133,6 +133,10 @@ describe('a stored password only goes where it was meant to', () => {
       address: '142.250.1.108',
     })
     expect((await resolveMailHost(deps(['142.250.1.108']), '10.0.0.1')).ok).toBe(false)
+    // IPv6 first in the answer: still connect over IPv4 (Replit cannot reach IPv6).
+    expect(
+      await resolveMailHost(deps(['2607:f8b0:4002:c06::6d', '142.250.9.109']), 'smtp.gmail.com'),
+    ).toEqual({ ok: true, address: '142.250.9.109' })
   })
 
   it('blocks every address that is not the public internet, in any spelling', () => {
