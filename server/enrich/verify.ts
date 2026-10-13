@@ -30,6 +30,11 @@ export interface ContactEvidence {
   source_url: string
   /** The exact words from the source that show the value. */
   quote: string
+  /**
+   * The exact words from the same source that tie it to the owner (their name, company, mailing or
+   * rental address), when those are not in `quote`. Often further down the same page.
+   */
+  tie_quote?: string | null
 }
 
 /** What the server saw when it opened the source page. */
@@ -234,6 +239,39 @@ function tieIn(text: string, facts: OwnerFacts, verifiedPhones: ReadonlySet<stri
   return null
 }
 
+/** Social profile hosts: their public pages are a login wall, so the server never opens them. */
+export const LOGIN_WALLED = /(^|\.)(linkedin|instagram|facebook|fb|x|twitter|tiktok)\.com$/
+
+export function isLoginWalled(url: string): boolean {
+  const host = hostOf(url)
+  return host !== null && LOGIN_WALLED.test(host)
+}
+
+/**
+ * A profile link that carries the owner's first and last name, like linkedin.com/in/jonathan-potter-1a2b.
+ * It names them (so "likely" at best), it never proves the profile is the owner's own.
+ */
+function profileNameTie(field: ContactField, value: string, facts: OwnerFacts): Tie | null {
+  if (field !== 'linkedin_url' && field !== 'instagram_url' && field !== 'facebook_url') return null
+  const handle = (
+    value
+      .replace(/^https?:\/\/[^/]+/i, '')
+      .split(/[?#]/)[0]!
+      .replace(/\/+$/, '')
+      .split('/')
+      .pop() ?? ''
+  ).toLowerCase()
+  const first = (facts.first_name ?? '').trim().toLowerCase()
+  const last = (facts.last_name ?? '').trim().toLowerCase()
+  if (first.length < 3 || last.length < 3) return null
+  if (!handle.includes(first) || !handle.includes(last)) return null
+  return {
+    kind: 'name',
+    reason: `the profile link carries the name ${facts.full_name ?? `${facts.first_name} ${facts.last_name}`}`,
+    named: true,
+  }
+}
+
 /** Is this contact proven to be the owner's own (not a manager or agent at their property)? */
 function provesOwner(tie: Tie): boolean {
   return tie.kind === 'mailing' || tie.kind === 'phone' || (tie.kind === 'property' && tie.named)
@@ -264,31 +302,34 @@ export function checkContacts(
     }
     const value = norm.value
     const quote = e.quote ?? ''
+    // The value and the tie may sit in separate quotes from the same source.
+    const quotes = `${quote} ${e.tie_quote ?? ''}`
     if (!/^https?:\/\//i.test(e.source_url ?? '')) {
       reject('no source link', value)
       continue
     }
-    if (!textShows(e.field, value, quote, e.source_url)) {
+    const pageText = pages.get(e.source_url) ?? null
+    const valueOnPage = pageText !== null && textShows(e.field, value, pageText, e.source_url)
+    if (!textShows(e.field, value, quotes, e.source_url) && !valueOnPage) {
       reject('the quoted words do not show it', value)
       continue
     }
-    const tie = tieIn(quote, facts, verifiedPhones)
+    if (pageText !== null && !valueOnPage) {
+      reject('the source page does not show it', value, 'contradicted')
+      continue
+    }
+    const quoteTie = tieIn(quotes, facts, verifiedPhones)
+    // An opened page is the authority: the tie may be anywhere on it. A blocked page leaves the quotes.
+    const pageTie = pageText !== null ? tieIn(pageText, facts, verifiedPhones) : null
+    const slugTie = profileNameTie(e.field, value, facts)
+    const tie = (pageText !== null ? pageTie : quoteTie) ?? slugTie
     if (!tie) {
-      reject('nothing ties the source to this owner', value)
+      if (pageText !== null && quoteTie) {
+        reject('the source page does not show it', value, 'contradicted')
+      } else reject('nothing ties the source to this owner', value)
       continue
     }
-    const pageText = pages.get(e.source_url) ?? null
-    let page: PageResult = 'unreachable'
-    if (pageText !== null) {
-      const onPage =
-        textShows(e.field, value, pageText, e.source_url) &&
-        tieIn(pageText, facts, verifiedPhones) !== null
-      page = onPage ? 'confirmed' : 'contradicted'
-    }
-    if (page === 'contradicted') {
-      reject('the source page does not show it', value, page)
-      continue
-    }
+    const page: PageResult = pageText !== null ? 'confirmed' : 'unreachable'
     // Verified: the page confirms it, and for the owner's own fields, it is proven to be theirs.
     const proven = e.role === 'owner' ? provesOwner(tie) : true
     const verdict: Verdict = page === 'confirmed' && proven ? 'verified' : 'likely'

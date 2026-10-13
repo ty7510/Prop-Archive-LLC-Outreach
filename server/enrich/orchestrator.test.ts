@@ -36,6 +36,17 @@ describe('pickBatch', () => {
   })
 })
 
+describe('pickBatch after a cut-off run', () => {
+  it('picks a lead left enriching for over half an hour, never one still running', async () => {
+    const stale = await insertLead(db, {
+      status: 'enriching',
+      updated_at: '2026-10-11T11:00:00.000Z',
+    })
+    await insertLead(db, { status: 'enriching', updated_at: '2026-10-11T11:50:00.000Z' })
+    expect(await pickBatch(10, { db, now })).toEqual([stale.id])
+  })
+})
+
 describe('pickBatch after a key is added', () => {
   it('picks leads enriched before Claude research had its turn, until they have contacts', async () => {
     await updateSettings(
@@ -354,5 +365,41 @@ describe('enrichLeads', () => {
   it('an empty id list does nothing', async () => {
     expect(await enrichLeads([], { db })).toEqual({ enriched: 0, failed: 0, skipped: 0 })
     expect(await listActivity(10, db)).toHaveLength(0)
+  })
+})
+
+describe('enrichLeads when the database goes away', () => {
+  it('logs the real cause and stops the batch instead of failing every lead', async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 10; i++) ids.push((await insertLead(db)).id)
+    const down = new Error('Failed query: select ... from leads where id = $1', {
+      cause: Object.assign(new Error('Connection terminated unexpectedly'), { code: '57P01' }),
+    })
+    let broken = false
+    const flaky = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === 'select' && broken) {
+          return () => {
+            throw down
+          }
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const counting = { db: flaky, env: testEnv(), now }
+    // Settings load first; then every lead read fails.
+    const run = enrichLeads(ids, counting)
+    broken = true
+    const r = await run
+    expect(r.failed).toBeLessThan(ids.length)
+    const log = await listActivity(100, db)
+    const error = log.find((e) => e.event === 'enrich.lead_error')
+    expect(error?.detail).toMatchObject({
+      cause: 'Connection terminated unexpectedly',
+      code: '57P01',
+    })
+    expect(log.find((e) => e.event === 'enrich.batch_aborted')?.detail).toMatchObject({
+      left: expect.any(Number),
+    })
   })
 })

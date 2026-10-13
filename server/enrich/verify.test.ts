@@ -131,6 +131,69 @@ describe('checkContacts', () => {
     })
   })
 
+  it('takes the tie from a separate quote of the same source', () => {
+    const [c] = check(
+      [
+        evidence({
+          quote: 'Call (610) 209-5093',
+          tie_quote: 'Daniel Liez, 4253 Regent Square, Philadelphia',
+        }),
+      ],
+      new Map([[LISTING, 'Call (610) 209-5093. Daniel Liez, 4253 Regent Square, Philadelphia']]),
+    )
+    expect(c).toMatchObject({ verdict: 'verified', page: 'confirmed' })
+  })
+
+  it('takes the tie from anywhere on the opened page when the quotes miss it', () => {
+    const list = [evidence({ quote: 'Call (610) 209-5093' })]
+    const pages = new Map([
+      [LISTING, 'Studio at 1022 Pine St. Listed by Daniel Liez. (610) 209-5093'],
+    ])
+    expect(check(list, pages)[0]).toMatchObject({ verdict: 'verified', page: 'confirmed' })
+  })
+
+  it('takes the value from the opened page when the quote only shows the address', () => {
+    const list = [evidence({ quote: '1022 Pine St #202, Philadelphia, Daniel Liez' })]
+    const pages = new Map([[LISTING, '1022 Pine St #202. Daniel Liez. Call (610) 209-5093']])
+    expect(check(list, pages)[0]).toMatchObject({ verdict: 'verified' })
+    // Blocked page: the quotes alone never show the phone, so it stays rejected.
+    expect(check(list, new Map())[0]!.verdict).toBe('rejected')
+  })
+
+  it('ties a profile whose link carries their first and last name, as likely only', () => {
+    const potter: OwnerFacts = {
+      ...facts,
+      full_name: 'Jonathan Potter',
+      first_name: 'Jonathan',
+      last_name: 'Potter',
+    }
+    const url = 'https://www.linkedin.com/in/jonathan-potter-4a1b2c'
+    const [c] = checkContacts(
+      [
+        evidence({
+          field: 'linkedin_url',
+          value: url,
+          source_url: url,
+          quote: 'Owner, Philadelphia',
+        }),
+      ],
+      potter,
+    )
+    expect(c).toMatchObject({ verdict: 'likely', reason: expect.stringContaining('profile link') })
+    const [other] = checkContacts(
+      [
+        evidence({
+          field: 'linkedin_url',
+          value: 'https://www.linkedin.com/in/jpotts',
+          source_url: url,
+          quote: 'jpotts',
+        }),
+      ],
+      potter,
+    )
+    expect(other!.verdict).toBe('rejected')
+  })
+
   it('needs both first and last name, and a company word longer than a few letters', () => {
     const shortCompany: OwnerFacts = { ...facts, first_name: null, company: 'M & M LLC' }
     const list = [

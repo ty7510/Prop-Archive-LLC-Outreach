@@ -30,6 +30,7 @@ const found: ResearchResult = {
       role: 'owner',
       source_url: 'https://hotpads.com/1022-pine-st-phila-pa-19107/202/pad',
       quote: 'Ray Torres rents 1022 Pine St #202, Philadelphia, PA 19107. Call (215) 555-0199.',
+      tie_quote: null,
     },
     {
       field: 'website',
@@ -37,6 +38,7 @@ const found: ResearchResult = {
       role: 'owner',
       source_url: 'https://torrespg.com/contact',
       quote: 'Torres Property Group, torrespg.com. Call us at 215-555-0199.',
+      tie_quote: null,
     },
     {
       field: 'linkedin_url',
@@ -44,6 +46,7 @@ const found: ResearchResult = {
       role: 'owner',
       source_url: 'https://www.linkedin.com/in/raytorres',
       quote: 'Ray Torres, Owner at Torres Property Group, Philadelphia',
+      tie_quote: null,
     },
     {
       field: 'email',
@@ -51,6 +54,7 @@ const found: ResearchResult = {
       role: 'owner',
       source_url: 'https://torrespg.com/contact',
       quote: 'Email Ray Torres at ray@torrespg.com',
+      tie_quote: null,
     },
     {
       field: 'phone',
@@ -58,6 +62,7 @@ const found: ResearchResult = {
       role: 'manager',
       source_url: 'https://www.rent.com/r/650-n-54th-st',
       quote: '650 N 54th St, managed by Next Door Managements, 267-616-2054',
+      tie_quote: null,
     },
   ],
   mailing_street: null,
@@ -213,6 +218,7 @@ describe('mapResearchResult', () => {
           role: 'owner',
           source_url: 'https://torrespg.com/contact',
           quote: 'Torres Property Group, 55 Pine St, Philadelphia. ray@torrespg.com',
+          tie_quote: null,
         },
       ],
     }
