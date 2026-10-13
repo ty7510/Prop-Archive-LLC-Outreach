@@ -4,7 +4,7 @@ import { createTestDb, type Db } from '../db/client.ts'
 import { leads, properties, providerUsage } from '../db/schema.ts'
 import { listActivity } from '../lib/activity.ts'
 import { updateSettings } from '../lib/settings.ts'
-import { enrichLeads, pickBatch, type OrchestratorDeps } from './orchestrator.ts'
+import { enrichLeads, pickBatch, resetProviderDown, type OrchestratorDeps } from './orchestrator.ts'
 import { fakeProvider, insertLead, insertProperty, testEnv } from './testing.ts'
 
 let db: Db
@@ -17,6 +17,62 @@ async function getLead(id: string) {
 
 beforeEach(async () => {
   db = await createTestDb()
+  resetProviderDown()
+})
+
+describe('when Claude research is down', () => {
+  it('keeps the lead new, pauses research for 15 minutes and picks nobody who waits for it', async () => {
+    await updateSettings(
+      {
+        min_icp_score: 0,
+        personas: ['maya', 'ray', 'denise'],
+        enrichment: { providers: ['claude_research', 'apollo'] },
+      },
+      db,
+    )
+    const env = testEnv({ ANTHROPIC_API_KEY: 'k', APOLLO_API_KEY: 'k' })
+    const a = await insertLead(db, { full_name: 'A B' })
+    const b = await insertLead(db, { full_name: 'C D' })
+    const noCredits = Object.assign(
+      new Error(
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}',
+      ),
+      { status: 400 },
+    )
+    const research = fakeProvider('claude_research', noCredits)
+    const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/ab' })
+    const deps = { db, env, providers: { claude_research: research, apollo }, now }
+
+    expect(await enrichLeads([a.id], deps)).toEqual({ enriched: 0, failed: 1, skipped: 0 })
+    const lead = await getLead(a.id)
+    expect(lead.status).toBe('new') // picked again once research is back, never enrolled before
+    expect(lead.linkedin_url).toBe('https://linkedin.com/in/ab') // what Apollo found is kept
+    const down = (await listActivity(100, db)).filter((x) => x.event === 'enrich.provider_down')
+    expect(down).toHaveLength(1)
+    expect(down[0]!.detail).toMatchObject({
+      provider: 'claude_research',
+      reason: expect.stringMatching(/credits/),
+      hint: expect.stringMatching(/console\.anthropic\.com/),
+    })
+
+    // During the pause nothing asks Claude again, and the batch leaves waiting leads alone.
+    expect(await pickBatch(10, deps)).toEqual([])
+    expect(await enrichLeads([b.id], deps)).toEqual({ enriched: 0, failed: 1, skipped: 0 })
+    expect(research.calls).toHaveLength(1)
+    expect((await getLead(b.id)).status).toBe('new')
+
+    // After the pause both are picked, and research gets its turn.
+    const later = () => new Date(now().getTime() + 16 * 60_000)
+    expect((await pickBatch(10, { ...deps, now: later })).sort()).toEqual([a.id, b.id].sort())
+    const working = fakeProvider('claude_research', {})
+    const r = await enrichLeads([a.id], {
+      ...deps,
+      providers: { claude_research: working, apollo },
+      now: later,
+    })
+    expect(r).toEqual({ enriched: 1, failed: 0, skipped: 0 })
+    expect((await getLead(a.id)).status).toBe('enriched')
+  })
 })
 
 describe('pickBatch', () => {
@@ -59,10 +115,12 @@ describe('pickBatch after a key is added', () => {
     )
     const fetchedAt = { fetched_at: '2026-10-12T15:12:00Z', data: null }
     const licenseOnly = await insertLead(db, {
+      full_name: 'Owner Name',
       status: 'enriched',
       enrichment: { li_license: fetchedAt },
     })
     const inSequence = await insertLead(db, {
+      full_name: 'Owner Name',
       status: 'enrolled',
       enrichment: { li_license: fetchedAt },
     })

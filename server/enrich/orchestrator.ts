@@ -11,6 +11,7 @@ import { errorDetail, logActivity } from '../lib/activity.ts'
 import { getSettings } from '../lib/settings.ts'
 import { computeChannels, hasEnoughContact } from './channels.ts'
 import { mergeProviderResult } from './merge.ts'
+import { researchOwed } from './pending.ts'
 import { createProviders } from './providers/index.ts'
 import type { EnrichContext, EnrichProvider, LeadContactFields, PropertyUpdate } from './types.ts'
 import { capFor, creditsUsed, monthRange, recordUsage, wouldExceedCap } from './usage.ts'
@@ -24,6 +25,77 @@ export const ENRICH_CONCURRENCY = 4
 export const MAX_LEAD_ERRORS_IN_A_ROW = 3
 /** A lead left "enriching" this long was cut off mid-run (a restart or a crash): pick it again. */
 export const STALE_ENRICHING_MS = 30 * 60_000
+/** After a provider fails on credits, its key or an outage, it is not asked again for this long. */
+export const PROVIDER_DOWN_MS = 15 * 60_000
+
+const downUntil = new Map<EnrichProviderId, number>()
+
+/** For tests: forget that a provider was down. */
+export function resetProviderDown(): void {
+  downUntil.clear()
+}
+
+function isDown(id: EnrichProviderId, now: Date): boolean {
+  const until = downUntil.get(id)
+  return until !== undefined && now.getTime() < until
+}
+
+/**
+ * Why a provider will keep failing for every lead, or null when the error was about this lead only.
+ * Credits, the key and an outage are account-wide: asking again at once only fails again.
+ */
+export function providerDownReason(err: unknown): { reason: string; hint: string } | null {
+  const d = errorDetail(err)
+  const own = (err as { status?: unknown }).status
+  const status = typeof own === 'number' ? own : Number(/^(\d{3})\b/.exec(d.error)?.[1] ?? NaN)
+  if (status === 402 || /credit balance/i.test(`${d.error} ${d.cause ?? ''}`)) {
+    return {
+      reason: 'the Anthropic account is out of credits',
+      hint: 'Add credits at console.anthropic.com under Plans and Billing. Leads wait for research; nothing is sent to them until it has looked.',
+    }
+  }
+  if (status === 401 || status === 403) {
+    return { reason: 'Claude refused the key', hint: 'Check the key in Replit Secrets.' }
+  }
+  if (status === 429) {
+    return { reason: 'Claude rate limit reached', hint: 'Tried again in 15 minutes.' }
+  }
+  if (status >= 500) {
+    return { reason: 'Claude could not be reached', hint: 'Tried again in 15 minutes.' }
+  }
+  return null
+}
+
+async function markDown(id: EnrichProviderId, err: unknown, batch: BatchState): Promise<void> {
+  const why = providerDownReason(err)
+  if (!why) return
+  const now = batch.now()
+  const wasDown = isDown(id, now)
+  const until = new Date(now.getTime() + PROVIDER_DOWN_MS)
+  downUntil.set(id, until.getTime())
+  if (wasDown) return
+  await logActivity(
+    'error',
+    'enrich.provider_down',
+    { provider: id, ...why, retry_at: until.toISOString() },
+    null,
+    batch.db,
+  )
+}
+
+/** Research is paused while the provider is down or its monthly cap is reached. */
+async function researchPaused(
+  settings: Settings,
+  provider: EnrichProvider,
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  if (isDown(provider.id, now)) return true
+  const cap = capFor(settings.enrichment.monthly_credit_cap, provider.id)
+  if (cap === null) return false
+  const { used } = await creditsUsed(provider.id, monthRange(now, settings.send_window.tz), db)
+  return wouldExceedCap(used, provider.costPerCall, cap)
+}
 
 export interface OrchestratorDeps {
   db?: Db
@@ -81,9 +153,15 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
   const settings = await getSettings(db)
   if (settings.personas.length === 0 || limit <= 0) return []
   const all = { ...createProviders(), ...deps.providers }
+  const researchProvider = all.claude_research
   const research =
     settings.enrichment.providers.includes('claude_research') &&
-    Boolean(all.claude_research?.isConfigured(env))
+    Boolean(researchProvider?.isConfigured(env))
+  const now = (deps.now ?? (() => new Date()))()
+  // While research is down or over its monthly cap, the leads waiting for it are left alone:
+  // picking them would only fail again, and they must not count as enriched without it.
+  const paused =
+    research && researchProvider ? await researchPaused(settings, researchProvider, db, now) : false
   const rows = await db
     .select()
     .from(leads)
@@ -97,14 +175,17 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
     )
     .orderBy(asc(leads.created_at), asc(leads.id))
     .limit(Math.min(limit * 20, 2000))
-  const staleBefore = new Date((deps.now ?? (() => new Date()))().getTime() - STALE_ENRICHING_MS)
+  const staleBefore = new Date(now.getTime() - STALE_ENRICHING_MS)
   return rows
-    .filter(
-      (r) =>
+    .filter((r) => {
+      const owed = research && researchOwed(r)
+      if (owed && paused) return false
+      return (
         r.status === 'new' ||
         (r.status === 'enriching' && new Date(r.updated_at) < staleBefore) ||
-        (research && !hasEnoughContact(r) && !(r.enrichment ?? {}).claude_research),
-    )
+        owed
+      )
+    })
     .slice(0, limit)
     .map((r) => r.id)
 }
@@ -159,6 +240,9 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
   const ran: EnrichProviderId[] = []
   let attempted = 0
   let errored = 0
+  // Research is what finds emails and profiles. Without its answer the lead stays "new": picked
+  // again later, and never put into the sequence with nothing to reach them on.
+  let researchFailed = false
 
   const log: EnrichContext['log'] = async (level, event, detail) => {
     await logActivity(level, event, detail, leadId, db)
@@ -186,6 +270,10 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     const now = batch.now()
     const ctx: EnrichContext = { env, settings, properties: owned, now, log }
     if (!provider.applies(current, ctx)) continue
+    if (isDown(provider.id, now)) {
+      if (provider.id === 'claude_research') researchFailed = true
+      continue
+    }
 
     const cap = capFor(settings.enrichment.monthly_credit_cap, provider.id)
     if (cap !== null) {
@@ -219,6 +307,8 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     } catch (err) {
       errored++
       await log('warn', 'enrich.provider_error', { provider: provider.id, ...errorDetail(err) })
+      await markDown(provider.id, err, batch)
+      if (provider.id === 'claude_research') researchFailed = true
       continue
     } finally {
       batch.reserved.set(provider.id, (batch.reserved.get(provider.id) ?? 0) - hold)
@@ -233,7 +323,7 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     }
   }
 
-  const failed = attempted > 0 && errored === attempted
+  const failed = (attempted > 0 && errored === attempted) || researchFailed
   const channels = computeChannels(current)
   const finishedAt = batch.now()
   const update: Partial<Lead> = {
@@ -252,6 +342,7 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     providers: ran,
     learned: [...learned],
     channels,
+    ...(researchFailed ? { waiting_for: 'claude_research' } : {}),
   })
   return failed ? 'failed' : 'enriched'
 }
