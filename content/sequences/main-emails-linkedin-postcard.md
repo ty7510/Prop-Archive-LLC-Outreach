@@ -34,7 +34,7 @@ If you'd like to look around first, it's all at proparchive.app.
 
 delay_days: 2
 channel: linkedin
-notes: Your task: open their profile, send a connection request, paste this as the note. Never sent by the app. No profile on file: use Find on LinkedIn on the task.
+notes: Your task: open their profile, send a connection request, paste this as the note. Never sent by the app. Only for leads whose profile research found; everyone else skips this step.
 
 Hi {{first_name}}, a tenant's repair text that turns into a dispute months later is the headache I hear most from Philly landlords. I build software that keeps each property's records in one place. Second company, and I grew up around landlords. Glad to connect.
 
