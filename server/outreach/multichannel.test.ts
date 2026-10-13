@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import type { SendingInbox } from '../../shared/settings.ts'
-import { enrollments, messages, sequenceSteps, sequences } from '../db/schema.ts'
+import { enrollments, leads, messages, sequenceSteps, sequences } from '../db/schema.ts'
 import { getSettings } from '../lib/settings.ts'
 import { seed, ensureMainSequence, MAIN_SEQUENCE_NAME } from '../seed/index.ts'
 import type { OutgoingMail } from './deps.ts'
@@ -96,6 +96,54 @@ describe('a sequence that changes channel step by step', () => {
     expect(card).toMatchObject({ status: 'ready_for_human' })
     expect(card!.to_address).toContain('Philadelphia')
     expect(sent).toHaveLength(1) // only the email went through SMTP
+  })
+
+  it('holds the email step until research has looked, then sends email 1 once it finds the address', async () => {
+    const at = { now: TUESDAY_10AM }
+    const fx = await setup({ now: () => at.now })
+    const { db } = fx
+    const deps = { ...fx.deps, env: { ...fx.deps.env, ANTHROPIC_API_KEY: 'sk-test' } }
+    await setSettings(db, { channels: { email: true, linkedin: true, mail: true } })
+    const lead = await insertLead(db, { email: null, linkedin_url: null, enrichment: {} })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    await enrollLead(deps, lead.id, sequence.id)
+
+    expect(await sendDue(deps)).toMatchObject({ dryRun: 0, skipped: 1 })
+    expect((await db.select().from(enrollments))[0]).toMatchObject({ current_step: 0 })
+
+    await db
+      .update(leads)
+      .set({
+        email: 'owner@example.com',
+        enrichment: { claude_research: { fetched_at: at.now.toISOString(), data: null } },
+      })
+      .where(eq(leads.id, lead.id))
+    expect(await sendDue(deps)).toMatchObject({ dryRun: 1 })
+    const rows = await db.select().from(messages)
+    expect(rows.map((m) => [m.channel, m.to_address])).toEqual([['email', 'owner@example.com']])
+  })
+
+  it('starts over from email 1 when research finds the email after the email steps were skipped', async () => {
+    const at = { now: TUESDAY_10AM }
+    const fx = await setup({ now: () => at.now })
+    const { db } = fx
+    const deps = { ...fx.deps, env: { ...fx.deps.env, ANTHROPIC_API_KEY: 'sk-test' } }
+    await setSettings(db, { channels: { email: true, linkedin: true, mail: true } })
+    const researched = { claude_research: { fetched_at: at.now.toISOString(), data: null } }
+    const lead = await insertLead(db, { email: null, linkedin_url: null, enrichment: researched })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    await enrollLead(deps, lead.id, sequence.id)
+    await sendDue(deps) // email: nothing to send to
+    await sendDue(deps) // LinkedIn: no profile
+    expect((await db.select().from(enrollments))[0]).toMatchObject({ current_step: 2, run: 0 })
+
+    // A later research run finds the email: the lead gets email 1, not a postcard first.
+    await db.update(leads).set({ email: 'owner@example.com' }).where(eq(leads.id, lead.id))
+    expect(await sendDue(deps)).toMatchObject({ dryRun: 1 })
+    expect((await db.select().from(enrollments))[0]).toMatchObject({ current_step: 1, run: 1 })
+    const rows = await db.select().from(messages)
+    expect(rows.map((m) => [m.channel, m.status])).toEqual([['email', 'dry_run']])
+    expect(rows[0]!.idempotency_key).toContain(':r1:0')
   })
 
   it('a LinkedIn message still waits for the open connection note before it', async () => {

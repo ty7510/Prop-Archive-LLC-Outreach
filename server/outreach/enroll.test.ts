@@ -153,6 +153,21 @@ describe('enrollEligible', () => {
     // Running again enrols nobody new.
     expect((await enrollEligible(deps)).enrolled).toBe(0)
   })
+
+  it('leaves a lead alone until research has looked for its email and profiles', async () => {
+    const { db, deps: base } = await setup()
+    const deps = { ...base, env: { ...base.env, ANTHROPIC_API_KEY: 'sk-test' } }
+    const email = await insertSequence(db, { name: 'Ray email', persona: 'ray' })
+    await setSettings(db, { sequence_by_persona: { ray: { email: email.sequence.id } } })
+    const waiting = await insertLead(db, { enrichment: {} })
+    const researched = await insertLead(db, {
+      enrichment: { claude_research: { fetched_at: '2026-10-13T12:00:00.000Z', data: null } },
+    })
+    expect((await enrollEligible(deps)).enrolled).toBe(1)
+    const rows = await db.select().from(enrollments)
+    expect(rows.map((e) => e.lead_id)).toEqual([researched.id])
+    expect(rows.some((e) => e.lead_id === waiting.id)).toBe(false)
+  })
 })
 
 describe('unsubscribe and suppression', () => {

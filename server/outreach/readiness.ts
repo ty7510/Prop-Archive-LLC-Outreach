@@ -89,6 +89,12 @@ export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean;
           ? `${secret} holds an organization key. Put the workspace ID there instead (it starts with wrkspc_), then Publish.`
           : 'Claude needs the workspace for this organization key: add a secret WORK_SPACE_CLAUDE with the workspace ID (it starts with wrkspc_), then Publish.',
       }
+    } else if (status === 402 || /credit balance/i.test(msg)) {
+      ttl = CLAUDE_RETRY_MS
+      result = {
+        ok: false,
+        fix: 'Your Anthropic account is out of credits, so research finds nothing and new leads wait. Add credits at console.anthropic.com under Plans and Billing. No Publish needed.',
+      }
     } else if (status === 401 || status === 403 || /invalid x-api-key/i.test(msg)) {
       result = {
         ok: false,

@@ -19,6 +19,7 @@ import {
   type Sequence,
   sequenceSteps,
 } from '../db/schema.ts'
+import { awaitsResearch } from '../enrich/pending.ts'
 import { logActivity } from '../lib/activity.ts'
 import { badRequest, conflict, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
@@ -356,6 +357,9 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
     if (lead.icp_score < settings.min_icp_score) continue
     if (lead.persona === 'unknown') continue
     if (await contactBlocker(db, lead)) continue
+    // Research finds the email and the profiles. Until it has looked, the lead waits: put in now,
+    // the email steps would be skipped for good and the lead would only ever get a postcard.
+    if (awaitsResearch(lead, settings, deps.env)) continue
     if (main) {
       // One sequence for everyone: email, then LinkedIn, then mail. Steps a lead cannot get are
       // skipped when they come due (send.ts), so anyone reachable on one switched-on channel goes in.

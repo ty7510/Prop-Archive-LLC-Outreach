@@ -246,6 +246,28 @@ describe('the Claude key check names the right secret and retries passing troubl
     resetClaudeCheck()
   })
 
+  it('says to add credits when the account has none, and checks again after a minute', async () => {
+    const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
+    resetClaudeCheck()
+    const err = Object.assign(
+      new Error(
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}',
+      ),
+      { status: 400 },
+    )
+    const f = failing(err)
+    let now = new Date('2026-10-13T14:00:00.000Z')
+    const deps = { ...f.deps, now: () => now }
+    const r = await claudeKeyCheck(deps)
+    expect(r.ok).toBe(false)
+    expect(r.fix).toMatch(/credits/)
+    expect(r.fix).toMatch(/console\.anthropic\.com/)
+    now = new Date('2026-10-13T14:02:00.000Z')
+    await claudeKeyCheck(deps)
+    expect(f.calls()).toBe(2)
+    resetClaudeCheck()
+  })
+
   it('checks a busy or unreachable Claude again after a minute, not 30', async () => {
     const { claudeKeyCheck, resetClaudeCheck } = await import('./readiness.ts')
     resetClaudeCheck()

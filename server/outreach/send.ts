@@ -3,7 +3,7 @@
 // row is marked `sending` right before the provider call. A row left in `sending` (the process died
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
-import { and, asc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lte, notInArray, or } from 'drizzle-orm'
 import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
@@ -19,6 +19,7 @@ import {
   type Sequence,
   type SequenceStep,
 } from '../db/schema.ts'
+import { awaitsResearch } from '../enrich/pending.ts'
 import { logActivity } from '../lib/activity.ts'
 import { newId } from '../lib/ids.ts'
 import { isWithinSendWindow } from '../lib/sendWindow.ts'
@@ -228,6 +229,74 @@ function reachable(lead: Lead, channel: Channel): boolean {
   return true
 }
 
+/**
+ * An enrollment that has not reached the lead yet (every step so far was skipped: no email, no
+ * profile) starts over as a new run once a way in turns up, so the lead gets the first email
+ * instead of joining at a follow-up. Returns how many were restarted.
+ */
+async function restartUntouched(deps: OutreachDeps, settings: Settings): Promise<number> {
+  const { db } = deps
+  const rows = await db
+    .select({ enrollment: enrollments, lead: leads })
+    .from(enrollments)
+    .innerJoin(leads, eq(leads.id, enrollments.lead_id))
+    .where(and(eq(enrollments.status, 'active'), gt(enrollments.current_step, 0)))
+    .limit(2000)
+  if (rows.length === 0) return 0
+  const touched = new Set(
+    (
+      await db
+        .select({ id: messages.enrollment_id })
+        .from(messages)
+        .where(
+          and(
+            inArray(
+              messages.enrollment_id,
+              rows.map((r) => r.enrollment.id),
+            ),
+            eq(messages.direction, 'out'),
+            notInArray(messages.status, ['skipped']),
+          ),
+        )
+    ).map((m) => m.id),
+  )
+  const stepsCache = new Map<string, SequenceStep[]>()
+  const now = deps.now().toISOString()
+  let restarted = 0
+  for (const { enrollment, lead } of rows) {
+    if (touched.has(enrollment.id)) continue
+    let steps = stepsCache.get(enrollment.sequence_id)
+    if (!steps) {
+      steps = await stepsFor(deps, enrollment.sequence_id)
+      stepsCache.set(enrollment.sequence_id, steps)
+    }
+    const wayIn = steps.some(
+      (s) =>
+        s.step_index < enrollment.current_step &&
+        settings.channels[s.channel] &&
+        reachable(lead, s.channel),
+    )
+    if (!wayIn) continue
+    await db
+      .update(enrollments)
+      .set({ current_step: 0, next_send_at: now, started_at: now, run: enrollment.run + 1 })
+      .where(eq(enrollments.id, enrollment.id))
+    await db
+      .update(leads)
+      .set({ next_action_at: now, updated_at: now })
+      .where(eq(leads.id, lead.id))
+    await logActivity(
+      'info',
+      'enrollment_restarted',
+      { reason: 'a way to reach them was found, so the sequence starts again from step 1' },
+      lead.id,
+      db,
+    )
+    restarted++
+  }
+  return restarted
+}
+
 /** LinkedIn and Instagram tasks from before profiles were required, with no profile to open. */
 async function skipProfilelessTasks(deps: OutreachDeps): Promise<void> {
   await deps.db
@@ -339,6 +408,8 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   if (!isWithinSendWindow(settings, now)) return result
 
   await skipProfilelessTasks(deps)
+  const restarted = await restartUntouched(deps, settings)
+  let waitingForResearch = 0
   const due = await loadDue(deps, now.toISOString())
   if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
@@ -436,6 +507,12 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         (channel === 'mail' && !postal) ||
         ((channel === 'linkedin' || channel === 'instagram') && !reachable(row.lead, channel))
       if (noWayToReach) {
+        // Research may still find the address or the profile: the step waits for its answer.
+        if (channel !== 'mail' && awaitsResearch(row.lead, settings, deps.env)) {
+          result.skipped++
+          waitingForResearch++
+          continue
+        }
         const error =
           channel === 'email'
             ? 'lead has no email'
@@ -653,7 +730,17 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   }
 
   if (result.sent + result.dryRun + result.queued + result.skipped > 0) {
-    await logActivity('info', 'send', result, null, db)
+    await logActivity(
+      'info',
+      'send',
+      {
+        ...result,
+        ...(waitingForResearch > 0 ? { waiting_for_research: waitingForResearch } : {}),
+        ...(restarted > 0 ? { restarted } : {}),
+      },
+      null,
+      db,
+    )
   }
   return result
 }
