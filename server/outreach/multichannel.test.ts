@@ -138,6 +138,48 @@ describe('a sequence that changes channel step by step', () => {
     expect(sent).toHaveLength(0)
   })
 
+  it('skips the LinkedIn step when research found no profile, and keeps the schedule', async () => {
+    const at = { now: TUESDAY_10AM }
+    const { db, deps } = await inboxSetup(at)
+    await setSettings(db, { channels: { email: true, linkedin: true, mail: true } })
+    const lead = await insertLead(db, { linkedin_url: null })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    await enrollLead(deps, lead.id, sequence.id)
+    expect(await sendDue(deps)).toMatchObject({ dryRun: 1 }) // the email
+
+    at.now = new Date('2026-10-16T16:00:00.000Z') // the LinkedIn step comes due
+    expect(await sendDue(deps)).toMatchObject({ queued: 0, skipped: 1 })
+    const [enr] = await db.select().from(enrollments)
+    expect(enr!.current_step).toBe(2)
+    // The postcard keeps its own 5 day wait instead of jumping forward.
+    expect(new Date(enr!.next_send_at!).getTime()).toBeGreaterThan(
+      new Date('2026-10-20T00:00:00.000Z').getTime(),
+    )
+    const rows = await db.select().from(messages)
+    expect(rows.map((m) => m.channel)).toEqual(['email'])
+  })
+
+  it('clears old LinkedIn tasks that have no profile to open', async () => {
+    const { db, deps } = await setup()
+    const lead = await insertLead(db)
+    const task = {
+      lead_id: lead.id,
+      channel: 'linkedin' as const,
+      direction: 'out' as const,
+      status: 'ready_for_human' as const,
+      body: 'note',
+      created_at: TUESDAY_10AM.toISOString(),
+    }
+    await db.insert(messages).values([
+      { ...task, id: 'm1', idempotency_key: 'k1', to_address: null },
+      { ...task, id: 'm2', idempotency_key: 'k2', to_address: 'https://www.linkedin.com/in/x' },
+    ])
+    await sendDue(deps)
+    const rows = await db.select().from(messages)
+    expect(rows.find((m) => m.id === 'm1')!.status).toBe('skipped')
+    expect(rows.find((m) => m.id === 'm2')!.status).toBe('ready_for_human')
+  })
+
   it('ends the enrollment when no later step can reach the lead either', async () => {
     const { db, deps } = await setup()
     const lead = await insertLead(db, { email: null, mailing_street: null, mailing_zip: null })

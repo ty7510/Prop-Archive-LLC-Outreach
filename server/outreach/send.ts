@@ -3,7 +3,7 @@
 // row is marked `sending` right before the provider call. A row left in `sending` (the process died
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
-import { and, asc, eq, lte } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
 import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
@@ -125,7 +125,7 @@ async function endEnrollment(deps: OutreachDeps, enrollmentId: string): Promise<
     .where(eq(enrollments.id, enrollmentId))
 }
 
-/** 'unreachable': the lead cannot get this step's channel, so the next step goes without waiting. */
+/** 'unreachable': the lead cannot get this step's channel (no email, address or profile): skip it. */
 type AdvanceOutcome = 'sent' | 'queued' | 'dry_run' | 'skipped' | 'unreachable'
 
 /**
@@ -146,7 +146,10 @@ async function advance(
   const nextIndex = row.enrollment.current_step + 1
   const next = steps.find((s) => s.step_index === nextIndex)
   if (next) {
-    const delay = outcome === 'unreachable' ? 0 : next.delay_days
+    // Skipping the very first step starts the next one now; skipping a later step (no LinkedIn
+    // profile) keeps the schedule, so two emails never land days early, close together.
+    const delay =
+      outcome === 'unreachable' && row.enrollment.current_step === 0 ? 0 : next.delay_days
     const at = nextSendAt(settings, now, delay, deps.random)
     await db
       .update(enrollments)
@@ -213,11 +216,30 @@ function humanAddress(lead: Lead, channel: Channel): string | null {
   }
 }
 
-/** Can this step's channel reach the lead at all? Human channels always can (Theo finds them). */
+/**
+ * Can this step's channel reach the lead at all? LinkedIn and Instagram need the profile research
+ * found: Theo is never handed a task to go and search for someone himself.
+ */
 function reachable(lead: Lead, channel: Channel): boolean {
   if (channel === 'email') return Boolean(lead.email) && lead.email_status !== 'invalid'
   if (channel === 'mail') return postalAddressFor(lead) !== null
+  if (channel === 'linkedin') return Boolean(lead.linkedin_url?.trim())
+  if (channel === 'instagram') return Boolean(lead.instagram_url?.trim())
   return true
+}
+
+/** LinkedIn and Instagram tasks from before profiles were required, with no profile to open. */
+async function skipProfilelessTasks(deps: OutreachDeps): Promise<void> {
+  await deps.db
+    .update(messages)
+    .set({ status: 'skipped', error: 'no profile on file' })
+    .where(
+      and(
+        eq(messages.status, 'ready_for_human'),
+        inArray(messages.channel, ['linkedin', 'instagram']),
+        or(isNull(messages.to_address), eq(messages.to_address, '')),
+      ),
+    )
 }
 
 const PRIVATE_HOST_RE =
@@ -316,6 +338,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   const now = deps.now()
   if (!isWithinSendWindow(settings, now)) return result
 
+  await skipProfilelessTasks(deps)
   const due = await loadDue(deps, now.toISOString())
   if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
@@ -409,9 +432,16 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
 
       const postal = channel === 'mail' ? postalAddressFor(row.lead) : null
       const noWayToReach =
-        (channel === 'email' && !row.lead.email) || (channel === 'mail' && !postal)
+        (channel === 'email' && !row.lead.email) ||
+        (channel === 'mail' && !postal) ||
+        ((channel === 'linkedin' || channel === 'instagram') && !reachable(row.lead, channel))
       if (noWayToReach) {
-        const error = channel === 'email' ? 'lead has no email' : 'lead has no mailing address'
+        const error =
+          channel === 'email'
+            ? 'lead has no email'
+            : channel === 'mail'
+              ? 'lead has no mailing address'
+              : `no ${channel === 'linkedin' ? 'LinkedIn' : 'Instagram'} profile on file`
         if (existing) {
           await db
             .update(messages)
