@@ -3,7 +3,7 @@
 // row is marked `sending` right before the provider call. A row left in `sending` (the process died
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
-import { and, asc, eq, gt, inArray, isNull, lte, notInArray, or } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm'
 import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
@@ -29,7 +29,19 @@ import { sendEmail } from './email.ts'
 import { contactBlocker, stopLead } from './enroll.ts'
 import { postalAddressFor, sendViaLob } from './mail.ts'
 import { countTodayByChannel, nextSendAt, remainingToday } from './scheduler.ts'
-import { canSend, inboxProvider, pickInbox, sentTodayByInbox } from './inboxes.ts'
+import {
+  canSend,
+  inboxDay,
+  inboxForNow,
+  inboxProvider,
+  isLoginRefused,
+  loginFix,
+  mailErrorText,
+  noteLoginRefused,
+  noteLoginWorked,
+  replySyncFailures,
+  type InboxDay,
+} from './inboxes.ts'
 import { renderStepForLead } from './templates.ts'
 
 export interface SendDueResult {
@@ -60,6 +72,8 @@ export function idempotencyKey(enrollmentId: string, stepIndex: number, run = 0)
 /** May a failed row be handed to the provider again? Bounded, and never after an ambiguous error. */
 export function canRetry(message: Pick<Message, 'status' | 'attempts' | 'error'>): boolean {
   if (message.status !== 'failed') return false
+  // The server refused the login before anything was handed over: the email goes once it works.
+  if (isLoginRefused(message.error ?? '')) return true
   if (message.attempts >= MAX_SEND_ATTEMPTS) return false
   return !AMBIGUOUS_ERROR_RE.test(message.error ?? '')
 }
@@ -236,17 +250,22 @@ function reachable(lead: Lead, channel: Channel): boolean {
  */
 async function restartUntouched(deps: OutreachDeps, settings: Settings): Promise<number> {
   const { db } = deps
-  const rows = await db
-    .select({ enrollment: enrollments, lead: leads })
-    .from(enrollments)
-    .innerJoin(leads, eq(leads.id, enrollments.lead_id))
-    .where(and(eq(enrollments.status, 'active'), gt(enrollments.current_step, 0)))
-    .limit(2000)
+  if (!settings.channels.email) return 0
+  const rows = (
+    await db
+      .select({ enrollment: enrollments, lead: leads })
+      .from(enrollments)
+      .innerJoin(leads, eq(leads.id, enrollments.lead_id))
+      .where(and(eq(enrollments.status, 'active'), gt(enrollments.current_step, 0)))
+      .limit(2000)
+  ).filter((r) => reachable(r.lead, 'email'))
   if (rows.length === 0) return 0
+  // Anything that reached the lead or Theo (a sent email, a LinkedIn task he did or skipped, a
+  // postcard) counts. Only the rows the app wrote for a step with nowhere to go do not.
   const touched = new Set(
     (
       await db
-        .select({ id: messages.enrollment_id })
+        .select({ id: messages.enrollment_id, status: messages.status, error: messages.error })
         .from(messages)
         .where(
           and(
@@ -255,10 +274,17 @@ async function restartUntouched(deps: OutreachDeps, settings: Settings): Promise
               rows.map((r) => r.enrollment.id),
             ),
             eq(messages.direction, 'out'),
-            notInArray(messages.status, ['skipped']),
           ),
         )
-    ).map((m) => m.id),
+    )
+      .filter(
+        (m) =>
+          !(
+            (m.status === 'skipped' || m.status === 'failed') &&
+            NEVER_REACHED_ERRORS.includes(m.error ?? '')
+          ),
+      )
+      .map((m) => m.id),
   )
   const stepsCache = new Map<string, SequenceStep[]>()
   const now = deps.now().toISOString()
@@ -270,13 +296,12 @@ async function restartUntouched(deps: OutreachDeps, settings: Settings): Promise
       steps = await stepsFor(deps, enrollment.sequence_id)
       stepsCache.set(enrollment.sequence_id, steps)
     }
-    const wayIn = steps.some(
-      (s) =>
-        s.step_index < enrollment.current_step &&
-        settings.channels[s.channel] &&
-        reachable(lead, s.channel),
+    // Only a newly found email restarts, so the lead gets email 1 instead of a follow-up. Once
+    // email 1 is written the enrollment is touched, so a lead never restarts twice.
+    const missedAnEmail = steps.some(
+      (s) => s.step_index < enrollment.current_step && s.channel === 'email',
     )
-    if (!wayIn) continue
+    if (!missedAnEmail) continue
     await db
       .update(enrollments)
       .set({ current_step: 0, next_send_at: now, started_at: now, run: enrollment.run + 1 })
@@ -295,6 +320,32 @@ async function restartUntouched(deps: OutreachDeps, settings: Settings): Promise
     restarted++
   }
   return restarted
+}
+
+/** Errors the app writes on a step that never reached anyone (there was nothing to send it to). */
+const NEVER_REACHED_ERRORS = [
+  'no profile on file',
+  'lead has no email',
+  'lead has no mailing address',
+  'no LinkedIn profile on file',
+  'no Instagram profile on file',
+]
+
+/** Has this lead had an email from us before? Then the next one is a follow-up. */
+async function emailedBefore(deps: OutreachDeps, leadId: string): Promise<boolean> {
+  const rows = await deps.db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.lead_id, leadId),
+        eq(messages.channel, 'email'),
+        eq(messages.direction, 'out'),
+        eq(messages.status, 'sent'),
+      ),
+    )
+    .limit(1)
+  return rows.length > 0
 }
 
 /** LinkedIn and Instagram tasks from before profiles were required, with no profile to open. */
@@ -410,12 +461,14 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   await skipProfilelessTasks(deps)
   const restarted = await restartUntouched(deps, settings)
   let waitingForResearch = 0
+  let waitingForReplies = 0
   const due = await loadDue(deps, now.toISOString())
   if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
   const stepsCache = new Map<string, SequenceStep[]>()
   const refusedNoAddress = new Set<Channel>()
-  let sentByInbox: Map<string, number> | null = null
+  let day: InboxDay | null = null
+  const repliesUnread = replySyncFailures().length > 0
 
   const refuseNoAddress = async (channel: Channel, leadId: string) => {
     if (refusedNoAddress.has(channel)) return
@@ -545,6 +598,24 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         continue
       }
 
+      if (channel === 'email' && settings.live_mode) {
+        // A reply may be sitting unread while the reply check fails: no follow-up until it works.
+        if (repliesUnread && (await emailedBefore(deps, row.lead.id))) {
+          result.skipped++
+          waitingForReplies++
+          continue
+        }
+        // Wait, unrendered and unclaimed, until an inbox may send: its login works, it is under
+        // its daily limit, and its last email went MIN_GAP_MS ago. It goes on a later round.
+        if (settings.sending_inboxes.some(canSend)) {
+          day ??= await inboxDay(db, settings, now)
+          if (!inboxForNow(settings.sending_inboxes, day, deps.now())) {
+            result.skipped++
+            continue
+          }
+        }
+      }
+
       const rendered = await renderStepForLead(
         step,
         row.lead,
@@ -641,10 +712,10 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
       // sender (if any) carries the mail as before.
       let inbox: SendingInbox | null = null
       if (channel === 'email') {
-        sentByInbox ??= await sentTodayByInbox(db, settings, now)
-        inbox = pickInbox(settings.sending_inboxes, sentByInbox)
+        day ??= await inboxDay(db, settings, now)
+        inbox = inboxForNow(settings.sending_inboxes, day, deps.now())
         if (!inbox && settings.sending_inboxes.some(canSend)) {
-          result.skipped++ // every inbox hit its limit today; the message stays queued
+          result.skipped++ // no inbox may send right now; the message stays queued
           continue
         }
       }
@@ -667,9 +738,11 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
             },
             inbox,
           )
-          if (inbox && sentByInbox) {
+          if (inbox && day) {
             const k = inboxProvider(inbox)
-            sentByInbox.set(k, (sentByInbox.get(k) ?? 0) + 1)
+            day.counts.set(k, (day.counts.get(k) ?? 0) + 1)
+            day.lastSentAt.set(k, deps.now().getTime())
+            noteLoginWorked(inbox)
           }
           await finish('sent', {
             provider: sent.provider,
@@ -680,7 +753,23 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
           result.sent++
           await advance(deps, settings, row, steps, 'sent')
         } catch (err) {
-          const error = err instanceof Error ? err.message : String(err)
+          const error = mailErrorText(err)
+          if (inbox && isLoginRefused(err)) {
+            // Refused at login, before anything was handed over. The email waits and goes by
+            // itself once the login works (a new password, or the hourly retry): no attempt used.
+            await finish('failed', { error, attempts: Math.max(0, message.attempts - 1) })
+            if (noteLoginRefused(inbox, deps.now(), error)) {
+              await logActivity(
+                'error',
+                'inbox_login_refused',
+                { inbox: inbox.email, error, fix: loginFix(inbox.email) },
+                null,
+                db,
+              )
+            }
+            result.skipped++
+            continue
+          }
           await finish('failed', { error })
           await logActivity(
             'error',
@@ -736,6 +825,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
       {
         ...result,
         ...(waitingForResearch > 0 ? { waiting_for_research: waitingForResearch } : {}),
+        ...(waitingForReplies > 0 ? { waiting_for_reply_check: waitingForReplies } : {}),
         ...(restarted > 0 ? { restarted } : {}),
       },
       null,

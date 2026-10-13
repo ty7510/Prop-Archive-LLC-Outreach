@@ -1,5 +1,6 @@
 // Warmed sending inboxes (settings.sending_inboxes): rotation under each inbox's daily limit,
 // per-inbox counts, and the password mask the settings API puts on every response.
+import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { and, eq, gte, like, or } from 'drizzle-orm'
 import { SECRET_MASK, type SendingInbox, type Settings } from '../../shared/settings.ts'
@@ -25,15 +26,118 @@ export function canRead(inbox: SendingInbox): boolean {
   return Boolean(inbox.imap_host && inbox.smtp_user && inbox.smtp_pass)
 }
 
-/** Emails each inbox has sent (or is sending) today, keyed by inboxProvider(). */
-export async function sentTodayByInbox(
-  db: Db,
-  settings: Settings,
-  now: Date,
-): Promise<Map<string, number>> {
+/** Least time between two emails from one inbox, so a batch never goes out in one burst. */
+export const MIN_GAP_MS = 4 * 60_000
+/** After the server refuses a login, the same password is tried again after this long. */
+export const LOGIN_RETRY_MS = 60 * 60_000
+
+const LOGIN_REFUSED_RE =
+  /invalid login|username and password not accepted|badcredentials|application-specific password required|authenticationfailed|invalid credentials|\b53[45][- ]5\.7\.\d/i
+
+/** The mail server refused the login. Nothing was handed over, so trying again later is safe. */
+export function isLoginRefused(err: unknown): boolean {
+  if (err === null || err === undefined) return false
+  if (typeof err === 'object') {
+    const e = err as { code?: unknown; responseCode?: unknown; authenticationFailed?: unknown }
+    if (e.authenticationFailed === true || e.code === 'EAUTH') return true
+    if (e.responseCode === 534 || e.responseCode === 535) return true
+  }
+  return LOGIN_REFUSED_RE.test(mailErrorText(err))
+}
+
+/** What Theo does when Gmail refuses the password. Shown on Go and in Activity. */
+export function loginFix(email: string): string {
+  return `Gmail refused the password for ${email}. Make a new app password at myaccount.google.com/apppasswords (2-Step Verification must be on), paste it under Sending inboxes in Settings and press Test. The waiting emails then go out by themselves.`
+}
+
+interface LoginProblem {
+  at: number
+  fingerprint: string
+  error: string
+}
+
+// One server process sends, so memory is enough: a restart only means one more try.
+const loginProblems = new Map<string, LoginProblem>()
+
+function fingerprint(inbox: SendingInbox): string {
+  return createHash('sha256')
+    .update([inbox.smtp_host, inbox.smtp_port, inbox.smtp_user, inbox.smtp_pass].join('\n'))
+    .digest('hex')
+}
+
+/** For tests: forget every refused login. */
+export function resetLoginProblems(): void {
+  loginProblems.clear()
+}
+
+/** The last refused login for this inbox's current password, or null. A new password clears it. */
+export function loginProblem(inbox: SendingInbox): LoginProblem | null {
+  const p = loginProblems.get(inbox.id)
+  if (!p) return null
+  if (p.fingerprint !== fingerprint(inbox)) {
+    loginProblems.delete(inbox.id)
+    return null
+  }
+  return p
+}
+
+/** True while the same password was refused less than LOGIN_RETRY_MS ago: do not ask again yet. */
+export function loginBlocked(inbox: SendingInbox, now: Date): boolean {
+  const p = loginProblem(inbox)
+  return p !== null && now.getTime() - p.at < LOGIN_RETRY_MS
+}
+
+/** Remember a refused login. True when this is news (log it once, not once per email). */
+export function noteLoginRefused(inbox: SendingInbox, now: Date, error: string): boolean {
+  const known = loginProblem(inbox) !== null
+  loginProblems.set(inbox.id, { at: now.getTime(), fingerprint: fingerprint(inbox), error })
+  return !known
+}
+
+export function noteLoginWorked(inbox: SendingInbox): void {
+  loginProblems.delete(inbox.id)
+}
+
+// The last reply check of each inbox that failed, by its last-sync key. Follow-up emails wait
+// while a reply may be sitting unread, so nobody who answered gets another email.
+const replySyncProblems = new Map<string, { label: string; at: number; error: string }>()
+
+export function noteReplySyncFailed(key: string, label: string, now: Date, error: string): void {
+  replySyncProblems.set(key, { label, at: now.getTime(), error })
+}
+
+export function noteReplySyncWorked(key: string): void {
+  replySyncProblems.delete(key)
+}
+
+export function replySyncFailures(): { label: string; at: number; error: string }[] {
+  return [...replySyncProblems.values()]
+}
+
+/** Drop failures of inboxes that are no longer read (removed, or IMAP cleared). */
+export function keepReplySyncProblems(keys: readonly string[]): void {
+  for (const key of [...replySyncProblems.keys()]) {
+    if (!keys.includes(key)) replySyncProblems.delete(key)
+  }
+}
+
+/** For tests: forget every failed reply check. */
+export function resetReplySyncProblems(): void {
+  replySyncProblems.clear()
+}
+
+export interface InboxDay {
+  /** Emails each inbox has sent (or is sending) today, keyed by inboxProvider(). */
+  counts: Map<string, number>
+  /** When each inbox sent its latest email, in ms, keyed by inboxProvider(). */
+  lastSentAt: Map<string, number>
+}
+
+/** Today's sends per inbox: how many, and when the latest went. */
+export async function inboxDay(db: Db, settings: Settings, now: Date): Promise<InboxDay> {
   const dayStart = startOfDayInTz(now, settings.send_window.tz).toISOString()
   const rows = await db
-    .select({ provider: messages.provider })
+    .select({ provider: messages.provider, sent_at: messages.sent_at })
     .from(messages)
     .where(
       and(
@@ -44,10 +148,24 @@ export async function sentTodayByInbox(
       ),
     )
   const counts = new Map<string, number>()
+  const lastSentAt = new Map<string, number>()
   for (const r of rows) {
-    if (r.provider) counts.set(r.provider, (counts.get(r.provider) ?? 0) + 1)
+    if (!r.provider) continue
+    counts.set(r.provider, (counts.get(r.provider) ?? 0) + 1)
+    const at = r.sent_at ? Date.parse(r.sent_at) : NaN
+    if (Number.isFinite(at) && at > (lastSentAt.get(r.provider) ?? 0))
+      lastSentAt.set(r.provider, at)
   }
-  return counts
+  return { counts, lastSentAt }
+}
+
+/** Emails each inbox has sent (or is sending) today, keyed by inboxProvider(). */
+export async function sentTodayByInbox(
+  db: Db,
+  settings: Settings,
+  now: Date,
+): Promise<Map<string, number>> {
+  return (await inboxDay(db, settings, now)).counts
 }
 
 /**
@@ -70,6 +188,24 @@ export function pickInbox(
     }
   }
   return best
+}
+
+/**
+ * The inbox that may send an email right now: usable, its login not refused lately, under its
+ * daily limit, and MIN_GAP_MS past its last email. null when none may send at this moment.
+ */
+export function inboxForNow(
+  inboxes: readonly SendingInbox[],
+  day: InboxDay,
+  now: Date,
+): SendingInbox | null {
+  const ready = inboxes.filter(
+    (i) =>
+      canSend(i) &&
+      !loginBlocked(i, now) &&
+      now.getTime() - (day.lastSentAt.get(inboxProvider(i)) ?? 0) >= MIN_GAP_MS,
+  )
+  return pickInbox(ready, day.counts)
 }
 
 /** Settings as the API shows them: inbox passwords replaced by SECRET_MASK (or '' when unset). */
@@ -141,6 +277,15 @@ export async function resolveMailHost(deps: OutreachDeps, host: string): Promise
   return { ok: true, address: addresses.find((a) => isIP(a) === 4) ?? addresses[0]! }
 }
 
+/** A mail server error in the server's own words: imapflow keeps them in responseText. */
+export function mailErrorText(err: unknown): string {
+  const detail = (typeof err === 'object' && err !== null ? err : {}) as { responseText?: unknown }
+  const base = err instanceof Error ? err.message : String(err)
+  return typeof detail.responseText === 'string' && detail.responseText
+    ? `${base}: ${detail.responseText}`
+    : base
+}
+
 function errorText(err: unknown): string {
   // imapflow puts the server's own words in responseText ("Command failed" is all the message says).
   const detail = err as { responseText?: unknown; authenticationFailed?: unknown }
@@ -169,8 +314,10 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
         const mailer = deps.smtpForInbox(inbox, smtp.address)
         if (mailer.verify) await mailer.verify()
         result.smtp = { ok: true, message: `Sending works from ${inbox.email}` }
+        noteLoginWorked(inbox) // waiting emails go on the next round, no restart needed
       } catch (err) {
         result.smtp.message = errorText(err)
+        if (isLoginRefused(err)) noteLoginRefused(inbox, deps.now(), mailErrorText(err))
       }
   }
   if (!canRead(inbox)) return result

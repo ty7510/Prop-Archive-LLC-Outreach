@@ -1,14 +1,26 @@
 import { eq } from 'drizzle-orm'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { SendingInbox } from '../../shared/settings.ts'
 import { enrollments, leads, messages, sequenceSteps, sequences } from '../db/schema.ts'
+import { listActivity } from '../lib/activity.ts'
 import { getSettings } from '../lib/settings.ts'
 import { seed, ensureMainSequence, MAIN_SEQUENCE_NAME } from '../seed/index.ts'
 import type { OutgoingMail } from './deps.ts'
 import { enrollEligible, enrollLead } from './enroll.ts'
+import {
+  noteReplySyncFailed,
+  noteReplySyncWorked,
+  resetLoginProblems,
+  resetReplySyncProblems,
+} from './inboxes.ts'
 import { actOnQueueItem } from './queue.ts'
-import { sendDue } from './send.ts'
+import { canRetry, sendDue } from './send.ts'
 import { insertLead, insertSequence, setSettings, setup } from './testFixtures.ts'
+
+beforeEach(() => {
+  resetLoginProblems()
+  resetReplySyncProblems()
+})
 
 const ADDRESS = '123 Main St, Philadelphia, PA 19146'
 const TUESDAY_10AM = new Date('2026-10-13T14:00:00.000Z')
@@ -265,14 +277,162 @@ describe('warmed inbox rotation', () => {
     const r = await sendDue(deps)
     expect(r).toMatchObject({ sent: 2, skipped: 1 })
     expect(sent.map((s) => s.from).sort()).toEqual(['one@warm.com', 'two@warm.com'])
-    // The third email waits for tomorrow, untouched (no attempt claimed).
-    const waiting = (await db.select().from(messages)).filter((m) => m.status === 'queued')
-    expect(waiting).toHaveLength(1)
-    expect(waiting[0]!.attempts).toBe(0)
+    // The third email waits for tomorrow, unclaimed: no row, no attempt.
+    expect(await db.select().from(messages)).toHaveLength(2)
 
     at.now = new Date('2026-10-14T14:00:00.000Z') // Wednesday
     expect(await sendDue(deps)).toMatchObject({ sent: 1 })
     expect(sent).toHaveLength(3)
+  })
+})
+
+describe('it runs by itself, with no stop and start', () => {
+  const minutes = (n: number) => new Date(TUESDAY_10AM.getTime() + n * 60_000)
+
+  it('a LinkedIn task Theo skipped never starts the sequence over', async () => {
+    const at = { now: TUESDAY_10AM }
+    const { db, deps } = await inboxSetup(at)
+    await setSettings(db, { channels: { email: true, linkedin: true, mail: true } })
+    const lead = await insertLead(db, { email: null })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    await enrollLead(deps, lead.id, sequence.id)
+    await sendDue(deps) // no email: straight on to LinkedIn
+    at.now = minutes(30)
+    expect(await sendDue(deps)).toMatchObject({ queued: 1 })
+    const task = (await db.select().from(messages))[0]!
+    await actOnQueueItem(deps, task.id, 'skip')
+
+    for (const n of [31, 32, 60 * 24 * 6]) {
+      at.now = minutes(n)
+      await sendDue(deps)
+    }
+    const [enr] = await db.select().from(enrollments)
+    expect(enr!.run).toBe(0)
+    expect(enr!.current_step).toBeGreaterThanOrEqual(2)
+    const tasks = (await db.select().from(messages)).filter((m) => m.channel === 'linkedin')
+    expect(tasks).toHaveLength(1)
+    const restarts = (await listActivity(200, db)).filter((a) => a.event === 'enrollment_restarted')
+    expect(restarts).toHaveLength(0)
+  })
+
+  it('a refused Gmail login uses no attempt, is not asked again, and the email goes once the password is fixed', async () => {
+    const at = { now: TUESDAY_10AM }
+    const logins: string[] = []
+    const sent: string[] = []
+    const fx = await setup({
+      now: () => at.now,
+      smtpForInbox: (i) => ({
+        async sendMail(mail) {
+          logins.push(i.smtp_pass)
+          if (i.smtp_pass === 'old-password') {
+            throw Object.assign(
+              new Error(
+                'Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials - gsmtp',
+              ),
+              { code: 'EAUTH', responseCode: 535 },
+            )
+          }
+          sent.push(String(mail.to))
+          return { messageId: `<${sent.length}@inbox.test>` }
+        },
+      }),
+    })
+    const { db, deps } = fx
+    const live = { live_mode: true, physical_address: ADDRESS }
+    await setSettings(db, {
+      ...live,
+      sending_inboxes: [inbox('theo@warm.com', { smtp_pass: 'old-password' })],
+    })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    for (let i = 0; i < 2; i++) {
+      const lead = await insertLead(db)
+      await enrollLead(deps, lead.id, sequence.id)
+    }
+
+    expect(await sendDue(deps)).toMatchObject({ sent: 0 })
+    expect(logins).toHaveLength(1) // the second email did not try the same refused password
+    const [failed] = await db.select().from(messages)
+    expect(failed).toMatchObject({ status: 'failed', attempts: 0 })
+    expect(canRetry(failed!)).toBe(true)
+
+    at.now = minutes(10)
+    await sendDue(deps)
+    expect(logins).toHaveLength(1) // still waiting, not hammering Gmail every minute
+    const refused = (await listActivity(200, db)).filter((a) => a.event === 'inbox_login_refused')
+    expect(refused).toHaveLength(1)
+    expect((refused[0]!.detail as { fix: string }).fix).toMatch(/app password/)
+
+    // Theo pastes a new app password. Nothing else: no stop, no start.
+    await setSettings(db, {
+      ...live,
+      sending_inboxes: [inbox('theo@warm.com', { smtp_pass: 'new-password' })],
+    })
+    at.now = minutes(11)
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    at.now = minutes(16) // the next one keeps its distance from the first
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    expect(sent).toHaveLength(2)
+    const rows = await db.select().from(messages)
+    expect(rows.every((m) => m.status === 'sent')).toBe(true)
+  })
+
+  it('retries an email that a refused login failed twice before this change', () => {
+    const error =
+      'Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials a1e0cc1a2514c - gsmtp'
+    expect(canRetry({ status: 'failed', attempts: 2, error })).toBe(true)
+    expect(canRetry({ status: 'failed', attempts: 2, error: '550 5.1.1 no such user' })).toBe(false)
+  })
+
+  it('emails from one inbox go at least four minutes apart', async () => {
+    const at = { now: TUESDAY_10AM }
+    const { db, deps, sent } = await inboxSetup(at)
+    await setSettings(db, {
+      live_mode: true,
+      physical_address: ADDRESS,
+      sending_inboxes: [inbox('theo@warm.com')],
+    })
+    const { sequence } = await insertSequence(db, { name: 'Mixed' }, MIXED_STEPS)
+    for (let i = 0; i < 3; i++) {
+      const lead = await insertLead(db)
+      await enrollLead(deps, lead.id, sequence.id)
+    }
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    at.now = minutes(2)
+    expect(await sendDue(deps)).toMatchObject({ sent: 0 })
+    at.now = minutes(5)
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    at.now = minutes(10)
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    expect(sent).toHaveLength(3)
+  })
+
+  it('holds follow-ups while replies cannot be read, but first emails still go', async () => {
+    const at = { now: TUESDAY_10AM }
+    const { db, deps, sent } = await inboxSetup(at)
+    await setSettings(db, {
+      live_mode: true,
+      physical_address: ADDRESS,
+      sending_inboxes: [inbox('theo@warm.com')],
+    })
+    const { sequence } = await insertSequence(db, { name: 'Two emails' }, [
+      { delay_days: 0, channel: 'email' as const, subject: 'One', body: 'One {{demo_link}}' },
+      { delay_days: 2, channel: 'email' as const, subject: 'Two', body: 'Two {{demo_link}}' },
+    ])
+    const first = await insertLead(db)
+    await enrollLead(deps, first.id, sequence.id)
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+
+    at.now = new Date('2026-10-16T15:00:00.000Z') // Friday: the follow-up is due
+    const second = await insertLead(db)
+    await enrollLead(deps, second.id, sequence.id)
+    noteReplySyncFailed('k', 'theo@warm.com', at.now, 'Command failed: Invalid credentials')
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    expect(sent.map((s) => s.mail.subject)).toEqual(['One', 'One'])
+
+    noteReplySyncWorked('k')
+    at.now = new Date('2026-10-16T15:05:00.000Z')
+    expect(await sendDue(deps)).toMatchObject({ sent: 1 })
+    expect(sent.map((s) => s.mail.subject)).toEqual(['One', 'One', 'Two'])
   })
 })
 
