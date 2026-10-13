@@ -259,7 +259,8 @@ describe('sendDue', () => {
 
 describe('sendDue: re-enrol, dry run to live, and at-most-once', () => {
   it('re-enrolling after a stop is a fresh run: step 1 really goes out again under a new key', async () => {
-    const { db, deps, outbox } = await setup()
+    let at = new Date('2026-10-13T14:00:00.000Z')
+    const { db, deps, outbox } = await setup({ now: () => at })
     await setSettings(db, { live_mode: true, physical_address: ADDRESS, email_provider: 'smtp' })
     const lead = await insertLead(db)
     const { sequence } = await insertSequence(db)
@@ -271,6 +272,8 @@ describe('sendDue: re-enrol, dry run to live, and at-most-once', () => {
     const [enr] = await db.select().from(enrollments)
     expect(enr!.run).toBe(1)
     expect(enr!.current_step).toBe(0)
+    expect((await sendDue(deps)).sent).toBe(0) // the same person got an email today: it waits
+    at = new Date('2026-10-16T14:00:00.000Z') // three days on
     expect((await sendDue(deps)).sent).toBe(1)
     expect(outbox).toHaveLength(2)
     const rows = await db.select().from(messages)

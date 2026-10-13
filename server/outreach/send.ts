@@ -28,6 +28,7 @@ import type { OutreachDeps } from './deps.ts'
 import { sendEmail } from './email.ts'
 import { contactBlocker, stopLead } from './enroll.ts'
 import { postalAddressFor, sendViaLob } from './mail.ts'
+import { recipientBlocker } from './recipients.ts'
 import { countTodayByChannel, nextSendAt, remainingToday } from './scheduler.ts'
 import {
   canSend,
@@ -462,6 +463,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   const restarted = await restartUntouched(deps, settings)
   let waitingForResearch = 0
   let waitingForReplies = 0
+  let waitingForGap = 0
   const due = await loadDue(deps, now.toISOString())
   if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
@@ -589,6 +591,28 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
           await endEnrollment(deps, row.enrollment.id)
           await logActivity('warn', 'send_step_impossible', { channel, error }, row.lead.id, db)
         }
+        result.skipped++
+        continue
+      }
+
+      // Never spam: one person, not one lead row. No second email to them inside the gap (the step
+      // waits); one postcard per mailing address (the step is skipped).
+      const block = await recipientBlocker(db, settings, row.lead, channel, now)
+      if (block?.kind === 'email_too_soon') {
+        result.skipped++
+        waitingForGap++
+        continue
+      }
+      if (block?.kind === 'postcard_already_sent') {
+        const error = `a postcard already went to this mailing address on ${block.last_at.slice(0, 10)} (one per ${block.days} days)`
+        if (existing) {
+          await db
+            .update(messages)
+            .set({ status: 'skipped', error })
+            .where(eq(messages.id, existing.id))
+        }
+        await advance(deps, settings, row, steps, 'skipped')
+        await logActivity('info', 'send_step_skipped', { channel, error }, row.lead.id, db)
         result.skipped++
         continue
       }
@@ -826,6 +850,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         ...result,
         ...(waitingForResearch > 0 ? { waiting_for_research: waitingForResearch } : {}),
         ...(waitingForReplies > 0 ? { waiting_for_reply_check: waitingForReplies } : {}),
+        ...(waitingForGap > 0 ? { waiting_for_recipient_gap: waitingForGap } : {}),
         ...(restarted > 0 ? { restarted } : {}),
       },
       null,
