@@ -7,6 +7,21 @@ import { newId } from './ids.ts'
 import { nowIso } from './time.ts'
 
 /**
+ * An error in log form: its message plus the underlying cause. Drizzle wraps a Postgres failure as
+ * "Failed query: ..." and keeps the real reason (connection ended, timeout, constraint) in `cause`.
+ */
+export function errorDetail(err: unknown): { error: string; cause?: string; code?: string } {
+  if (!(err instanceof Error)) return { error: String(err) }
+  const out: { error: string; cause?: string; code?: string } = { error: err.message }
+  const cause = (err as { cause?: unknown }).cause
+  if (cause instanceof Error) out.cause = cause.message
+  else if (cause !== undefined && cause !== null) out.cause = String(cause)
+  const code = (cause as { code?: unknown } | undefined)?.code ?? (err as { code?: unknown }).code
+  if (typeof code === 'string') out.code = code
+  return out
+}
+
+/**
  * Write one activity line. Never throws: a logging failure must not break a job.
  * `detail` is any JSON-able value (counts, an error message, a provider name).
  */

@@ -12,6 +12,8 @@ import { fetchPublicPage, type PageFetcher } from '../pageCheck.ts'
 import {
   CONTACT_FIELDS,
   checkContacts,
+  isLoginWalled,
+  normaliseContact,
   type CheckedContact,
   type ContactField,
   type OwnerFacts,
@@ -33,6 +35,7 @@ export const ResearchContactSchema = z.object({
   role: z.enum(['owner', 'manager', 'agent']),
   source_url: z.string(),
   quote: z.string(),
+  tie_quote: z.string().nullable(),
 })
 
 export const ResearchSchema = z.object({
@@ -56,12 +59,13 @@ export const RESEARCH_SYSTEM = [
   'so a software company can reach them through legitimate business channels.',
   'Rules: only return facts a source you found states. Put every source URL in sources.',
   'contacts: every email, phone, LinkedIn, Instagram, Facebook and website you find, one entry each, with',
-  'source_url (the page it is on) and quote: the exact words from that page or search result that show the',
-  'value AND what ties it to this owner, such as one of their rental addresses, their mailing address, their',
-  'full name or their company name. Copy the quote word for word; the app checks it and drops anything the',
-  'quote does not show. role: owner when it is the owner or their own company; manager when a property',
+  'source_url (the page it is on), quote: the exact words from that page or search result that show the value,',
+  'and tie_quote: the exact words from the SAME source that tie it to this owner, such as one of their rental',
+  'addresses, their mailing address, their full name or their company name (null when quote already shows it).',
+  'Copy both word for word; the app opens the page, checks them, and drops anything they do not show. role: owner when it is the owner or their own company; manager when a property',
   'management company handles their rentals; agent for a leasing or listing agent or brokerage.',
   'Never guess or construct an email address or profile link.',
+  'Every contact field matters: email, phone, LinkedIn, Instagram, Facebook and website. Do not stop after one.',
   'Try very hard: run many searches before giving up on any field. Search the owner name and the LLC name',
   'separately, with and without "Philadelphia", "landlord", "property management", "rentals" and the mailing address.',
   'Check PA Department of State business filings and OpenCorporates for the LLC principal and registered address,',
@@ -323,6 +327,10 @@ export interface ClaudeResearchDeps {
   pageFetcher?: PageFetcher
 }
 
+function fieldRank(field: ContactField): number {
+  return field === 'phone' || field === 'email' ? 0 : 1
+}
+
 /** Source pages opened per lead to confirm what the research quoted. */
 export const MAX_PAGE_CHECKS = 12
 
@@ -335,10 +343,13 @@ export async function verifyContacts(
   facts: OwnerFacts,
   fetchPage: PageFetcher,
 ): Promise<CheckedContact[]> {
-  const first = checkContacts(parsed.contacts, facts)
-  const urls = [
-    ...new Set(first.filter((c) => c.verdict !== 'rejected').map((c) => c.source_url)),
-  ].slice(0, MAX_PAGE_CHECKS)
+  // Open the source of every usable contact, phones and emails first: the page can supply the tie
+  // the quotes missed. Social profiles are login walls, so they are judged on the quotes alone.
+  const usable = parsed.contacts
+    .filter((c) => /^https?:\/\//i.test(c.source_url ?? '') && !isLoginWalled(c.source_url))
+    .filter((c) => !('problem' in normaliseContact(c.field, c.value ?? '')))
+    .sort((a, b) => fieldRank(a.field) - fieldRank(b.field))
+  const urls = [...new Set(usable.map((c) => c.source_url))].slice(0, MAX_PAGE_CHECKS)
   const pages = new Map(
     await Promise.all(urls.map(async (u) => [u, await fetchPage(u).catch(() => null)] as const)),
   )

@@ -7,7 +7,7 @@ import type { EnrichResult, LeadEnrichment } from '../../shared/types.ts'
 import { getDb, type Db } from '../db/client.ts'
 import { leads, properties, type Lead, type Property } from '../db/schema.ts'
 import { env as processEnv, type Env } from '../env.ts'
-import { logActivity } from '../lib/activity.ts'
+import { errorDetail, logActivity } from '../lib/activity.ts'
 import { getSettings } from '../lib/settings.ts'
 import { computeChannels, hasEnoughContact } from './channels.ts'
 import { mergeProviderResult } from './merge.ts'
@@ -17,6 +17,13 @@ import { capFor, creditsUsed, monthRange, recordUsage, wouldExceedCap } from './
 
 /** Statuses the orchestrator is allowed to move. Anything further along (enrolled, replied...) stays. */
 const MANAGED_STATUSES = new Set<Lead['status']>(['new', 'enriching', 'enriched'])
+
+/** Leads researched at the same time. Web research takes minutes per lead; one at a time is too slow. */
+export const ENRICH_CONCURRENCY = 4
+/** Leads failing in a row on a database error: the connection is gone, so stop the batch. */
+export const MAX_LEAD_ERRORS_IN_A_ROW = 3
+/** A lead left "enriching" this long was cut off mid-run (a restart or a crash): pick it again. */
+export const STALE_ENRICHING_MS = 30 * 60_000
 
 export interface OrchestratorDeps {
   db?: Db
@@ -36,6 +43,8 @@ interface BatchState {
   /** Providers already reported this batch, so the log gets one line, not one per lead. */
   capReached: Set<EnrichProviderId>
   notConfigured: Set<EnrichProviderId>
+  /** Credits held by calls in flight on parallel leads, so a cap is never passed. */
+  reserved: Map<EnrichProviderId, number>
 }
 
 async function makeBatch(deps: OrchestratorDeps): Promise<BatchState> {
@@ -54,6 +63,7 @@ async function makeBatch(deps: OrchestratorDeps): Promise<BatchState> {
     ordered,
     capReached: new Set(),
     notConfigured: new Set(),
+    reserved: new Map(),
   }
 }
 
@@ -79,7 +89,7 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
     .from(leads)
     .where(
       and(
-        inArray(leads.status, ['new', 'enriched', 'enrolled']),
+        inArray(leads.status, ['new', 'enriching', 'enriched', 'enrolled']),
         eq(leads.do_not_contact, false),
         inArray(leads.persona, settings.personas),
         gte(leads.icp_score, settings.min_icp_score),
@@ -87,10 +97,12 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
     )
     .orderBy(asc(leads.created_at), asc(leads.id))
     .limit(Math.min(limit * 20, 2000))
+  const staleBefore = new Date((deps.now ?? (() => new Date()))().getTime() - STALE_ENRICHING_MS)
   return rows
     .filter(
       (r) =>
         r.status === 'new' ||
+        (r.status === 'enriching' && new Date(r.updated_at) < staleBefore) ||
         (research && !hasEnoughContact(r) && !(r.enrichment ?? {}).claude_research),
     )
     .slice(0, limit)
@@ -180,12 +192,15 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
       if (batch.capReached.has(provider.id)) continue
       const range = monthRange(now, settings.send_window.tz)
       const { used } = await creditsUsed(provider.id, range, db)
-      if (wouldExceedCap(used, provider.costPerCall, cap)) {
+      const held = batch.reserved.get(provider.id) ?? 0
+      if (wouldExceedCap(used + held, provider.costPerCall, cap)) {
+        // Another lead may have reached it while this one was counting: one log line per batch.
+        if (batch.capReached.has(provider.id)) continue
         batch.capReached.add(provider.id)
         await logActivity(
           'warn',
           'enrich.cap_reached',
-          { provider: provider.id, used, cap, month: range.key },
+          { provider: provider.id, used: used + held, cap, month: range.key },
           null,
           db,
         )
@@ -194,19 +209,20 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     }
 
     attempted++
+    const hold = cap !== null ? provider.costPerCall : 0
+    batch.reserved.set(provider.id, (batch.reserved.get(provider.id) ?? 0) + hold)
     let result
     try {
       result = await provider.enrich(current, ctx)
+      ran.push(provider.id)
+      await recordUsage(provider.id, result.credits_used ?? provider.costPerCall, leadId, now, db)
     } catch (err) {
       errored++
-      await log('warn', 'enrich.provider_error', {
-        provider: provider.id,
-        error: err instanceof Error ? err.message : String(err),
-      })
+      await log('warn', 'enrich.provider_error', { provider: provider.id, ...errorDetail(err) })
       continue
+    } finally {
+      batch.reserved.set(provider.id, (batch.reserved.get(provider.id) ?? 0) - hold)
     }
-    ran.push(provider.id)
-    await recordUsage(provider.id, result.credits_used ?? provider.costPerCall, leadId, now, db)
 
     const patch = mergeProviderResult(current, result)
     for (const key of Object.keys(patch) as (keyof LeadContactFields)[]) learned.add(key)
@@ -240,7 +256,11 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
   return failed ? 'failed' : 'enriched'
 }
 
-/** Enrich these leads one after another. Returns counts. Never throws for a provider problem. */
+/**
+ * Enrich these leads, ENRICH_CONCURRENCY at a time. Returns counts. Never throws for a provider
+ * problem. When several leads in a row fail on the database (a restart closed the pool), the batch
+ * stops instead of failing every remaining lead; they stay as they were and are picked next time.
+ */
 export async function enrichLeads(
   ids: string[],
   deps: OrchestratorDeps = {},
@@ -249,20 +269,38 @@ export async function enrichLeads(
   const counts: EnrichResult = { enriched: 0, failed: 0, skipped: 0 }
   if (unique.length === 0) return counts
   const batch = await makeBatch(deps)
-  for (const id of unique) {
-    try {
-      counts[await enrichOne(id, batch)]++
-    } catch (err) {
-      // A database hiccup on one lead must not stop the rest.
-      counts.failed++
-      await logActivity(
-        'error',
-        'enrich.lead_error',
-        { error: err instanceof Error ? err.message : String(err) },
-        id,
-        batch.db,
-      )
+  const queue = [...unique]
+  let errorsInARow = 0
+  let aborted = false
+  const worker = async () => {
+    for (let id = queue.shift(); id !== undefined && !aborted; id = queue.shift()) {
+      try {
+        counts[await enrichOne(id, batch)]++
+        errorsInARow = 0
+      } catch (err) {
+        // A database hiccup on one lead must not stop the rest.
+        counts.failed++
+        errorsInARow++
+        await logActivity('error', 'enrich.lead_error', errorDetail(err), id, batch.db)
+        // Put it back so the next batch picks it (best effort: the database may be the problem).
+        await batch.db
+          .update(leads)
+          .set({ status: 'new' })
+          .where(and(eq(leads.id, id), eq(leads.status, 'enriching')))
+          .catch(() => undefined)
+        if (errorsInARow >= MAX_LEAD_ERRORS_IN_A_ROW) aborted = true
+      }
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(ENRICH_CONCURRENCY, unique.length) }, worker))
+  if (aborted) {
+    await logActivity(
+      'error',
+      'enrich.batch_aborted',
+      { reason: `${MAX_LEAD_ERRORS_IN_A_ROW} leads in a row failed`, left: queue.length },
+      null,
+      batch.db,
+    )
   }
   await logActivity('info', 'enrich.batch', { requested: unique.length, ...counts }, null, batch.db)
   return counts
