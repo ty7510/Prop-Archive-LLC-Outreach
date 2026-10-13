@@ -6,7 +6,7 @@ import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { pickEmailProvider } from './email.ts'
 import { mainSequence } from './enroll.ts'
-import { canRead, canSend } from './inboxes.ts'
+import { canRead, canSend, loginFix, loginProblem, replySyncFailures } from './inboxes.ts'
 
 /**
  * Can a lead open the links in our messages? A private Replit deployment answers every request
@@ -121,24 +121,30 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
   const envSender = pickEmailProvider(deps, settings) !== null
   const channelsOn = (['email', 'linkedin', 'mail'] as const).filter((c) => !settings.channels[c])
   const claude = await claudeKeyCheck(deps)
+  const refused = senders.find((i) => loginProblem(i) !== null)
+  const unread = replySyncFailures()[0]
 
   return [
     {
       key: 'inbox',
-      ok: senders.length > 0 || envSender,
+      ok: (senders.length > 0 || envSender) && !refused,
       required: true,
       label:
         senders.length > 0
           ? `Sending from ${inboxNames(senders)}`
           : 'A warmed inbox to send the emails from',
-      fix: 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
+      fix: refused
+        ? loginFix(refused.email)
+        : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
     },
     {
       key: 'replies',
-      ok: readers.length > 0 || deps.imap !== null,
+      ok: (readers.length > 0 || deps.imap !== null) && !unread,
       required: true,
       label: 'Replies are read, so a lead who answers gets nothing more',
-      fix: 'Fill in the IMAP server on each inbox (Gmail: imap.gmail.com, Outlook: outlook.office365.com).',
+      fix: unread
+        ? `Reading replies in ${unread.label} failed (${unread.error}). Follow-up emails wait until it works, so nobody who answered gets another email. A refused login needs a new app password under Sending inboxes; in Gmail settings, IMAP must be on.`
+        : 'Fill in the IMAP server on each inbox (Gmail: imap.gmail.com, Outlook: outlook.office365.com).',
     },
     {
       key: 'address',

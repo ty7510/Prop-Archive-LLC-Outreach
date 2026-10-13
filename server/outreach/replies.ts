@@ -15,7 +15,15 @@ import { getSettings } from '../lib/settings.ts'
 import { normaliseEmail } from '../lib/text.ts'
 import type { ImapClient, ImapMessage, Llm, OutreachDeps } from './deps.ts'
 import { sendEmail, pickEmailProvider } from './email.ts'
-import { canRead, canSend, resolveMailHost } from './inboxes.ts'
+import {
+  canRead,
+  canSend,
+  keepReplySyncProblems,
+  mailErrorText,
+  noteReplySyncFailed,
+  noteReplySyncWorked,
+  resolveMailHost,
+} from './inboxes.ts'
 import { stopLead } from './enroll.ts'
 import { addSuppression } from './suppression.ts'
 
@@ -527,6 +535,7 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
       uidScope: inbox.id,
     })
   }
+  keepReplySyncProblems(sources.map((s) => s.key))
   let received = 0
   for (const source of sources) received += await syncOneInbox(deps, settings, source)
   if (received > 0) await logActivity('info', 'sync_replies', { received }, null, deps.db)
@@ -582,14 +591,12 @@ async function syncOneInbox(
       }
     }
     await writeLastSync(db, now, source.key)
+    noteReplySyncWorked(source.key)
   } catch (err) {
-    await logActivity(
-      'error',
-      'reply_sync_failed',
-      { inbox: source.label, error: err instanceof Error ? err.message : String(err) },
-      null,
-      db,
-    )
+    const error = mailErrorText(err)
+    // Follow-up emails wait while this lasts (send.ts), so a reply never goes unseen.
+    noteReplySyncFailed(source.key, source.label, now, error)
+    await logActivity('error', 'reply_sync_failed', { inbox: source.label, error }, null, db)
   } finally {
     await client?.logout().catch(() => undefined)
   }
