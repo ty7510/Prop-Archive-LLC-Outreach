@@ -1,9 +1,10 @@
 // Settings API: GET, PUT (partial), GET /providers. Fully working. Owned by the scaffold.
 import { Router } from 'express'
-import { SendingInboxSchema } from '../../shared/settings.ts'
+import { appPasswordProblem, SendingInboxSchema, type SendingInbox } from '../../shared/settings.ts'
 import type { ProvidersResponse } from '../../shared/types.ts'
 import { getDb } from '../db/client.ts'
 import { PROVIDER_ENV_KEYS, presentProviders } from '../env.ts'
+import { logActivity } from '../lib/activity.ts'
 import { asyncHandler } from '../lib/http.ts'
 import { getSettings, updateSettings } from '../lib/settings.ts'
 import { badRequest } from '../lib/http.ts'
@@ -39,9 +40,36 @@ settingsRouter.put(
     const next = await updateSettings(patch, getDb())
     // Dry run -> Live: sequences that only ever dry-ran start over, so step 1 really goes out.
     if (!before.live_mode && next.live_mode) await restartDryRunEnrollments(outreachDeps())
+    await logInboxChanges(before.sending_inboxes, next.sending_inboxes)
     res.json(maskSettings(next))
   }),
 )
+
+/** One Activity line per inbox whose password changed: what happened, never the password itself. */
+async function logInboxChanges(
+  before: readonly SendingInbox[],
+  after: readonly SendingInbox[],
+): Promise<void> {
+  const prev = new Map(before.map((i) => [i.id, i]))
+  for (const inbox of after) {
+    const was = prev.get(inbox.id)?.smtp_pass ?? ''
+    if (was === inbox.smtp_pass) continue
+    const password = !inbox.smtp_pass ? 'cleared' : was ? 'replaced' : 'added'
+    const shape = appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
+    await logActivity(
+      shape ? 'warn' : 'info',
+      'inbox_saved',
+      {
+        inbox: inbox.email,
+        password,
+        length: inbox.smtp_pass.length,
+        ...(shape ? { problem: shape } : {}),
+      },
+      null,
+      getDb(),
+    )
+  }
+}
 
 /** Log in to one inbox (as typed in the form, or as saved when the password is masked). */
 settingsRouter.post(
@@ -53,7 +81,15 @@ settingsRouter.post(
     if (!parsed.success) {
       throw badRequest(parsed.error.issues[0]?.message ?? 'Check the inbox fields', 'VALIDATION')
     }
-    res.json(await testInbox(outreachDeps(), parsed.data))
+    const result = await testInbox(outreachDeps(), parsed.data)
+    await logActivity(
+      result.smtp.ok ? 'info' : 'warn',
+      'inbox_test',
+      { inbox: parsed.data.email, smtp: result.smtp, imap: result.imap },
+      null,
+      getDb(),
+    )
+    res.json(result)
   }),
 )
 

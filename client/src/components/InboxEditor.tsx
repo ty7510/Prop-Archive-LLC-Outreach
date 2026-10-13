@@ -1,7 +1,7 @@
 // Settings > Sending inboxes: the warmed addresses the sequence emails from, each with a Test button.
 import { useState } from 'react'
 import { CheckCircle2, Loader2, Plus, Trash2, XCircle } from 'lucide-react'
-import { SECRET_MASK, type SendingInbox } from '@shared/settings'
+import { appPasswordProblem, SECRET_MASK, type SendingInbox } from '@shared/settings'
 import type { InboxTestResult } from '@shared/types'
 import { errorMessage, testInbox } from '../api.ts'
 import { Field, Toggle } from './Field.tsx'
@@ -114,6 +114,8 @@ function InboxCard({
   // The server keeps a saved password only while the servers and login stay the same, so a change
   // here clears it and the app password has to be typed again.
   const retypePassword = inbox.smtp_pass === ''
+  // Shown as he types: a Google app password is 16 letters, so a normal password is caught here.
+  const passwordShape = appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
   function changeServer(patch: Partial<SendingInbox>) {
     onChange(inbox.smtp_pass === SECRET_MASK ? { ...patch, smtp_pass: '' } : patch)
   }
@@ -207,6 +209,7 @@ function InboxCard({
             placeholder={inbox.smtp_pass === SECRET_MASK ? 'Saved (type to replace)' : ''}
             onChange={(e) => onChange({ smtp_pass: e.target.value || SECRET_MASK })}
           />
+          {passwordShape ? <p className="mt-1 text-sm text-red-700">{passwordShape}</p> : null}
         </Field>
         <Field label="Login" hint="Usually the email address">
           <input

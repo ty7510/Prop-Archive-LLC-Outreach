@@ -92,6 +92,36 @@ export type SequenceByPersona = z.infer<typeof SequenceByPersonaSchema>
 /** What the API shows instead of a stored inbox password. Sending it back keeps the stored one. */
 export const SECRET_MASK = '••••••••'
 
+/** Google's mail servers (Gmail and Google Workspace) only take an app password. */
+export function isGoogleMailHost(host: string | null | undefined): boolean {
+  return /(^|\.)(gmail|googlemail|google)\.com$/i.test((host ?? '').trim())
+}
+
+/**
+ * The password as it should be stored. Google shows an app password as four groups of four letters
+ * ("abcd efgh ijkl mnop"); pasted with the spaces it is refused, so they go.
+ */
+export function cleanAppPassword(host: string | null | undefined, pass: string): string {
+  if (pass === SECRET_MASK) return pass
+  const trimmed = pass.trim()
+  return isGoogleMailHost(host) ? trimmed.replace(/\s+/g, '') : trimmed
+}
+
+/**
+ * Why this cannot be a Google app password (those are exactly 16 lowercase letters), or null when
+ * it has the right shape, is masked, is empty, or the host is not Google's. Never repeats the
+ * password itself: only its length and whether it is letters only.
+ */
+export function appPasswordProblem(host: string | null | undefined, pass: string): string | null {
+  if (!isGoogleMailHost(host) || !pass || pass === SECRET_MASK) return null
+  const clean = cleanAppPassword(host, pass)
+  if (/^[a-z]{16}$/.test(clean)) return null
+  const what = /^[a-z]+$/i.test(clean)
+    ? `${clean.length} letters`
+    : `${clean.length} characters with digits or symbols in it`
+  return `This is not a Google app password: those are 16 lowercase letters (shown as four groups of four) and this one is ${what}. Your normal Gmail password does not work for sending. Make one at myaccount.google.com/apppasswords (2-Step Verification must be on first) and paste it here, with or without the spaces.`
+}
+
 /**
  * One warmed inbox the sequence sends from. The app rotates across active inboxes, never past
  * each one's daily limit, and reads replies from each over IMAP with the same login.

@@ -3,6 +3,7 @@ import request from 'supertest'
 import { DEFAULT_SETTINGS, SECRET_MASK } from '../../shared/settings.ts'
 import { createApp } from '../app.ts'
 import { createTestDb } from '../db/client.ts'
+import { activityLog } from '../db/schema.ts'
 import { getSettings } from '../lib/settings.ts'
 
 async function loggedIn() {
@@ -206,5 +207,41 @@ describe('sending inboxes in the settings API', () => {
       (res.body as { key: string; ok: boolean }[]).map((i) => [i.key, i.ok]),
     )
     expect(byKey).toMatchObject({ inbox: false, address: false, live: false })
+  })
+})
+
+describe('inbox saves and tests leave a trace in Activity', () => {
+  it('logs what happened to the password, with its length, never the password itself', async () => {
+    const { agent, db } = await loggedIn()
+    const inbox = {
+      id: 'inbox-9',
+      email: 'theo@warm.com',
+      smtp_host: 'smtp.gmail.com',
+      smtp_port: 465,
+      smtp_user: 'theo@warm.com',
+      smtp_pass: 'abcd efgh ijkl mno',
+      daily_limit: 30,
+      active: true,
+    }
+    expect((await agent.put('/api/settings').send({ sending_inboxes: [inbox] })).status).toBe(200)
+    const rows = await db.select().from(activityLog)
+    const saved = rows.find((r) => r.event === 'inbox_saved')
+    expect(saved).toBeDefined()
+    expect(saved!.level).toBe('warn')
+    expect(saved!.detail).toMatchObject({
+      inbox: 'theo@warm.com',
+      password: 'added',
+      length: 15,
+      problem: expect.stringContaining('15 letters'),
+    })
+    expect(JSON.stringify(rows)).not.toContain('abcd')
+    expect((await getSettings(db)).sending_inboxes[0]!.smtp_pass).toBe('abcdefghijklmno')
+
+    // Saving the masked form again changes nothing and logs nothing more.
+    const get = await agent.get('/api/settings')
+    await agent.put('/api/settings').send({ sending_inboxes: get.body.sending_inboxes })
+    expect(
+      (await db.select().from(activityLog)).filter((r) => r.event === 'inbox_saved'),
+    ).toHaveLength(1)
   })
 })

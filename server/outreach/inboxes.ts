@@ -3,7 +3,13 @@
 import { createHash } from 'node:crypto'
 import { isIP } from 'node:net'
 import { and, eq, gte, like, or } from 'drizzle-orm'
-import { SECRET_MASK, type SendingInbox, type Settings } from '../../shared/settings.ts'
+import {
+  appPasswordProblem,
+  cleanAppPassword,
+  SECRET_MASK,
+  type SendingInbox,
+  type Settings,
+} from '../../shared/settings.ts'
 import type { InboxTestResult } from '../../shared/types.ts'
 import type { Db } from '../db/client.ts'
 import { messages } from '../db/schema.ts'
@@ -234,7 +240,12 @@ export function restoreInboxSecrets(current: readonly SendingInbox[], incoming: 
     if (typeof item !== 'object' || item === null) return item
     const inbox = item as Record<string, unknown>
     const pass = inbox.smtp_pass
-    if (pass !== SECRET_MASK && pass !== '' && pass !== undefined) return inbox
+    if (pass !== SECRET_MASK && pass !== '' && pass !== undefined) {
+      // A new password, as typed: Google app passwords lose the spaces Google shows them with.
+      return typeof pass === 'string'
+        ? { ...inbox, smtp_pass: cleanAppPassword(String(inbox.smtp_host ?? ''), pass) }
+        : inbox
+    }
     const prev = typeof inbox.id === 'string' ? stored.get(inbox.id) : undefined
     const sameServers =
       prev !== undefined &&
@@ -316,7 +327,11 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
         result.smtp = { ok: true, message: `Sending works from ${inbox.email}` }
         noteLoginWorked(inbox) // waiting emails go on the next round, no restart needed
       } catch (err) {
-        result.smtp.message = errorText(err)
+        // A refused login with a password of the wrong shape: say what the password should be.
+        const shape = isLoginRefused(err)
+          ? appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
+          : null
+        result.smtp.message = shape ?? errorText(err)
         if (isLoginRefused(err)) noteLoginRefused(inbox, deps.now(), mailErrorText(err))
       }
   }
