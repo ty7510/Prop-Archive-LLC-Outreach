@@ -2,7 +2,7 @@
 // Owned by the content builder. Spec section 13.
 // Idempotent: server/index.ts calls seed(db) on first boot and `npm run seed` runs it by hand.
 // A sequence whose name already exists is left alone, so Theo's edits in the UI survive a re-seed.
-import { and, eq, ne } from 'drizzle-orm'
+import { and, eq, inArray, ne } from 'drizzle-orm'
 import { PERSONAS, type Channel, type Persona } from '../../shared/types.ts'
 import type { PersonaSequences, SequenceByPersona } from '../../shared/settings.ts'
 import type { Db } from '../db/client.ts'
@@ -52,21 +52,21 @@ async function insertSequence(db: Db, file: SequenceFile): Promise<string> {
     created_at: now,
     updated_at: now,
   })
-  if (parsed.steps.length > 0) {
-    await db.insert(sequenceSteps).values(
-      parsed.steps.map((s) => ({
-        id: newId(),
-        sequence_id: id,
-        step_index: s.step_index,
-        delay_days: s.delay_days,
-        subject: s.channel === 'email' ? s.subject : null,
-        body: s.body,
-        channel: s.channel,
-        notes: s.notes,
-      })),
-    )
-  }
+  if (parsed.steps.length > 0) await db.insert(sequenceSteps).values(stepRows(id, file))
   return id
+}
+
+function stepRows(sequenceId: string, file: SequenceFile) {
+  return file.parsed.steps.map((s) => ({
+    id: newId(),
+    sequence_id: sequenceId,
+    step_index: s.step_index,
+    delay_days: s.delay_days,
+    subject: s.channel === 'email' ? s.subject : null,
+    body: s.body,
+    channel: s.channel,
+    notes: s.notes,
+  }))
 }
 
 /**
@@ -143,9 +143,50 @@ export async function findSequenceByName(db: Db, name: string) {
   return rows[0] ?? null
 }
 
-/** The one sequence Theo runs: email, then LinkedIn, then mail (content/sequences/main-*.md). */
-export const MAIN_SEQUENCE_NAME = 'Email, LinkedIn, then mail'
+/**
+ * The one sequence Theo runs (content/sequences/main-*.md): the app sends three emails; the
+ * LinkedIn note and the postcard are his tasks.
+ */
+export const MAIN_SEQUENCE_NAME = 'Three emails, LinkedIn and a postcard'
+/** Earlier names of the main sequence. Upgraded in place, so leads already in it keep going. */
+export const OLD_MAIN_SEQUENCE_NAMES = ['Email, LinkedIn, then mail']
 const MAIN_SETUP_KEY = '_main_sequence_setup_v1'
+const MAIN_STEPS_KEY = '_main_sequence_steps_v2'
+
+async function hasKey(db: Db, key: string): Promise<boolean> {
+  const rows = await db
+    .select({ key: settingsTable.key })
+    .from(settingsTable)
+    .where(eq(settingsTable.key, key))
+    .limit(1)
+  return rows.length > 0
+}
+
+async function markKey(db: Db, key: string): Promise<void> {
+  await db
+    .insert(settingsTable)
+    .values({ key, value: nowIso() })
+    .onConflictDoNothing({ target: settingsTable.key })
+}
+
+/**
+ * Give an older main sequence the current name, description and steps, keeping its id, so the
+ * leads already in it carry on from the step they are on (step 2 is still the LinkedIn note).
+ */
+async function upgradeInPlace(db: Db, id: string, file: SequenceFile): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(sequences)
+      .set({
+        name: file.parsed.name,
+        description: file.parsed.description,
+        updated_at: nowIso(),
+      })
+      .where(eq(sequences.id, id))
+    await tx.delete(sequenceSteps).where(eq(sequenceSteps.sequence_id, id))
+    if (file.parsed.steps.length > 0) await tx.insert(sequenceSteps).values(stepRows(id, file))
+  })
+}
 
 /**
  * Make sure the main sequence exists, and once per database switch everything over to it: the
@@ -155,7 +196,7 @@ const MAIN_SETUP_KEY = '_main_sequence_setup_v1'
  */
 export async function ensureMainSequence(
   db: Db,
-): Promise<{ id: string; created: boolean; switched: boolean }> {
+): Promise<{ id: string; created: boolean; switched: boolean; upgraded: boolean }> {
   const existing = await db
     .select({ id: sequences.id })
     .from(sequences)
@@ -163,22 +204,34 @@ export async function ensureMainSequence(
     .limit(1)
   let id = existing[0]?.id
   let created = false
-  if (!id) {
+  let upgraded = false
+  const mainFile = async () => {
     const file = (await loadSequenceFiles()).find((f) => f.parsed.name === MAIN_SEQUENCE_NAME)
     if (!file) throw new Error(`content/sequences has no "${MAIN_SEQUENCE_NAME}" file`)
-    id = await insertSequence(db, file)
+    return file
+  }
+  if (!id && !(await hasKey(db, MAIN_STEPS_KEY))) {
+    const old = await db
+      .select({ id: sequences.id })
+      .from(sequences)
+      .where(inArray(sequences.name, OLD_MAIN_SEQUENCE_NAMES))
+      .limit(1)
+    if (old[0]) {
+      id = old[0].id
+      await upgradeInPlace(db, id, await mainFile())
+      upgraded = true
+    }
+  }
+  if (!id) {
+    id = await insertSequence(db, await mainFile())
     created = true
   }
+  await markKey(db, MAIN_STEPS_KEY)
 
-  const done = await db
-    .select({ key: settingsTable.key })
-    .from(settingsTable)
-    .where(eq(settingsTable.key, MAIN_SETUP_KEY))
-    .limit(1)
-  if (done.length > 0) {
+  if (await hasKey(db, MAIN_SETUP_KEY)) {
     // Deleted and re-added: point the autopilot at the new copy.
     if (created) await updateSettings({ main_sequence_id: id }, db)
-    return { id, created, switched: false }
+    return { id, created, switched: false, upgraded }
   }
 
   const now = nowIso()
@@ -194,9 +247,6 @@ export async function ensureMainSequence(
     },
     db,
   )
-  await db
-    .insert(settingsTable)
-    .values({ key: MAIN_SETUP_KEY, value: now })
-    .onConflictDoNothing({ target: settingsTable.key })
-  return { id, created, switched: true }
+  await markKey(db, MAIN_SETUP_KEY)
+  return { id, created, switched: true, upgraded }
 }

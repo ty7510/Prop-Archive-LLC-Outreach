@@ -184,7 +184,7 @@ function WaitingForYou() {
         empty={
           <Empty
             title="Nothing waiting for you"
-            hint="LinkedIn notes, Instagram messages, calls and printed letters show up here when a step is due."
+            hint="LinkedIn notes, Instagram messages, calls and postcards to print show up here when a step is due."
           />
         }
       >
@@ -213,7 +213,7 @@ function QueueGroup({ channel, items }: { channel: Channel; items: QueueItem[] }
             rel="noreferrer"
             className="btn-secondary ml-auto"
           >
-            <Printer className="h-4 w-4" aria-hidden /> Print all
+            <Printer className="h-4 w-4" aria-hidden /> Print all postcards
           </a>
         ) : null}
       </h3>
@@ -280,7 +280,7 @@ function QueueCard({ item }: { item: QueueItem }) {
     if (item.channel === 'linkedin' || item.channel === 'instagram')
       return { href: ensureHttp(item.to_address), label: 'Open profile', icon: ExternalLink }
     if (item.channel === 'mail')
-      return { href: printQueueUrl([item.message_id]), label: 'Print letter', icon: Printer }
+      return { href: printQueueUrl([item.message_id]), label: 'Print postcard', icon: Printer }
     return null
   }, [item])
 

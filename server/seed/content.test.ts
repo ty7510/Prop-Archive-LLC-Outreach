@@ -338,25 +338,38 @@ describe('persona voice', () => {
 })
 
 describe('the multi-channel sequence', () => {
-  it('is one sequence: an email, a LinkedIn note, then a postcard', () => {
+  it('is one sequence: email, your LinkedIn note, email, your postcard, a last email', () => {
     expect(multi).toHaveLength(1)
     const f = multi[0]!
-    expect(f.parsed.steps.map((s) => s.channel)).toEqual(['email', 'linkedin', 'mail'])
-    expect(f.parsed.steps.map((s) => s.delay_days)).toEqual([0, 3, 5])
+    expect(f.parsed.steps.map((s) => s.channel)).toEqual([
+      'email',
+      'linkedin',
+      'email',
+      'mail',
+      'email',
+    ])
+    // Emails on day 0, 4 and 10: never two in a few days.
+    expect(f.parsed.steps.map((s) => s.delay_days)).toEqual([0, 2, 2, 3, 3])
     expect(f.parsed.persona).toBe('any')
   })
 
   it('keeps each step to the rules of its channel', () => {
-    const [email, note, card] = multi[0]!.parsed.steps
-    // Email: short subject, under 120 words, the pain before the product, one ask.
-    expect((email?.subject ?? '').length).toBeGreaterThan(0)
-    expect((email?.subject ?? '').length).toBeLessThan(45)
-    expect(wordCount(email?.body ?? '')).toBeLessThan(120)
-    const body = email?.body ?? ''
+    const steps = multi[0]!.parsed.steps
+    const emails = steps.filter((s) => s.channel === 'email')
+    for (const email of emails) {
+      // Email: short subject, under 120 words, the pain before the product, one ask.
+      expect((email.subject ?? '').length).toBeGreaterThan(0)
+      expect((email.subject ?? '').length).toBeLessThan(45)
+      expect(wordCount(email.body)).toBeLessThan(120)
+      expect(findVariables(email.body)).toContain('demo_link')
+      expect(email.body).toMatch(/proparchive\.app/)
+    }
+    const body = emails[0]!.body
     expect(body.indexOf('Prop Archive')).toBeGreaterThan(
       body.indexOf('.', body.indexOf('{{ai_opener}}')),
     )
-    expect(findVariables(body)).toContain('demo_link')
+    const note = steps.find((s) => s.channel === 'linkedin')
+    const card = steps.find((s) => s.channel === 'mail')
     // LinkedIn: a connection note under 300 characters, about them first, no links.
     const n = note?.body ?? ''
     expect(n.length).toBeLessThan(300)

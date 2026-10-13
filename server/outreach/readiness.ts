@@ -156,7 +156,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       ok: main !== null,
       required: true,
       label: 'The sequence is on and new leads go into it',
-      fix: 'Turn on "Email, LinkedIn, then mail" on the Sequences page.',
+      fix: 'Turn on "Three emails, LinkedIn and a postcard" on the Sequences page.',
     },
     {
       key: 'channels',

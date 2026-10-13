@@ -273,7 +273,8 @@ describe('queue routes', () => {
     expect(print.text).toContain('Dear Lead')
     expect(print.text).toContain('Pat Owner')
     expect(print.text).toContain(lead.mailing_street)
-    expect(print.text).toContain('1 letter')
+    expect(print.text).toContain('1 postcard')
+    expect(print.text).toContain('class="card address"')
     expect(print.text).not.toContain('Connect Lead') // linkedin item is not a letter
     expect((await agent.get('/api/queue/print')).text).toContain('Nothing to print')
   })

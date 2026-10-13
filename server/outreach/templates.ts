@@ -79,10 +79,12 @@ export function plainLinks(settings: Pick<Settings, 'site_url' | 'demo_url' | 'b
   beta_link: string
   site_link: string
 } {
+  // Read off paper or out loud: "proparchive.app/demo", without the https://.
+  const bare = (url: string) => url.replace(/^https?:\/\//i, '').replace(/\/$/, '')
   return {
-    demo_link: settings.demo_url,
-    beta_link: settings.beta_url || settings.site_url,
-    site_link: settings.site_url,
+    demo_link: bare(settings.demo_url),
+    beta_link: bare(settings.beta_url || settings.site_url),
+    site_link: bare(settings.site_url),
   }
 }
 

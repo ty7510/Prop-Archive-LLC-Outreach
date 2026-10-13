@@ -93,12 +93,26 @@ async function stepsFor(deps: OutreachDeps, sequenceId: string): Promise<Sequenc
     .orderBy(asc(sequenceSteps.step_index))
 }
 
-/** True while an earlier step of this enrollment still sits in Theo's queue. */
-async function hasItemWaiting(deps: OutreachDeps, enrollmentId: string): Promise<boolean> {
+/**
+ * True while an earlier step of this enrollment on the same channel still sits in Theo's queue
+ * (a LinkedIn message waits for his connection note). His tasks never hold up another channel:
+ * the emails go out on time whether or not the LinkedIn note or the postcard is done yet.
+ */
+async function hasItemWaiting(
+  deps: OutreachDeps,
+  enrollmentId: string,
+  channel: Channel,
+): Promise<boolean> {
   const rows = await deps.db
     .select({ id: messages.id })
     .from(messages)
-    .where(and(eq(messages.enrollment_id, enrollmentId), eq(messages.status, 'ready_for_human')))
+    .where(
+      and(
+        eq(messages.enrollment_id, enrollmentId),
+        eq(messages.status, 'ready_for_human'),
+        eq(messages.channel, channel),
+      ),
+    )
     .limit(1)
   return rows.length > 0
 }
@@ -337,7 +351,6 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
         result.skipped++
         continue
       }
-      if (await hasItemWaiting(deps, row.enrollment.id)) continue // Theo has not done the last one
       let steps = stepsCache.get(row.sequence.id)
       if (!steps) {
         steps = await stepsFor(deps, row.sequence.id)
@@ -354,6 +367,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
       }
       // Each step carries its own channel, so one sequence can email, then LinkedIn, then mail.
       channel = step.channel
+      if (await hasItemWaiting(deps, row.enrollment.id, channel)) continue // his last one is open
       if (!settings.channels[channel]) {
         result.skipped++ // the channel is switched off: the step waits until it is back on
         continue
