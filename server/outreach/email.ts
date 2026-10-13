@@ -1,7 +1,8 @@
 // Email sending: SMTP (nodemailer) or Resend (HTTP). Builds the CAN-SPAM headers. (spec section 10)
 import type { SendingInbox, Settings } from '../../shared/settings.ts'
 import type { OutgoingMail, OutreachDeps } from './deps.ts'
-import { inboxProvider, resolveMailHost } from './inboxes.ts'
+import { compileMail } from './gmail.ts'
+import { googleSignedIn, inboxProvider, resolveMailHost } from './inboxes.ts'
 
 export type EmailProvider = 'smtp' | 'resend'
 
@@ -87,6 +88,16 @@ export async function sendEmail(
   input: EmailInput,
   inbox?: SendingInbox | null,
 ): Promise<EmailSendResult> {
+  if (inbox && googleSignedIn(inbox)) {
+    // Sign in with Google: the same message, sent through Gmail's API as the signed-in account.
+    const mail = buildMail(settings, input, inbox)
+    const sent = await deps.gmail.send(await compileMail(mail))
+    // The Message-ID it really went out with is what replies quote, so that is what we keep.
+    return {
+      provider: inboxProvider(inbox),
+      providerMessageId: sent.messageId ?? mail.messageId ?? null,
+    }
+  }
   if (inbox) {
     const host = await resolveMailHost(deps, inbox.smtp_host)
     if (!host.ok) throw new Error(`Inbox ${inbox.email}: ${host.problem}`)

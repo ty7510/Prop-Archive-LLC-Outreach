@@ -1,12 +1,21 @@
 // "Is the sequence ready to run?" One line per thing Theo has to set, each with the fix.
 // Backs GET /api/settings/readiness and the checklist on the Settings and Sequences pages.
-import { appPasswordProblem, type SendingInbox } from '../../shared/settings.ts'
+import { appPasswordProblem, isGoogleMailHost, type SendingInbox } from '../../shared/settings.ts'
 import type { ReadinessItem } from '../../shared/types.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { pickEmailProvider } from './email.ts'
 import { mainSequence } from './enroll.ts'
-import { canRead, canSend, loginFix, loginProblem, replySyncFailures } from './inboxes.ts'
+import {
+  canRead,
+  canSend,
+  googleSignedIn,
+  googleSignInFix,
+  loginFix,
+  loginProblem,
+  refreshGoogleAccount,
+  replySyncFailures,
+} from './inboxes.ts'
 
 /**
  * Can a lead open the links in our messages? A private Replit deployment answers every request
@@ -114,6 +123,12 @@ export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean;
 
 export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessItem[]> {
   const settings = await getSettings(deps.db)
+  const gmailInboxes = settings.sending_inboxes.filter(
+    (i) => i.active && isGoogleMailHost(i.smtp_host),
+  )
+  const google = gmailInboxes.length > 0 ? await refreshGoogleAccount(deps) : null
+  // A Gmail inbox that is not signed in with Google yet: Google sign-in is the fix to offer.
+  const gmailNotSignedIn = gmailInboxes.find((i) => !googleSignedIn(i))
   const senders = settings.sending_inboxes.filter(canSend)
   const readers = settings.sending_inboxes.filter(canRead)
   const main = await mainSequence(deps.db, settings)
@@ -134,8 +149,12 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
           ? `Sending from ${inboxNames(senders)}`
           : 'A warmed inbox to send the emails from',
       fix: refused
-        ? (appPasswordProblem(refused.smtp_host, refused.smtp_pass) ?? loginFix(refused.email))
-        : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
+        ? isGoogleMailHost(refused.smtp_host)
+          ? loginFix(refused)
+          : (appPasswordProblem(refused.smtp_host, refused.smtp_pass) ?? loginFix(refused))
+        : gmailNotSignedIn && senders.length === 0
+          ? googleSignInFix(gmailNotSignedIn.email, google ?? undefined)
+          : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
     },
     {
       key: 'replies',
@@ -143,7 +162,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       required: true,
       label: 'Replies are read, so a lead who answers gets nothing more',
       fix: unread
-        ? `Reading replies in ${unread.label} failed (${unread.error}). Follow-up emails wait until it works, so nobody who answered gets another email. A refused login needs a new app password under Sending inboxes; in Gmail settings, IMAP must be on.`
+        ? `Reading replies in ${unread.label} failed (${unread.error}). Follow-up emails wait until it works, so nobody who answered gets another email. ${isGoogleMailHost(settings.sending_inboxes.find((i) => i.email === unread.label)?.smtp_host ?? '') ? ` ${loginFix({ email: unread.label, smtp_host: 'smtp.gmail.com' })}` : ' A refused login needs a new app password under Sending inboxes.'}`
         : 'Fill in the IMAP server on each inbox (Gmail: imap.gmail.com, Outlook: outlook.office365.com).',
     },
     {
