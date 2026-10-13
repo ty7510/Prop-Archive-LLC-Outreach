@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import type { SendingInbox } from '../../shared/settings.ts'
-import { enrollments, messages, sequences } from '../db/schema.ts'
+import { enrollments, messages, sequenceSteps, sequences } from '../db/schema.ts'
 import { getSettings } from '../lib/settings.ts'
 import { seed, ensureMainSequence, MAIN_SEQUENCE_NAME } from '../seed/index.ts'
 import type { OutgoingMail } from './deps.ts'
@@ -89,16 +89,31 @@ describe('a sequence that changes channel step by step', () => {
     const task = (await db.select().from(messages)).find((m) => m.channel === 'linkedin')
     expect(task).toMatchObject({ status: 'ready_for_human', to_address: lead.linkedin_url })
 
-    // The postcard waits until Theo has done the LinkedIn task.
+    // The postcard does not wait for the LinkedIn task: his tasks never hold up another channel.
     at.now = new Date('2026-10-23T16:00:00.000Z')
-    expect(await sendDue(deps)).toMatchObject({ queued: 0 })
-    await actOnQueueItem(deps, task!.id, 'done')
-    at.now = new Date('2026-10-30T16:00:00.000Z')
     expect(await sendDue(deps)).toMatchObject({ queued: 1 })
     const card = (await db.select().from(messages)).find((m) => m.channel === 'mail')
     expect(card).toMatchObject({ status: 'ready_for_human' })
     expect(card!.to_address).toContain('Philadelphia')
     expect(sent).toHaveLength(1) // only the email went through SMTP
+  })
+
+  it('a LinkedIn message still waits for the open connection note before it', async () => {
+    const at = { now: TUESDAY_10AM }
+    const { db, deps } = await inboxSetup(at)
+    await setSettings(db, { channels: { email: true, linkedin: true, mail: true } })
+    const lead = await insertLead(db)
+    const { sequence } = await insertSequence(db, { name: 'Two notes' }, [
+      { delay_days: 0, channel: 'linkedin' as const, body: 'Hi {{first_name}}, note.' },
+      { delay_days: 1, channel: 'linkedin' as const, body: 'Thanks for connecting.' },
+    ])
+    await enrollLead(deps, lead.id, sequence.id)
+    expect(await sendDue(deps)).toMatchObject({ queued: 1 })
+    at.now = new Date('2026-10-16T16:00:00.000Z')
+    expect(await sendDue(deps)).toMatchObject({ queued: 0 })
+    const note = (await db.select().from(messages))[0]!
+    await actOnQueueItem(deps, note.id, 'done')
+    expect(await sendDue(deps)).toMatchObject({ queued: 1 })
   })
 
   it('a lead with no email skips the email step and gets the LinkedIn task right away', async () => {
@@ -195,6 +210,35 @@ describe('the main sequence', () => {
     expect((await ensureMainSequence(db)).switched).toBe(false)
     const [still] = await db.select().from(sequences).where(eq(sequences.id, other.id))
     expect(still!.active).toBe(true)
+  })
+
+  it('upgrades the old main sequence in place: same id, new steps, leads keep their step', async () => {
+    const { db, deps } = await setup()
+    const { sequence: old } = await insertSequence(
+      db,
+      { name: 'Email, LinkedIn, then mail' },
+      MIXED_STEPS,
+    )
+    const lead = await insertLead(db)
+    await enrollLead(deps, lead.id, old.id)
+    await db.update(enrollments).set({ current_step: 1 })
+    const main = await ensureMainSequence(db)
+    expect(main).toMatchObject({ id: old.id, upgraded: true, created: false })
+    const [row] = await db.select().from(sequences).where(eq(sequences.id, old.id))
+    expect(row!.name).toBe(MAIN_SEQUENCE_NAME)
+    const steps = await db.select().from(sequenceSteps).where(eq(sequenceSteps.sequence_id, old.id))
+    expect(steps.sort((a, b) => a.step_index - b.step_index).map((s) => s.channel)).toEqual([
+      'email',
+      'linkedin',
+      'email',
+      'mail',
+      'email',
+    ])
+    const [enr] = await db.select().from(enrollments)
+    expect(enr).toMatchObject({ sequence_id: old.id, current_step: 1, status: 'active' })
+    // Only once: a second boot changes nothing.
+    expect((await ensureMainSequence(db)).upgraded).toBe(false)
+    expect(await db.select().from(sequences)).toHaveLength(1)
   })
 
   it('puts new leads into the main sequence, also leads with no email', async () => {

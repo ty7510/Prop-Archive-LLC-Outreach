@@ -42,7 +42,8 @@ async function main(): Promise<void> {
   await seedOnFirstBoot()
   try {
     const main = await ensureMainSequence(db)
-    if (main.created || main.switched) await logActivity('info', 'main_sequence', main)
+    if (main.created || main.switched || main.upgraded)
+      await logActivity('info', 'main_sequence', main)
   } catch (err) {
     // Never block boot; the old per-channel sequences keep working without it.
     console.warn('[boot] main sequence setup failed:', err instanceof Error ? err.message : err)

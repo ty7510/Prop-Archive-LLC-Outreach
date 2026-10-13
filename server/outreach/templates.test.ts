@@ -72,9 +72,9 @@ describe('template vars', () => {
     const lead = sampleLead()
     for (const channel of ['mail', 'call'] as const) {
       const vars = buildVars(lead, settings, { ...ctx, channel })
-      expect(vars.demo_link).toBe('https://proparchive.app/demo')
-      expect(vars.beta_link).toBe('https://proparchive.app/?beta=1')
-      expect(vars.site_link).toBe('https://proparchive.app')
+      expect(vars.demo_link).toBe('proparchive.app/demo')
+      expect(vars.beta_link).toBe('proparchive.app/?beta=1')
+      expect(vars.site_link).toBe('proparchive.app')
     }
     expect(buildVars(lead, settings, { ...ctx, channel: 'linkedin' }).demo_link).toContain('/r/')
   })

@@ -27,7 +27,7 @@ describe('seed', () => {
     expect(result.leads).toBe(0)
     expect(result.skipped).toBe(false)
     // 9 email x 3 + 9 mail x 1 + 9 linkedin x 2 + 9 call x 1
-    expect(await counts()).toEqual({ sequences: 37, steps: 66 })
+    expect(await counts()).toEqual({ sequences: 37, steps: 68 })
 
     const rows = await db.select().from(sequences)
     expect(rows.every((r) => r.active)).toBe(true)
@@ -77,7 +77,7 @@ describe('seed', () => {
     expect(again.sequences_skipped).toBe(37)
     expect(again.settings_filled).toEqual([])
     expect(again.skipped).toBe(true)
-    expect(await counts()).toEqual({ sequences: 37, steps: 66 })
+    expect(await counts()).toEqual({ sequences: 37, steps: 68 })
     expect((await loadSettings(db)).sequence_by_persona).toEqual(before.sequence_by_persona)
   })
 
