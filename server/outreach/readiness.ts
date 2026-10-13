@@ -1,6 +1,6 @@
 // "Is the sequence ready to run?" One line per thing Theo has to set, each with the fix.
 // Backs GET /api/settings/readiness and the checklist on the Settings and Sequences pages.
-import type { SendingInbox } from '../../shared/settings.ts'
+import { appPasswordProblem, type SendingInbox } from '../../shared/settings.ts'
 import type { ReadinessItem } from '../../shared/types.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
@@ -134,7 +134,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
           ? `Sending from ${inboxNames(senders)}`
           : 'A warmed inbox to send the emails from',
       fix: refused
-        ? loginFix(refused.email)
+        ? (appPasswordProblem(refused.smtp_host, refused.smtp_pass) ?? loginFix(refused.email))
         : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
     },
     {

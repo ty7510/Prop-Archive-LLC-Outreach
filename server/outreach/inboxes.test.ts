@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_SETTINGS, SECRET_MASK, type SendingInbox } from '../../shared/settings.ts'
+import {
+  appPasswordProblem,
+  cleanAppPassword,
+  DEFAULT_SETTINGS,
+  SECRET_MASK,
+  type SendingInbox,
+} from '../../shared/settings.ts'
 import { SendingInboxSchema } from '../../shared/settings.ts'
 import { testDeps } from './deps.ts'
 import {
@@ -8,8 +14,10 @@ import {
   ipv6Groups,
   maskSettings,
   pickInbox,
+  resetLoginProblems,
   resolveMailHost,
   restoreInboxSecrets,
+  testInbox,
 } from './inboxes.ts'
 
 function inbox(email: string, patch: Partial<SendingInbox> = {}): SendingInbox {
@@ -280,5 +288,62 @@ describe('the Claude key check names the right secret and retries passing troubl
     await claudeKeyCheck(deps)
     expect(f.calls()).toBe(2)
     resetClaudeCheck()
+  })
+})
+
+describe('Google app passwords', () => {
+  it('knows the shape: 16 lowercase letters, with or without the spaces Google shows', () => {
+    expect(appPasswordProblem('smtp.gmail.com', 'abcdefghijklmnop')).toBeNull()
+    expect(appPasswordProblem('smtp.gmail.com', 'abcd efgh ijkl mnop')).toBeNull()
+    expect(cleanAppPassword('smtp.gmail.com', ' abcd efgh ijkl mnop ')).toBe('abcdefghijklmnop')
+    expect(cleanAppPassword('smtp.office365.com', ' pass word ')).toBe('pass word')
+    expect(appPasswordProblem('smtp.gmail.com', SECRET_MASK)).toBeNull()
+    expect(appPasswordProblem('smtp.gmail.com', '')).toBeNull()
+    expect(appPasswordProblem('smtp.office365.com', 'MyNormalPassw0rd!')).toBeNull()
+  })
+
+  it('names the problem by length only, never the password', () => {
+    const fifteen = appPasswordProblem('smtp.gmail.com', 'abcdefghijklmno')
+    expect(fifteen).toContain('15 letters')
+    expect(fifteen).toContain('myaccount.google.com/apppasswords')
+    expect(fifteen).not.toContain('abcdefghijklmno')
+    const normal = appPasswordProblem('smtp.gmail.com', 'MyNormalPassw0rd!')
+    expect(normal).toContain('17 characters with digits or symbols')
+    expect(normal).not.toContain('MyNormalPassw0rd')
+  })
+
+  it('a new password is stored without the spaces for a Google host', () => {
+    const [restored] = restoreInboxSecrets(
+      [],
+      [{ ...inbox('a@x.com'), smtp_pass: 'abcd efgh ijkl mnop' }],
+    ) as SendingInbox[]
+    expect(restored!.smtp_pass).toBe('abcdefghijklmnop')
+  })
+
+  it('Test says what the password should be when Gmail refuses one of the wrong shape', async () => {
+    const refused = Object.assign(
+      new Error('Invalid login: 535-5.7.8 Username and Password not accepted'),
+      {
+        code: 'EAUTH',
+        responseCode: 535,
+      },
+    )
+    const deps = {
+      ...testDeps(null as never),
+      smtpForInbox: () => ({
+        sendMail: async () => ({ messageId: 'x' }),
+        verify: async () => {
+          throw refused
+        },
+      }),
+    } as ReturnType<typeof testDeps>
+    const result = await testInbox(deps, inbox('a@gmail.com', { smtp_pass: 'abcdefghijklmno' }))
+    expect(result.smtp.ok).toBe(false)
+    expect(result.smtp.message).toContain('not a Google app password')
+    expect(result.smtp.message).toContain('15 letters')
+    // A password of the right shape that is still refused gets the plain refusal.
+    resetLoginProblems()
+    const right = await testInbox(deps, inbox('a@gmail.com', { smtp_pass: 'abcdefghijklmnop' }))
+    expect(right.smtp.message).toMatch(/^Login refused/)
   })
 })
