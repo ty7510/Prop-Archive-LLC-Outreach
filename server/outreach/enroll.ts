@@ -26,6 +26,7 @@ import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import { addDays } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
+import { personAlreadyEnrolled, personKeys } from './recipients.ts'
 import { isSuppressed } from './suppression.ts'
 
 /** Lead statuses we never contact again until Theo changes them by hand. */
@@ -353,6 +354,8 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
   const main = await mainSequence(db, settings)
 
   let enrolled = 0
+  let samePerson = 0
+  const enrolledKeys = new Set<string>() // the people put in during this round
   for (const lead of candidates) {
     if (lead.icp_score < settings.min_icp_score) continue
     if (lead.persona === 'unknown') continue
@@ -360,12 +363,22 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
     // Research finds the email and the profiles. Until it has looked, the lead waits: put in now,
     // the email steps would be skipped for good and the lead would only ever get a postcard.
     if (awaitsResearch(lead, settings, deps.env)) continue
+    // One person, several LLCs: the first lead row goes in and the others never do (never spam).
+    const keys = personKeys(lead)
+    if (keys.some((k) => enrolledKeys.has(k)) || (await personAlreadyEnrolled(db, lead))) {
+      samePerson++
+      continue
+    }
+    const putIn = () => {
+      enrolled++
+      for (const k of keys) enrolledKeys.add(k)
+    }
     if (main) {
       // One sequence for everyone: email, then LinkedIn, then mail. Steps a lead cannot get are
       // skipped when they come due (send.ts), so anyone reachable on one switched-on channel goes in.
       if (!main.channels.some((c) => settings.channels[c] && lead.channels[c])) continue
       try {
-        if (await enrollLead(deps, lead.id, main.id, { startAt: now, quiet: true })) enrolled++
+        if (await enrollLead(deps, lead.id, main.id, { startAt: now, quiet: true })) putIn()
       } catch (err) {
         await logActivity(
           'warn',
@@ -395,9 +408,22 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
         )
       }
     }
-    if (count > 0) enrolled++
+    if (count > 0) putIn()
   }
   if (enrolled > 0) await logActivity('info', 'enroll', { enrolled }, null, db)
+  if (samePerson > 0) {
+    await logActivity(
+      'info',
+      'enroll_skipped_same_person',
+      {
+        count: samePerson,
+        reason:
+          'another lead row of the same person (same email or mailing address) is already in a sequence',
+      },
+      null,
+      db,
+    )
+  }
   return { enrolled }
 }
 

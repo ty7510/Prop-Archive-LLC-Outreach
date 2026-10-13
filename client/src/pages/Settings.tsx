@@ -341,6 +341,26 @@ function SettingsForm({
               onChange={(e) => set('max_new_leads_per_day', Number(e.target.value))}
             />
           </Field>
+          <Field label="Days between emails" hint="To one person, all their LLCs together">
+            <input
+              type="number"
+              min={0}
+              max={60}
+              className="input"
+              value={draft.min_days_between_emails}
+              onChange={(e) => set('min_days_between_emails', Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Days between postcards" hint="One per mailing address">
+            <input
+              type="number"
+              min={0}
+              max={365}
+              className="input"
+              value={draft.days_between_postcards}
+              onChange={(e) => set('days_between_postcards', Number(e.target.value))}
+            />
+          </Field>
         </div>
         <div>
           <span className="mb-1 block text-sm font-medium text-stone-700">Personas</span>

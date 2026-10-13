@@ -202,6 +202,10 @@ export const SettingsSchema = z.object({
     end: '17:00',
   }),
   max_new_leads_per_day: z.number().int().min(0).default(50),
+  /** Never spam: the least days between two emails to one person, all their lead rows together. */
+  min_days_between_emails: z.number().int().min(0).max(60).default(3),
+  /** Never spam: one postcard per mailing address in this many days. */
+  days_between_postcards: z.number().int().min(0).max(365).default(60),
 
   enrichment: EnrichmentSettingsSchema.default({
     providers: ['li_license', 'claude_research', 'hunter', 'apollo', 'pdl'],
