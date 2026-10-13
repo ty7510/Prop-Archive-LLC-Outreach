@@ -1,7 +1,7 @@
 // Settings API: GET, PUT (partial), GET /providers. Fully working. Owned by the scaffold.
 import { Router } from 'express'
 import { appPasswordProblem, SendingInboxSchema, type SendingInbox } from '../../shared/settings.ts'
-import type { ProvidersResponse } from '../../shared/types.ts'
+import type { GoogleMailStatus, ProvidersResponse } from '../../shared/types.ts'
 import { getDb } from '../db/client.ts'
 import { PROVIDER_ENV_KEYS, presentProviders } from '../env.ts'
 import { logActivity } from '../lib/activity.ts'
@@ -9,7 +9,13 @@ import { asyncHandler } from '../lib/http.ts'
 import { getSettings, updateSettings } from '../lib/settings.ts'
 import { badRequest } from '../lib/http.ts'
 import { restartDryRunEnrollments } from '../outreach/enroll.ts'
-import { maskSettings, restoreInboxSecrets, testInbox } from '../outreach/inboxes.ts'
+import {
+  googleSignInFix,
+  maskSettings,
+  refreshGoogleAccount,
+  restoreInboxSecrets,
+  testInbox,
+} from '../outreach/inboxes.ts'
 import { outreachDeps } from '../outreach/index.ts'
 import { sequenceReadiness } from '../outreach/readiness.ts'
 
@@ -90,6 +96,25 @@ settingsRouter.post(
       getDb(),
     )
     res.json(result)
+  }),
+)
+
+/** Which Google account Sign in with Google (Replit's Gmail connector) is signed in as, if any. */
+settingsRouter.get(
+  '/google-mail',
+  asyncHandler(async (req, res) => {
+    const acct = await refreshGoogleAccount(outreachDeps(), { fresh: req.query.fresh === '1' })
+    const body: GoogleMailStatus = acct.ok
+      ? { state: 'connected', email: acct.email, detail: `Signed in with Google as ${acct.email}` }
+      : {
+          state: acct.reason,
+          email: null,
+          detail:
+            acct.reason === 'not_connected'
+              ? googleSignInFix('your inbox address', acct)
+              : acct.detail,
+        }
+    res.json(body)
   }),
 )
 

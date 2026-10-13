@@ -9,6 +9,7 @@ import nodemailer from 'nodemailer'
 import type { z } from 'zod'
 import { getDb, type Db } from '../db/client.ts'
 import { env, type Env } from '../env.ts'
+import { createGmailApi, noGmail, type GmailApi } from './gmail.ts'
 
 /** Spec section 2: the one model every Claude call uses. */
 export const CLAUDE_MODEL = 'claude-opus-5-5'
@@ -57,6 +58,8 @@ export interface ImapMessage {
   uid: number
   envelope?: ImapEnvelope | undefined
   source?: Buffer | undefined
+  /** Set when the message was read through Gmail's API: its stable Gmail id. */
+  gmailId?: string | undefined
 }
 
 /** What we need from an imapflow client. */
@@ -101,6 +104,8 @@ export interface OutreachDeps {
   imapForInbox: (inbox: SendingInbox, address: string) => ImapClient
   /** Every address a host name resolves to, so inbox servers can be checked before we connect. */
   lookupHost: (host: string) => Promise<string[]>
+  /** Gmail through Sign in with Google (Replit's Gmail connector). */
+  gmail: GmailApi
 }
 
 /** Where links in emails point. PUBLIC_URL wins, then Replit's domain, then localhost. */
@@ -210,7 +215,18 @@ export function defaultDeps(db: Db = getDb(), e: Env = env): OutreachDeps {
     smtpForInbox: inboxMailer,
     imapForInbox: inboxImap,
     lookupHost: async (host) => (await lookup(host, { all: true })).map((a) => a.address),
+    gmail: productionGmail(),
   }
+}
+
+// One Gmail client for the process, so its token and account answer are shared by every caller.
+let gmailClient: GmailApi | null = null
+function productionGmail(): GmailApi {
+  gmailClient ??= createGmailApi({
+    fetch: (input, init) => globalThis.fetch(input, init),
+    env: process.env,
+  })
+  return gmailClient
 }
 
 /** Build a deps bag for tests: in-memory db, fixed clock, no providers unless given. */
@@ -235,6 +251,7 @@ export function testDeps(db: Db, overrides: Partial<OutreachDeps> = {}): Outreac
     },
     // A public address, so inbox servers in tests pass the private-network check without DNS.
     lookupHost: async () => ['142.250.1.108'],
+    gmail: noGmail,
   }
   return { ...base, ...overrides }
 }

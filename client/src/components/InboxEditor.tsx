@@ -1,9 +1,10 @@
 // Settings > Sending inboxes: the warmed addresses the sequence emails from, each with a Test button.
-import { useState } from 'react'
-import { CheckCircle2, Loader2, Plus, Trash2, XCircle } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CheckCircle2, Loader2, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react'
 import { appPasswordProblem, SECRET_MASK, type SendingInbox } from '@shared/settings'
-import type { InboxTestResult } from '@shared/types'
-import { errorMessage, testInbox } from '../api.ts'
+import type { GoogleMailStatus, InboxTestResult } from '@shared/types'
+import { errorMessage, getGoogleMail, testInbox } from '../api.ts'
 import { Field, Toggle } from './Field.tsx'
 
 /** Server settings for the common hosts. "Other" leaves the fields to fill in by hand. */
@@ -111,6 +112,30 @@ function InboxCard({
   const [result, setResult] = useState<InboxTestResult | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
   const preset = presetOf(inbox)
+  const isGoogle = preset === 'google'
+  const queryClient = useQueryClient()
+  const google = useQuery({
+    queryKey: ['google-mail'],
+    queryFn: () => getGoogleMail(),
+    enabled: isGoogle,
+    staleTime: 30_000,
+  })
+  const [checking, setChecking] = useState(false)
+  const signedIn =
+    isGoogle &&
+    google.data?.state === 'connected' &&
+    google.data.email === inbox.email.trim().toLowerCase()
+  async function checkGoogle() {
+    setChecking(true)
+    try {
+      queryClient.setQueryData(['google-mail'], await getGoogleMail(true))
+      await queryClient.invalidateQueries({ queryKey: ['readiness'] })
+    } catch {
+      await google.refetch()
+    } finally {
+      setChecking(false)
+    }
+  }
   // The server keeps a saved password only while the servers and login stay the same, so a change
   // here clears it and the app password has to be typed again.
   const retypePassword = inbox.smtp_pass === ''
@@ -126,6 +151,7 @@ function InboxCard({
     setTestError(null)
     try {
       setResult(await testInbox(inbox))
+      await queryClient.invalidateQueries({ queryKey: ['readiness'] })
     } catch (err) {
       setTestError(errorMessage(err))
     } finally {
@@ -148,6 +174,16 @@ function InboxCard({
           />
         </div>
       </div>
+      {isGoogle ? (
+        <GoogleSignIn
+          email={inbox.email.trim().toLowerCase()}
+          status={google.data}
+          loading={google.isLoading}
+          error={google.error ? errorMessage(google.error) : null}
+          checking={checking}
+          onCheck={() => void checkGoogle()}
+        />
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Email address">
           <input
@@ -193,31 +229,35 @@ function InboxCard({
             <option value="other">Other (type the servers)</option>
           </select>
         </Field>
-        <Field
-          label="App password"
-          hint={
-            retypePassword && inbox.email
-              ? 'Type the app password (needed again after the server or login changes).'
-              : 'Not your normal password. Google: Account > Security > App passwords. Stays on the server.'
-          }
-        >
-          <input
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            value={inbox.smtp_pass === SECRET_MASK ? '' : inbox.smtp_pass}
-            placeholder={inbox.smtp_pass === SECRET_MASK ? 'Saved (type to replace)' : ''}
-            onChange={(e) => onChange({ smtp_pass: e.target.value || SECRET_MASK })}
-          />
-          {passwordShape ? <p className="mt-1 text-sm text-red-700">{passwordShape}</p> : null}
-        </Field>
-        <Field label="Login" hint="Usually the email address">
-          <input
-            className="input"
-            value={inbox.smtp_user}
-            onChange={(e) => changeServer({ smtp_user: e.target.value.trim() })}
-          />
-        </Field>
+        {isGoogle ? null : (
+          <>
+            <Field
+              label="App password"
+              hint={
+                retypePassword && inbox.email
+                  ? 'Type the app password (needed again after the server or login changes).'
+                  : 'Not your normal password. Google: Account > Security > App passwords. Stays on the server.'
+              }
+            >
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={inbox.smtp_pass === SECRET_MASK ? '' : inbox.smtp_pass}
+                placeholder={inbox.smtp_pass === SECRET_MASK ? 'Saved (type to replace)' : ''}
+                onChange={(e) => onChange({ smtp_pass: e.target.value || SECRET_MASK })}
+              />
+              {passwordShape ? <p className="mt-1 text-sm text-red-700">{passwordShape}</p> : null}
+            </Field>
+            <Field label="Login" hint="Usually the email address">
+              <input
+                className="input"
+                value={inbox.smtp_user}
+                onChange={(e) => changeServer({ smtp_user: e.target.value.trim() })}
+              />
+            </Field>
+          </>
+        )}
         <Field label="Emails per day from this inbox" hint="Warmed inboxes: 20 to 40">
           <input
             className="input"
@@ -265,6 +305,40 @@ function InboxCard({
           </>
         ) : null}
       </div>
+      {isGoogle && !signedIn ? (
+        <details className="mt-3 rounded-lg border border-stone-200 p-3" open={false}>
+          <summary className="cursor-pointer text-stone-700">
+            Or use an app password instead (harder)
+          </summary>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Field
+              label="App password"
+              hint={
+                retypePassword && inbox.email
+                  ? 'Type the app password (needed again after the server or login changes).'
+                  : 'Not your normal password. Google: Account > Security > App passwords. Stays on the server.'
+              }
+            >
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={inbox.smtp_pass === SECRET_MASK ? '' : inbox.smtp_pass}
+                placeholder={inbox.smtp_pass === SECRET_MASK ? 'Saved (type to replace)' : ''}
+                onChange={(e) => onChange({ smtp_pass: e.target.value || SECRET_MASK })}
+              />
+              {passwordShape ? <p className="mt-1 text-sm text-red-700">{passwordShape}</p> : null}
+            </Field>
+            <Field label="Login" hint="Usually the email address">
+              <input
+                className="input"
+                value={inbox.smtp_user}
+                onChange={(e) => changeServer({ smtp_user: e.target.value.trim() })}
+              />
+            </Field>
+          </div>
+        </details>
+      ) : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -272,7 +346,8 @@ function InboxCard({
           onClick={() => void runTest()}
           disabled={testing || !inbox.email}
         >
-          {testing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null} Test login
+          {testing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}{' '}
+          {signedIn ? 'Send a test email' : 'Test login'}
         </button>
         <button type="button" className="btn-secondary" onClick={onRemove}>
           <Trash2 className="h-4 w-4" aria-hidden /> Remove
@@ -297,4 +372,97 @@ function TestLine({ ok, text }: { ok: boolean; text: string }) {
       <span className="break-words">{text}</span>
     </li>
   )
+}
+
+/** Settings > Sending inboxes, Google inbox: the Sign in with Google state and how to finish it. */
+function GoogleSignIn({
+  email,
+  status,
+  loading,
+  error,
+  checking,
+  onCheck,
+}: {
+  email: string
+  status: GoogleMailStatus | undefined
+  loading: boolean
+  error: string | null
+  checking: boolean
+  onCheck: () => void
+}) {
+  const checkButton = (
+    <button type="button" className="btn-secondary" onClick={onCheck} disabled={checking}>
+      {checking ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+      ) : (
+        <RefreshCw className="h-4 w-4" aria-hidden />
+      )}{' '}
+      Check again
+    </button>
+  )
+  if (loading) {
+    return (
+      <Box tone="stone">
+        <p className="flex items-center gap-2 text-stone-700">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Checking Sign in with Google
+        </p>
+      </Box>
+    )
+  }
+  if (status?.state === 'connected' && status.email === email) {
+    return (
+      <Box tone="green">
+        <p className="flex gap-2 font-medium text-emerald-800">
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+          Signed in with Google as {status.email}. No app password needed.
+        </p>
+        <p className="mt-1 text-stone-700">
+          Emails go out and replies are read through Google. Press Send a test email below to see
+          one arrive in this inbox.
+        </p>
+      </Box>
+    )
+  }
+  const wrongAccount = status?.state === 'connected' && status.email !== email
+  return (
+    <Box tone="blue">
+      <p className="text-lg font-medium text-stone-900">Sign in with Google</p>
+      <p className="mt-1 text-stone-700">
+        No app password needed. Google sign-in happens in Replit, once:
+      </p>
+      <ol className="mt-2 list-decimal space-y-1 pl-6 text-stone-800">
+        <li>In Replit, open this app.</li>
+        <li>
+          Open <b>All tools</b>, then <b>Integrations</b>, then <b>Gmail</b>, and press{' '}
+          <b>Connect</b>.
+        </li>
+        <li>
+          Choose {email ? <b>{email}</b> : 'this inbox address'} and allow everything Google asks.
+        </li>
+        <li>Come back here and press Check again.</li>
+      </ol>
+      {wrongAccount ? (
+        <p className="mt-2 flex gap-2 text-red-700">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          Gmail is connected as {status?.email}, not {email || 'this inbox'}. Reconnect it in Replit
+          and choose {email || 'this inbox address'}.
+        </p>
+      ) : status && status.state !== 'not_connected' && status.state !== 'connected' ? (
+        <p className="mt-2 text-red-700">{status.detail}</p>
+      ) : error ? (
+        <p className="mt-2 text-red-700">{error}</p>
+      ) : null}
+      <div className="mt-3">{checkButton}</div>
+    </Box>
+  )
+}
+
+function Box({ tone, children }: { tone: 'green' | 'blue' | 'stone'; children: ReactNode }) {
+  const cls =
+    tone === 'green'
+      ? 'border-emerald-300 bg-emerald-50'
+      : tone === 'blue'
+        ? 'border-sky-300 bg-sky-50'
+        : 'border-stone-200 bg-stone-50'
+  return <div className={`mb-3 rounded-lg border p-3 ${cls}`}>{children}</div>
 }

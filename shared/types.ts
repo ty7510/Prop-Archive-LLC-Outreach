@@ -369,7 +369,18 @@ export type ReadinessItem = z.infer<typeof ReadinessItemSchema>
 export const InboxTestResultSchema = z.object({
   smtp: z.object({ ok: z.boolean(), message: z.string() }),
   imap: z.object({ ok: z.boolean(), message: z.string() }),
+  /** True when the test went through Sign in with Google (a real email was sent to the inbox). */
+  google: z.boolean().optional(),
 })
+
+/** Where Sign in with Google stands for the app, as GET /api/settings/google-mail reports it. */
+export const GoogleMailStatusSchema = z.object({
+  state: z.enum(['connected', 'not_connected', 'not_on_replit', 'lookup_failed', 'refused']),
+  /** The connected Google account, lower-case, when connected. */
+  email: z.string().nullable(),
+  detail: z.string(),
+})
+export type GoogleMailStatus = z.infer<typeof GoogleMailStatusSchema>
 export type InboxTestResult = z.infer<typeof InboxTestResultSchema>
 
 // ---------- queue (human channels) ----------

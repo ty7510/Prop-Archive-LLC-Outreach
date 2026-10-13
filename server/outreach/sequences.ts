@@ -16,7 +16,8 @@ import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { EMAIL_KEYS_HINT, pickEmailProvider, sendEmail } from './email.ts'
-import { canSend } from './inboxes.ts'
+import { canSend, refreshGoogleAccount } from './inboxes.ts'
+import { isGoogleMailHost } from '../../shared/settings.ts'
 import { assertNoEmDash, renderStepForLead, sampleLead } from './templates.ts'
 
 export interface SequenceWithSteps extends Sequence {
@@ -267,12 +268,15 @@ export async function testSend(deps: OutreachDeps, id: string): Promise<{ ok: tr
   const first = seq.steps.find((s) => s.channel === 'email') ?? seq.steps[0]
   if (!first) throw badRequest('This sequence has no steps yet', 'NO_STEPS')
   const settings = await getSettings(deps.db)
+  if (settings.sending_inboxes.some((i) => isGoogleMailHost(i.smtp_host))) {
+    await refreshGoogleAccount(deps) // Sign in with Google counts as a way to send
+  }
   // A test goes out the way the sequence will: through the first warmed inbox when there is one.
   const inbox = settings.sending_inboxes.find(canSend) ?? null
   if (!inbox && !pickEmailProvider(deps, settings)) {
     throw badRequest(
       settings.sending_inboxes.length > 0
-        ? 'No inbox can send: switch one on, or type its app password again, under Settings > Sending inboxes'
+        ? 'No inbox can send: switch one on, sign in with Google, or type its app password again, under Settings > Sending inboxes'
         : `No sending inbox yet: ${EMAIL_KEYS_HINT}`,
       'NO_EMAIL_PROVIDER',
     )

@@ -4,7 +4,7 @@
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
 import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm'
-import type { SendingInbox, Settings } from '../../shared/settings.ts'
+import { isGoogleMailHost, type SendingInbox, type Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
   enrollments,
@@ -40,6 +40,7 @@ import {
   mailErrorText,
   noteLoginRefused,
   noteLoginWorked,
+  refreshGoogleAccount,
   replySyncFailures,
   type InboxDay,
 } from './inboxes.ts'
@@ -460,6 +461,11 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   if (!isWithinSendWindow(settings, now)) return result
 
   await skipProfilelessTasks(deps)
+  // Inboxes on Google's servers may send through Sign in with Google: learn (cached a minute)
+  // whether it is connected before deciding which inbox may send.
+  if (settings.sending_inboxes.some((i) => i.active && isGoogleMailHost(i.smtp_host))) {
+    await refreshGoogleAccount(deps)
+  }
   const restarted = await restartUntouched(deps, settings)
   let waitingForResearch = 0
   let waitingForReplies = 0
@@ -786,7 +792,7 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
               await logActivity(
                 'error',
                 'inbox_login_refused',
-                { inbox: inbox.email, error, fix: loginFix(inbox.email) },
+                { inbox: inbox.email, error, fix: loginFix(inbox) },
                 null,
                 db,
               )

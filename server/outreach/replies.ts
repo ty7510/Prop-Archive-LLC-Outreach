@@ -1,7 +1,7 @@
 // Inbox sync and reply handling (spec section 10, Replies). The system never auto-replies.
 import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
-import type { Settings } from '../../shared/settings.ts'
+import { isGoogleMailHost, type Settings } from '../../shared/settings.ts'
 import {
   REPLY_CLASSIFICATIONS,
   type LeadStatus,
@@ -15,11 +15,14 @@ import { getSettings } from '../lib/settings.ts'
 import { normaliseEmail } from '../lib/text.ts'
 import type { ImapClient, ImapMessage, Llm, OutreachDeps } from './deps.ts'
 import { sendEmail, pickEmailProvider } from './email.ts'
+import { gmailInboxReader } from './gmail.ts'
 import {
   canRead,
   canSend,
+  googleSignedIn,
   keepReplySyncProblems,
   mailErrorText,
+  refreshGoogleAccount,
   noteReplySyncFailed,
   noteReplySyncWorked,
   resolveMailHost,
@@ -499,8 +502,10 @@ export async function processInboundMessage(
     providerMessageId: mail.messageId,
     idempotencyKey: mail.messageId
       ? `in:${mail.messageId}`
-      : `in:uid:${uidScope ? `${uidScope}:` : ''}${msg.uid}`,
-    raw: { uid: msg.uid, date: mail.date },
+      : msg.gmailId
+        ? `in:gmail:${msg.gmailId}`
+        : `in:uid:${uidScope ? `${uidScope}:` : ''}${msg.uid}`,
+    raw: { uid: msg.uid, date: mail.date, ...(msg.gmailId ? { gmail_id: msg.gmailId } : {}) },
   })
 }
 
@@ -521,8 +526,22 @@ export async function syncReplies(deps: OutreachDeps): Promise<{ received: numbe
   const settings = await getSettings(deps.db)
   const sources: ReplySource[] = []
   if (deps.imap) sources.push({ key: LAST_SYNC_KEY, label: 'the IMAP secrets', client: deps.imap })
+  // Inboxes on Google's servers may be read through Sign in with Google: learn whether it is on.
+  if (settings.sending_inboxes.some((i) => isGoogleMailHost(i.smtp_host))) {
+    await refreshGoogleAccount(deps)
+  }
   for (const inbox of settings.sending_inboxes) {
     if (!canRead(inbox)) continue
+    if (googleSignedIn(inbox)) {
+      // Same last-sync key as before, so switching from a password to Google loses nothing.
+      sources.push({
+        key: `${LAST_SYNC_KEY}:${inbox.id}`,
+        label: inbox.email,
+        client: () => gmailInboxReader(deps.gmail),
+        uidScope: inbox.id,
+      })
+      continue
+    }
     sources.push({
       key: `${LAST_SYNC_KEY}:${inbox.id}`,
       label: inbox.email,

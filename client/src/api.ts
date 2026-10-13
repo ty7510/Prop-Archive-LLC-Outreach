@@ -10,6 +10,7 @@ import type {
   EnrollBody,
   Health,
   ImportResult,
+  GoogleMailStatus,
   InboxTestResult,
   LeadPatch,
   LoginBody,
@@ -108,6 +109,8 @@ export const putSettings = (patch: Partial<Settings>) =>
   api<Settings>('/api/settings', 'PUT', patch)
 export const getProviders = () => api<ProvidersResponse>('/api/settings/providers')
 export const getReadiness = () => api<ReadinessItem[]>('/api/settings/readiness')
+export const getGoogleMail = (fresh = false) =>
+  api<GoogleMailStatus>(`/api/settings/google-mail${fresh ? '?fresh=1' : ''}`)
 export const testInbox = (inbox: SendingInbox) =>
   api<InboxTestResult>('/api/settings/inboxes/test', 'POST', inbox)
 

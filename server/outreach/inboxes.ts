@@ -6,6 +6,7 @@ import { and, eq, gte, like, or } from 'drizzle-orm'
 import {
   appPasswordProblem,
   cleanAppPassword,
+  isGoogleMailHost,
   SECRET_MASK,
   type SendingInbox,
   type Settings,
@@ -16,19 +17,71 @@ import { messages } from '../db/schema.ts'
 import { isPrivateAddress } from '../lib/net.ts'
 import { startOfDayInTz } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
+import { compileMail, CONNECT_STEPS, isGmailAuthError, type GoogleAccount } from './gmail.ts'
 
 /** messages.provider for mail that went out through one inbox, so each inbox's count is exact. */
 export function inboxProvider(inbox: Pick<SendingInbox, 'email'>): string {
   return `smtp:${inbox.email.toLowerCase()}`
 }
 
-/** An inbox that can send: switched on, with a server, a login and a password. */
-export function canSend(inbox: SendingInbox): boolean {
-  return Boolean(inbox.active && inbox.smtp_host && inbox.smtp_user && inbox.smtp_pass)
+// ---------- Sign in with Google ----------
+
+// The Google account Replit's Gmail connector is signed in as, lower-cased, from the last answer
+// that said yes or no. A lookup that failed leaves it as it was. One process, so memory is enough.
+let googleEmail: string | null = null
+
+/** Ask (cached about a minute) which Google account is connected, and remember the answer. */
+export async function refreshGoogleAccount(
+  deps: Pick<OutreachDeps, 'gmail'>,
+  opts: { fresh?: boolean } = {},
+): Promise<GoogleAccount> {
+  const acct = await deps.gmail.account(opts)
+  if (acct.ok) googleEmail = acct.email.toLowerCase()
+  else if (acct.reason !== 'lookup_failed') googleEmail = null
+  return acct
 }
 
-/** An inbox whose replies the app can read. */
+/** For tests: forget the connected Google account. */
+export function resetGoogleAccount(): void {
+  googleEmail = null
+}
+
+/**
+ * This inbox sends and reads through Sign in with Google: it is on Google's mail servers and the
+ * Gmail connector is signed in as this very address. No app password needed then.
+ */
+export function googleSignedIn(inbox: Pick<SendingInbox, 'email' | 'smtp_host'>): boolean {
+  return (
+    googleEmail !== null &&
+    isGoogleMailHost(inbox.smtp_host) &&
+    inbox.email.trim().toLowerCase() === googleEmail
+  )
+}
+
+/** What Theo does to sign this inbox in with Google, given what the connector said. */
+export function googleSignInFix(email: string, acct?: GoogleAccount): string {
+  if (acct?.ok && acct.email !== email.toLowerCase()) {
+    return `Gmail is connected in Replit as ${acct.email}, not ${email}. ${CONNECT_STEPS}, reconnect it and sign in as ${email}, then press Send a test email under Settings > Sending inboxes.`
+  }
+  if (acct && !acct.ok && acct.reason === 'lookup_failed') {
+    return `Replit's Gmail connection did not answer just now (${acct.detail}). It is checked again every minute.`
+  }
+  if (acct && !acct.ok && acct.reason === 'not_on_replit') {
+    return 'Sign in with Google works on the app published on Replit, not on this copy.'
+  }
+  return `Sign in with Google, no app password needed: ${CONNECT_STEPS}, sign in as ${email} and allow everything it asks. Then press Send a test email under Settings > Sending inboxes. The waiting emails then go out by themselves.`
+}
+
+/** An inbox that can send: switched on, signed in with Google, or with a server, login and password. */
+export function canSend(inbox: SendingInbox): boolean {
+  if (!inbox.active) return false
+  if (googleSignedIn(inbox)) return true
+  return Boolean(inbox.smtp_host && inbox.smtp_user && inbox.smtp_pass)
+}
+
+/** An inbox whose replies the app can read: signed in with Google, or with IMAP and a password. */
 export function canRead(inbox: SendingInbox): boolean {
+  if (googleSignedIn(inbox)) return true
   return Boolean(inbox.imap_host && inbox.smtp_user && inbox.smtp_pass)
 }
 
@@ -38,7 +91,7 @@ export const MIN_GAP_MS = 4 * 60_000
 export const LOGIN_RETRY_MS = 60 * 60_000
 
 const LOGIN_REFUSED_RE =
-  /invalid login|username and password not accepted|badcredentials|application-specific password required|authenticationfailed|invalid credentials|\b53[45][- ]5\.7\.\d/i
+  /invalid login|username and password not accepted|badcredentials|application-specific password required|authenticationfailed|invalid credentials|\b53[45][- ]5\.7\.\d|google refused the sign-in|did not give this app permission|gmail is not connected|google sign-in only works on replit/i
 
 /** The mail server refused the login. Nothing was handed over, so trying again later is safe. */
 export function isLoginRefused(err: unknown): boolean {
@@ -51,9 +104,16 @@ export function isLoginRefused(err: unknown): boolean {
   return LOGIN_REFUSED_RE.test(mailErrorText(err))
 }
 
-/** What Theo does when Gmail refuses the password. Shown on Go and in Activity. */
-export function loginFix(email: string): string {
-  return `Gmail refused the password for ${email}. Make a new app password at myaccount.google.com/apppasswords (2-Step Verification must be on), paste it under Sending inboxes in Settings and press Test. The waiting emails then go out by themselves.`
+/** What Theo does when the inbox's login is refused. Shown on Go and in Activity. */
+export function loginFix(inbox: Pick<SendingInbox, 'email' | 'smtp_host'>): string {
+  const { email } = inbox
+  if (googleSignedIn(inbox)) {
+    return `Google stopped letting this app send as ${email}. ${CONNECT_STEPS}, reconnect it as ${email} and allow everything it asks, then press Send a test email under Settings > Sending inboxes.`
+  }
+  if (isGoogleMailHost(inbox.smtp_host)) {
+    return `Gmail refused the password for ${email}. Easiest fix, no app password needed: sign in with Google. ${CONNECT_STEPS}, sign in as ${email} and allow everything it asks, then press Send a test email under Settings > Sending inboxes. The waiting emails then go out by themselves.`
+  }
+  return `The mail server refused the password for ${email}. Check the login and app password under Sending inboxes in Settings and press Test. The waiting emails then go out by themselves.`
 }
 
 interface LoginProblem {
@@ -67,7 +127,16 @@ const loginProblems = new Map<string, LoginProblem>()
 
 function fingerprint(inbox: SendingInbox): string {
   return createHash('sha256')
-    .update([inbox.smtp_host, inbox.smtp_port, inbox.smtp_user, inbox.smtp_pass].join('\n'))
+    .update(
+      [
+        inbox.smtp_host,
+        inbox.smtp_port,
+        inbox.smtp_user,
+        inbox.smtp_pass,
+        // Signing in with Google is a new way in: a password refused before no longer blocks it.
+        googleSignedIn(inbox) ? `google:${googleEmail}` : 'password',
+      ].join('\n'),
+    )
     .digest('hex')
 }
 
@@ -309,8 +378,61 @@ function errorText(err: unknown): string {
   return msg
 }
 
-/** Log in to the inbox's SMTP and IMAP servers without sending anything. */
+/** The Test button for an inbox on Google's servers when Sign in with Google is (or should be) used. */
+async function testGoogleInbox(
+  deps: OutreachDeps,
+  inbox: SendingInbox,
+  acct: GoogleAccount,
+): Promise<InboxTestResult> {
+  if (!googleSignedIn(inbox)) {
+    const fix = googleSignInFix(inbox.email, acct)
+    return { smtp: { ok: false, message: fix }, imap: { ok: false, message: fix }, google: true }
+  }
+  const result: InboxTestResult = {
+    smtp: { ok: false, message: '' },
+    imap: { ok: false, message: '' },
+    google: true,
+  }
+  // Sending is proven only by sending: one short email from the inbox to itself.
+  try {
+    const raw = await compileMail({
+      from: `${inbox.from_name || 'Prop Archive'} <${inbox.email}>`,
+      to: inbox.email,
+      subject: 'Prop Archive Outreach: sending works',
+      text: `This test came from the outreach app through Sign in with Google, so the sequence can send from ${inbox.email}. No reply needed.`,
+      html: `<p>This test came from the outreach app through Sign in with Google, so the sequence can send from ${inbox.email}. No reply needed.</p>`,
+    })
+    await deps.gmail.send(raw)
+    result.smtp = {
+      ok: true,
+      message: `Sent a test email from ${inbox.email} to itself through Google. The sequence sends the same way.`,
+    }
+    noteLoginWorked(inbox) // waiting emails go on the next round, no restart needed
+  } catch (err) {
+    result.smtp.message = isGmailAuthError(err)
+      ? googleSignInFix(inbox.email) + ` (${mailErrorText(err)})`
+      : `Google is signed in but the test email did not go: ${mailErrorText(err)}`
+    if (isGmailAuthError(err)) noteLoginRefused(inbox, deps.now(), mailErrorText(err))
+  }
+  try {
+    await deps.gmail.listInbox(new Date(deps.now().getTime() - 86_400_000), 1)
+    result.imap = { ok: true, message: 'Replies are read from this inbox through Google' }
+  } catch (err) {
+    result.imap = { ok: false, message: `Reading replies failed: ${mailErrorText(err)}` }
+  }
+  return result
+}
+
+/**
+ * Test an inbox. On Google's servers with Sign in with Google: send one real email to itself and
+ * read the inbox. Otherwise log in to its SMTP and IMAP servers without sending anything.
+ */
 export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promise<InboxTestResult> {
+  if (isGoogleMailHost(inbox.smtp_host)) {
+    const acct = await refreshGoogleAccount(deps, { fresh: true })
+    // Signed in with Google, or no password to try: Google sign-in is the way in.
+    if (googleSignedIn(inbox) || !inbox.smtp_pass) return testGoogleInbox(deps, inbox, acct)
+  }
   const result: InboxTestResult = {
     smtp: { ok: false, message: '' },
     imap: { ok: false, message: 'No IMAP server, so replies to this inbox are not read' },
@@ -332,6 +454,10 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
           ? appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
           : null
         result.smtp.message = shape ?? errorText(err)
+        // On Google's servers the easier way in is Sign in with Google: say so.
+        if (isLoginRefused(err) && isGoogleMailHost(inbox.smtp_host)) {
+          result.smtp.message += ` Or skip the password: ${googleSignInFix(inbox.email)}`
+        }
         if (isLoginRefused(err)) noteLoginRefused(inbox, deps.now(), mailErrorText(err))
       }
   }
