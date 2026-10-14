@@ -2,6 +2,7 @@
 // Owned by the content builder. Spec section 13.
 // Idempotent: server/index.ts calls seed(db) on first boot and `npm run seed` runs it by hand.
 // A sequence whose name already exists is left alone, so Theo's edits in the UI survive a re-seed.
+import { join } from 'node:path'
 import { and, eq, inArray, ne } from 'drizzle-orm'
 import { PERSONAS, type Channel, type Persona } from '../../shared/types.ts'
 import type { PersonaSequences, SequenceByPersona } from '../../shared/settings.ts'
@@ -10,7 +11,7 @@ import { sequenceSteps, sequences, settings as settingsTable } from '../db/schem
 import { newId } from '../lib/ids.ts'
 import { loadSettings, updateSettings } from '../lib/settings.ts'
 import { nowIso } from '../lib/time.ts'
-import { loadSequenceFiles, type SequenceFile } from './content.ts'
+import { findContentDir, loadSequenceFiles, type SequenceFile } from './content.ts'
 
 export { parseSequenceMarkdown, findVariables, TEMPLATE_VARS } from './parse.ts'
 export type { ParsedSequence, ParsedStep } from './parse.ts'
@@ -152,6 +153,11 @@ export const MAIN_SEQUENCE_NAME = 'Three emails, LinkedIn and a postcard'
 export const OLD_MAIN_SEQUENCE_NAMES = ['Email, LinkedIn, then mail']
 const MAIN_SETUP_KEY = '_main_sequence_setup_v1'
 const MAIN_STEPS_KEY = '_main_sequence_steps_v2'
+/**
+ * Bump with each copy change to the main file, after saving the file as it was into
+ * content/sequences/history, so live steps that still hold that text get the new words once.
+ */
+const MAIN_COPY_KEY = '_main_sequence_copy_v3'
 
 async function hasKey(db: Db, key: string): Promise<boolean> {
   const rows = await db
@@ -189,14 +195,51 @@ async function upgradeInPlace(db: Db, id: string, file: SequenceFile): Promise<v
 }
 
 /**
+ * Give the live main sequence the current words, keeping its step ids and delays so leads carry
+ * on where they are. A step is only rewritten while it still holds a text we shipped before
+ * (content/sequences/history) word for word: a step Theo edited in the app stays as he left it.
+ * Returns how many steps got new words.
+ */
+async function refreshMainCopy(db: Db, id: string, file: SequenceFile): Promise<number> {
+  const shipped = (await loadSequenceFiles(join(findContentDir(), 'history')))
+    .filter((h) => h.parsed.name === MAIN_SEQUENCE_NAME)
+    .flatMap((h) => stepRows(id, h))
+  const next = stepRows(id, file)
+  const live = await db.select().from(sequenceSteps).where(eq(sequenceSteps.sequence_id, id))
+  let changed = 0
+  for (const row of live) {
+    const target = next.find((s) => s.step_index === row.step_index && s.channel === row.channel)
+    if (!target) continue
+    const untouched = shipped.some(
+      (s) =>
+        s.step_index === row.step_index &&
+        s.channel === row.channel &&
+        s.subject === row.subject &&
+        s.body === row.body,
+    )
+    if (!untouched || (target.subject === row.subject && target.body === row.body)) continue
+    await db
+      .update(sequenceSteps)
+      .set({ subject: target.subject, body: target.body, notes: target.notes })
+      .where(eq(sequenceSteps.id, row.id))
+    changed++
+  }
+  return changed
+}
+
+/**
  * Make sure the main sequence exists, and once per database switch everything over to it: the
  * main sequence on, every other sequence off, new leads go into it, and the channels it uses on
  * (Instagram and calls off). Runs on every boot; after the first time it only re-adds the
  * sequence if it was deleted, so Theo's later toggles stay as he left them.
  */
-export async function ensureMainSequence(
-  db: Db,
-): Promise<{ id: string; created: boolean; switched: boolean; upgraded: boolean }> {
+export async function ensureMainSequence(db: Db): Promise<{
+  id: string
+  created: boolean
+  switched: boolean
+  upgraded: boolean
+  copy_updated: number
+}> {
   const existing = await db
     .select({ id: sequences.id })
     .from(sequences)
@@ -227,11 +270,17 @@ export async function ensureMainSequence(
     created = true
   }
   await markKey(db, MAIN_STEPS_KEY)
+  // A sequence just made or upgraded from the file already has the current words.
+  let copy_updated = 0
+  if (!(await hasKey(db, MAIN_COPY_KEY))) {
+    if (!created && !upgraded) copy_updated = await refreshMainCopy(db, id, await mainFile())
+    await markKey(db, MAIN_COPY_KEY)
+  }
 
   if (await hasKey(db, MAIN_SETUP_KEY)) {
     // Deleted and re-added: point the autopilot at the new copy.
     if (created) await updateSettings({ main_sequence_id: id }, db)
-    return { id, created, switched: false, upgraded }
+    return { id, created, switched: false, upgraded, copy_updated }
   }
 
   const now = nowIso()
@@ -248,5 +297,5 @@ export async function ensureMainSequence(
     db,
   )
   await markKey(db, MAIN_SETUP_KEY)
-  return { id, created, switched: true, upgraded }
+  return { id, created, switched: true, upgraded, copy_updated }
 }
