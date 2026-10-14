@@ -25,6 +25,7 @@ import {
   resetReplySyncProblems,
   testInbox,
 } from './inboxes.ts'
+import { sequenceReadiness } from './readiness.ts'
 import { syncReplies } from './replies.ts'
 import { canRetry, sendDue } from './send.ts'
 import { insertLead, insertSequence, setSettings, setup } from './testFixtures.ts'
@@ -427,6 +428,24 @@ describe('Sign in with Google', () => {
     expect(r.google).toBe(true)
     expect(r.smtp.message).toMatch(/added to this app/)
     expect(r.imap.message).not.toMatch(/Use an app password/)
+  })
+
+  it('readiness does not show sending as done while Gmail would refuse the saved password', async () => {
+    const notAdded = fakeGmail({
+      ok: false,
+      reason: 'not_connected',
+      detail: 'Gmail is not connected',
+    })
+    const { db, deps } = await setup({ gmail: notAdded.api })
+    // 15 characters, like the password saved in production: never an app password.
+    await setSettings(db, { sending_inboxes: [gmailInbox({ smtp_pass: 'NotAnAppPass15!' })] })
+    const inbox = (await sequenceReadiness(deps)).find((i) => i.key === 'inbox')
+    expect(inbox?.ok).toBe(false)
+    expect(inbox?.fix).toMatch(/added to this app/)
+    // Signed in with Google, the same inbox sends.
+    const signedIn = { ...deps, gmail: fakeGmail({ ok: true, email: 'theo@proparchive.biz' }).api }
+    const after = (await sequenceReadiness(signedIn)).find((i) => i.key === 'inbox')
+    expect(after?.ok).toBe(true)
   })
 
   it('Test on a signed-in Gmail inbox sends one real email to itself and checks reading', async () => {
