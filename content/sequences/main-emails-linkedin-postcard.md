@@ -11,16 +11,16 @@ description: The one sequence. The app sends the three emails by itself. The Lin
 delay_days: 0
 channel: email
 subject: When a repair text becomes a dispute
-notes: Sent by the app from one of your warmed inboxes. Hypothesis: the repair-dispute pain earns more replies than a general records pitch.
+notes: Sent by the app from one of your warmed inboxes. Hypothesis: a question about their last bad day (the repair dispute) earns more replies than a statement about records.
 
 Hi {{first_name}},
 
 {{ai_opener}}
-When a tenant's leak text turns into a dispute months later, the text, the receipt and the contractor's invoice are usually in three different places.
+When a tenant's leak text turns into a dispute six months later, how fast can you find that text and the receipt?
 
-Prop Archive keeps each property's repairs, receipts, leases and license papers in one place, so you can find them in seconds.
+Prop Archive keeps every property's repairs, receipts, leases and licenses in one place.
 
-This is my second company, and I grew up around landlords and property managers. We're building it with direct feedback from owners so small portfolios can keep up with the big ones.
+It's my second company, and I grew up around landlords and property managers. We're building it with direct feedback from owners so small portfolios can keep up with the big ones.
 
 It's free while we're in beta, plus two months free after the public launch.
 
@@ -34,24 +34,24 @@ If you'd like to look around first, it's all at proparchive.app.
 
 delay_days: 2
 channel: linkedin
-notes: Your task: open their profile, send a connection request, paste this as the note. Never sent by the app. Only for leads whose profile research found; everyone else skips this step.
+notes: Your task: open their profile, send a connection request, paste this as the note (it fits the 200 character limit of a free LinkedIn account). Never sent by the app. Only for leads whose profile research found; everyone else skips this step.
 
-Hi {{first_name}}, a tenant's repair text that turns into a dispute months later is the headache I hear most from Philly landlords. I build software that keeps each property's records in one place. Second company, and I grew up around landlords. Glad to connect.
+Hi {{first_name}}, when a tenant's repair text turns into a dispute, the hard part is finding it. I build software that keeps each property's records in one place. Second company. Glad to connect.
 
 ## Step 3
 
 delay_days: 2
 channel: email
-subject: Your rental license papers, in one place?
-notes: Sent by the app. A new angle: paperwork at license renewal or in a dispute, not repairs.
+subject: Your suitability certificate, in 10 days?
+notes: Sent by the app. A new angle: the Nov 1 Safe Healthy Homes date (Bill 250329-AA, section 9-3903(1)(d)), asked as a question about their records, never as what the law requires.
 
 Hi {{first_name}},
 
-When a license renewal or a tenant's lawyer asks for paperwork, it usually means digging through email, a glovebox and a filing cabinet.
+One question with Philadelphia's Nov 1 rental changes: if a tenant asks for a fresh Certificate of Rental Suitability, you have 10 days. Could you find that unit's license, past certificates and repair records in a minute?
 
-Prop Archive keeps every property's leases, licenses, receipts and repair history together, so it's one search instead of an afternoon.
+Prop Archive keeps every property's papers together, so it's one search instead of an afternoon.
 
-We're building it with direct feedback from Philly owners so small portfolios can keep up with the big ones. It's free while we're in beta.
+It's free while we're in beta, plus two months free after the public launch.
 
 Worth a 15 minute look? {{demo_link}}
 
@@ -78,16 +78,14 @@ Worth a 15 minute look? {{demo_link}}
 delay_days: 3
 channel: email
 subject: Last note about your property records
-notes: Sent by the app. The break-up: short, no pressure, the door left open.
+notes: Sent by the app. The break-up: short, no pressure, no ask, the door left open.
 
 Hi {{first_name}},
 
 Sounds like the timing's off, so this is my last note.
 
-If a repair dispute or a license renewal ever has you hunting for a receipt, Prop Archive keeps each property's records in one place. It's free while we're in beta, plus two months free after the public launch.
+If a repair dispute or a tenant's paperwork request ever has you hunting for a receipt, Prop Archive keeps each property's records in one place. It's free while we're in beta, plus two months free after the public launch.
 
-Worth a 15 minute look? {{demo_link}}
-
-If you'd like to look around first, it's all at proparchive.app.
+If the timing ever changes, my calendar is at {{demo_link}} and everything else is at proparchive.app.
 
 {{sender_name}}

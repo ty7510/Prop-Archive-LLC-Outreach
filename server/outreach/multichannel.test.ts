@@ -1,10 +1,17 @@
+import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SendingInbox } from '../../shared/settings.ts'
 import { enrollments, leads, messages, sequenceSteps, sequences } from '../db/schema.ts'
 import { listActivity } from '../lib/activity.ts'
 import { getSettings } from '../lib/settings.ts'
-import { seed, ensureMainSequence, MAIN_SEQUENCE_NAME } from '../seed/index.ts'
+import {
+  seed,
+  ensureMainSequence,
+  findContentDir,
+  loadSequenceFiles,
+  MAIN_SEQUENCE_NAME,
+} from '../seed/index.ts'
 import type { OutgoingMail } from './deps.ts'
 import { enrollEligible, enrollLead } from './enroll.ts'
 import {
@@ -489,6 +496,53 @@ describe('the main sequence', () => {
     // Only once: a second boot changes nothing.
     expect((await ensureMainSequence(db)).upgraded).toBe(false)
     expect(await db.select().from(sequences)).toHaveLength(1)
+  })
+
+  it('gives the live main sequence the new words once, leaving steps Theo edited alone', async () => {
+    const { db, deps } = await setup()
+    // Production before this change: the main sequence holds the v2 words and is already set up.
+    const v2 = (await loadSequenceFiles(join(findContentDir(), 'history'))).find((f) =>
+      f.file.endsWith('-v2.md'),
+    )!
+    const { sequence: live, steps: before } = await insertSequence(
+      db,
+      { name: MAIN_SEQUENCE_NAME },
+      v2.parsed.steps.map((s) => ({
+        delay_days: s.delay_days,
+        channel: s.channel,
+        subject: s.channel === 'email' ? s.subject : null,
+        body: s.body,
+      })),
+    )
+    const lead = await insertLead(db)
+    await enrollLead(deps, lead.id, live.id)
+    await db.update(enrollments).set({ current_step: 2 })
+    await db
+      .update(sequenceSteps)
+      .set({ body: 'Theo wrote this one himself.' })
+      .where(eq(sequenceSteps.id, before[2]!.id))
+
+    const main = await ensureMainSequence(db)
+    // Steps 1, 2 and 5 get new words; 3 is Theo's own; the postcard's words did not change.
+    expect(main).toMatchObject({ id: live.id, created: false, upgraded: false, copy_updated: 3 })
+    const after = (
+      await db.select().from(sequenceSteps).where(eq(sequenceSteps.sequence_id, live.id))
+    ).sort((a, b) => a.step_index - b.step_index)
+    // Same rows and delays, so leads carry on from the step they are on.
+    expect(after.map((s) => s.id)).toEqual(before.map((s) => s.id))
+    expect(after.map((s) => s.delay_days)).toEqual([0, 2, 2, 3, 3])
+    expect(after[0]!.body).toContain('how fast can you find that text and the receipt?')
+    expect(after[1]!.body.length).toBeLessThan(200)
+    expect(after[2]!.body).toBe('Theo wrote this one himself.')
+    expect(after[4]!.body).toContain('my calendar is at {{demo_link}}')
+    const [enr] = await db.select().from(enrollments)
+    expect(enr).toMatchObject({ sequence_id: live.id, current_step: 2, status: 'active' })
+    // Only once: a later boot changes nothing, even if a step goes back to old words.
+    await db
+      .update(sequenceSteps)
+      .set({ body: v2.parsed.steps[4]!.body })
+      .where(eq(sequenceSteps.id, before[4]!.id))
+    expect((await ensureMainSequence(db)).copy_updated).toBe(0)
   })
 
   it('puts new leads into the main sequence, also leads with no email', async () => {

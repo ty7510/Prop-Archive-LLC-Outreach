@@ -364,15 +364,16 @@ describe('the multi-channel sequence', () => {
       expect(findVariables(email.body)).toContain('demo_link')
       expect(email.body).toMatch(/proparchive\.app/)
     }
+    // The pain sentence (a statement or a question) comes before the product.
     const body = emails[0]!.body
-    expect(body.indexOf('Prop Archive')).toBeGreaterThan(
-      body.indexOf('.', body.indexOf('{{ai_opener}}')),
-    )
+    const afterOpener = body.slice(body.indexOf('{{ai_opener}}'))
+    expect(afterOpener.indexOf('Prop Archive')).toBeGreaterThan(afterOpener.search(/[.?]/))
     const note = steps.find((s) => s.channel === 'linkedin')
     const card = steps.find((s) => s.channel === 'mail')
     // LinkedIn: a connection note under 300 characters, about them first, no links.
     const n = note?.body ?? ''
-    expect(n.length).toBeLessThan(300)
+    // A free LinkedIn account caps a connection note at 200 characters; leave room for a long name.
+    expect(n.replace('{{first_name}}', 'Christopher').length).toBeLessThanOrEqual(200)
     const afterGreeting = n.replace(/^Hi \{\{first_name\}\},\s*/, '')
     expect(/^I\b/.test(afterGreeting)).toBe(false)
     expect(afterGreeting.indexOf('I build')).toBeGreaterThan(afterGreeting.indexOf('.'))

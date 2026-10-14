@@ -128,7 +128,12 @@ notes: optional, for Theo only
 4. To load the change into an existing database, either delete that sequence on the Sequences page
    and run `npm run seed` (it re-inserts missing names), or paste the new text into the editor.
    A fresh database picks everything up on first boot.
-5. To add a sequence, add a file. To give a persona a new default, point
+5. The main sequence (`main-emails-linkedin-postcard.md`) updates the live database by itself:
+   before editing, copy the file as it is into `content/sequences/history/` with the next
+   `-vN.md` suffix, then bump `MAIN_COPY_KEY` in `server/seed/index.ts`. On the next boot every
+   live step that still holds a shipped text word for word gets the new words, once; a step Theo
+   edited in the app stays as he left it. Step ids and delays stay, so leads carry on.
+6. To add a sequence, add a file. To give a persona a new default, point
    `settings.sequence_by_persona` at it in Settings; the seed only fills empty slots.
 
 ## What to A/B test
