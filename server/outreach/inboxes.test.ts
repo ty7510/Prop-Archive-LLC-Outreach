@@ -270,6 +270,9 @@ describe('the Claude key check names the right secret and retries passing troubl
     expect(r.ok).toBe(false)
     expect(r.fix).toMatch(/credits/)
     expect(r.fix).toMatch(/console\.anthropic\.com/)
+    // A key Anthropic answered is connected: the line must not read as a missing key.
+    expect(r.label).toMatch(/connected/)
+    expect(r.fix).toMatch(/organization the key was made in/)
     now = new Date('2026-10-13T14:02:00.000Z')
     await claudeKeyCheck(deps)
     expect(f.calls()).toBe(2)

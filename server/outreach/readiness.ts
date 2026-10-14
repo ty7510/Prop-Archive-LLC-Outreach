@@ -46,7 +46,9 @@ const CLAUDE_CHECK_TTL_MS = 30 * 60_000
 /** Busy, rate limited or unreachable: check again soon instead of reporting it for 30 minutes. */
 const CLAUDE_RETRY_MS = 60_000
 const CLAUDE_CHECK_TIMEOUT_MS = 15_000
-let claudeCache: { at: number; ttl: number; ok: boolean; fix: string } | null = null
+/** The answer: ok, the fix, and a label when the default one would mislead (a working key, no credits). */
+type ClaudeCheck = { ok: boolean; fix: string; label?: string }
+let claudeCache: ({ at: number; ttl: number } & ClaudeCheck) | null = null
 
 /** For tests: forget the cached Claude answer. */
 export function resetClaudeCheck(): void {
@@ -65,7 +67,7 @@ function statusOf(err: unknown, msg: string): number | null {
  * organization key without a workspace, a key copied in part), and then nothing that uses Claude
  * works. One tiny request: a clear answer is remembered for 30 minutes, a passing problem for one.
  */
-export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean; fix: string }> {
+export async function claudeKeyCheck(deps: OutreachDeps): Promise<ClaudeCheck> {
   if (!deps.env.ANTHROPIC_API_KEY || !deps.llm) {
     return {
       ok: false,
@@ -75,7 +77,7 @@ export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean;
   const secret = deps.env.ANTHROPIC_KEY_SECRET ?? 'CLAUDE_API_KEY'
   const now = deps.now().getTime()
   if (claudeCache && now - claudeCache.at < claudeCache.ttl) return claudeCache
-  let result: { ok: boolean; fix: string }
+  let result: ClaudeCheck
   let ttl = CLAUDE_CHECK_TTL_MS
   try {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -102,7 +104,9 @@ export async function claudeKeyCheck(deps: OutreachDeps): Promise<{ ok: boolean;
       ttl = CLAUDE_RETRY_MS
       result = {
         ok: false,
-        fix: 'Your Anthropic account is out of credits, so research finds nothing and new leads wait. Add credits at console.anthropic.com under Plans and Billing. No Publish needed.',
+        // The key works: Anthropic took it and answered. Say so, so it does not read as "not connected".
+        label: `Claude key connected (${secret}), but its Anthropic account has no credits`,
+        fix: `Anthropic accepted the key in ${secret} and answered that the credit balance is too low, so research finds nothing and new leads wait. Credits only count in the organization the key was made in: at console.anthropic.com pick that organization (top left; Settings > API keys lists the key), then add credits under Settings > Billing. This checks again within a minute. No Publish needed.`,
       }
     } else if (status === 401 || status === 403 || /invalid x-api-key/i.test(msg)) {
       result = {
@@ -217,7 +221,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       key: 'enrich',
       ok: claude.ok,
       required: false,
-      label: 'Claude key, so enrichment searches the web for emails and profiles',
+      label: claude.label ?? 'Claude key, so enrichment searches the web for emails and profiles',
       fix: claude.fix,
     },
     {
