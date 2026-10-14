@@ -137,12 +137,20 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
   const channelsOn = (['email', 'linkedin', 'mail'] as const).filter((c) => !settings.channels[c])
   const claude = await claudeKeyCheck(deps)
   const refused = senders.find((i) => loginProblem(i) !== null)
+  // A Gmail inbox not signed in with Google whose saved password can never be an app password:
+  // Gmail will refuse it, so it is not a way to send even before the first refusal is seen.
+  const doomed = senders.find(
+    (i) =>
+      isGoogleMailHost(i.smtp_host) &&
+      !googleSignedIn(i) &&
+      appPasswordProblem(i.smtp_host, i.smtp_pass) !== null,
+  )
   const unread = replySyncFailures()[0]
 
   return [
     {
       key: 'inbox',
-      ok: (senders.length > 0 || envSender) && !refused,
+      ok: (senders.length > 0 || envSender) && !refused && !doomed,
       required: true,
       label:
         senders.length > 0
@@ -152,9 +160,11 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
         ? isGoogleMailHost(refused.smtp_host)
           ? loginFix(refused)
           : (appPasswordProblem(refused.smtp_host, refused.smtp_pass) ?? loginFix(refused))
-        : gmailNotSignedIn && senders.length === 0
-          ? googleSignInFix(gmailNotSignedIn.email, google ?? undefined)
-          : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
+        : doomed
+          ? `Gmail will refuse the saved password for ${doomed.email}, so nothing can send yet. ${googleSignInFix(doomed.email, google ?? undefined)}`
+          : gmailNotSignedIn && senders.length === 0
+            ? googleSignInFix(gmailNotSignedIn.email, google ?? undefined)
+            : 'Add each warmed inbox under Sending inboxes with its app password, then press Test.',
     },
     {
       key: 'replies',
