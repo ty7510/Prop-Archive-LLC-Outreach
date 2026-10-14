@@ -11,8 +11,8 @@ import { getDb, type Db } from '../db/client.ts'
 import { env, type Env } from '../env.ts'
 import { createGmailApi, noGmail, type GmailApi } from './gmail.ts'
 
-/** Spec section 2: the one model every Claude call uses. */
-export const CLAUDE_MODEL = 'claude-opus-5-5'
+/** Spec section 2: the one model every Claude call uses. Haiku 5.5 is the lowest-cost Claude model. */
+export const CLAUDE_MODEL = 'claude-haiku-5-5'
 
 /** A thin view of Claude: one plain sentence, or JSON matching a zod schema. null means "could not". */
 export interface Llm {
@@ -125,9 +125,11 @@ export function anthropicLlm(apiKey: string, workspaceId?: string): Llm {
   })
   return {
     async text(prompt, opts) {
+      // Thinking off: it counts toward max_tokens, and these caps are sized for the answer alone.
       const res = await client.messages.create({
         model: CLAUDE_MODEL,
         max_tokens: opts.maxTokens,
+        thinking: { type: 'disabled' },
         output_config: { effort: 'low' },
         ...(opts.system ? { system: opts.system } : {}),
         messages: [{ role: 'user', content: prompt }],
@@ -143,6 +145,7 @@ export function anthropicLlm(apiKey: string, workspaceId?: string): Llm {
       const res = await client.messages.parse({
         model: CLAUDE_MODEL,
         max_tokens: opts.maxTokens,
+        thinking: { type: 'disabled' },
         output_config: { effort: 'low', format: zodOutputFormat(schema) },
         ...(opts.system ? { system: opts.system } : {}),
         messages: [{ role: 'user', content: prompt }],

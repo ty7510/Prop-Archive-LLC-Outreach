@@ -45,7 +45,7 @@ thing that works and write it down in docs/DECISIONS.md.
   `npm run db:push` applies the development schema. Tests use isolated PostgreSQL schemas.
 - Validation: zod. Tests: vitest (+ supertest for API). Lint: eslint + prettier.
 - Email: nodemailer (SMTP) or Resend (HTTP). Inbox sync: imapflow (IMAP). Mail: Lob API via fetch.
-- AI: `@anthropic-ai/sdk`, model `claude-opus-5-5`, structured outputs via `output_config.format`,
+- AI: `@anthropic-ai/sdk`, model `claude-haiku-5-5`, structured outputs via `output_config.format`,
   web search server tool `web_search_20260209` for research enrichment. Reply classification and
   personalization also use it. Everything degrades to templates when `ANTHROPIC_API_KEY` is missing.
 - Scheduler: in-process tick every 60 s (`server/autopilot`). Replit-safe: single process.
@@ -271,7 +271,7 @@ stores raw payloads under `leads.enrichment[provider]`, recomputes `channels`, s
 'enriched'. Never overwrite a verified email with an unverified one.
 
 - `li_license`: described above, free.
-- `claude_research`: `@anthropic-ai/sdk`, `claude-opus-5-5`, `output_config.effort: 'low'`,
+- `claude_research`: `@anthropic-ai/sdk`, `claude-haiku-5-5`, `output_config.effort: 'low'`,
   tools `[{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }]`, structured output
   schema { full_name, company, website, linkedin_url, instagram_url, business_email,
   business_phone, confidence, sources: string[] }. Prompt: find the public business presence
@@ -295,7 +295,7 @@ never crash the batch. Each provider has a unit test with a mocked fetch.
 `{{trigger_line}}` (one sentence from the trigger, empty when none), `{{demo_link}}`, `{{beta_link}}`,
 `{{site_link}}`, `{{sender_name}}`, `{{unsubscribe_link}}`. Missing var renders empty and logs a warn.
 Optional AI first line: when `ANTHROPIC_API_KEY` exists and a step body contains `{{ai_opener}}`,
-generate one plain sentence (`claude-opus-5-5`, effort low, max 60 tokens) grounded ONLY in the lead's
+generate one plain sentence (`claude-haiku-5-5`, effort low, max 60 tokens) grounded ONLY in the lead's
 known facts (property count, neighborhood, trigger); never invent facts.
 
 **Email sender**: nodemailer SMTP (`SMTP_*`) or Resend (`RESEND_API_KEY`). Plain-text body plus a

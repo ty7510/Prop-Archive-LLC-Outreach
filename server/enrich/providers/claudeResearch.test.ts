@@ -127,7 +127,7 @@ describe('buildResearchPrompt and params', () => {
   it('uses the spec shape: model, effort high, json schema format, web search with max_uses 30', () => {
     const params = buildResearchParams('hello')
     expect(params.model).toBe(RESEARCH_MODEL)
-    expect(params.model).toBe('claude-opus-5-5')
+    expect(params.model).toBe('claude-haiku-5-5')
     expect(params.max_tokens).toBe(RESEARCH_MAX_TOKENS)
     expect(params.output_config?.effort).toBe('high')
     expect(params.output_config?.format?.type).toBe('json_schema')

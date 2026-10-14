@@ -19,7 +19,7 @@ import {
   type OwnerFacts,
 } from '../verify.ts'
 
-export const RESEARCH_MODEL = 'claude-opus-5-5'
+export const RESEARCH_MODEL = 'claude-haiku-5-5'
 export const RESEARCH_MAX_TOKENS = 16000
 export const RESEARCH_MAX_WEB_SEARCHES = 30
 export const RESEARCH_MAX_WEB_FETCHES = 12
