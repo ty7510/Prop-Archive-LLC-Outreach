@@ -8,6 +8,7 @@ import {
   createGmailApi,
   gmailInboxReader,
   GmailError,
+  CONNECT_STEPS,
   isGmailAuthError,
   type GmailApi,
   type GoogleAccount,
@@ -215,8 +216,7 @@ describe('createGmailApi', () => {
   })
 
   it('a stored "Google refused the sign-in" error is retried like a refused password', () => {
-    const error =
-      'Google refused the sign-in (401 UNAUTHENTICATED). Reconnect Gmail: In Replit, open this app, then All tools > Integrations > Gmail > Connect.'
+    const error = `Google refused the sign-in (401 UNAUTHENTICATED). Reconnect Gmail: ${CONNECT_STEPS}.`
     expect(canRetry({ status: 'failed', attempts: 2, error })).toBe(true)
   })
 })
@@ -415,6 +415,18 @@ describe('Sign in with Google', () => {
     expect(r.smtp.ok).toBe(false)
     expect(r.smtp.message).toMatch(/All tools > Integrations > Gmail > Connect/)
     expect(r.smtp.message).toMatch(/theo@proparchive\.biz/)
+  })
+
+  it('Test on a Gmail inbox with a saved normal password points at Google, not app passwords', async () => {
+    const { deps } = await setup({
+      gmail: fakeGmail({ ok: false, reason: 'not_connected', detail: 'Gmail is not connected' })
+        .api,
+    })
+    // 15 characters, like the password saved in production: never an app password.
+    const r = await testInbox(deps, gmailInbox({ smtp_pass: 'NotAnAppPass15!' }))
+    expect(r.google).toBe(true)
+    expect(r.smtp.message).toMatch(/added to this app/)
+    expect(r.imap.message).not.toMatch(/Use an app password/)
   })
 
   it('Test on a signed-in Gmail inbox sends one real email to itself and checks reading', async () => {
