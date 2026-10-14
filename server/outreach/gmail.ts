@@ -16,9 +16,12 @@ import type { ImapClient, ImapMessage, OutgoingMail } from './deps.ts'
 export const GMAIL_CONNECTOR = 'google-mail'
 export const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
-/** Where Theo connects it. Shown in every fix. */
+/**
+ * Where Theo connects it. Shown in every fix. Gmail signed in on his Replit account is not enough:
+ * the connection has to be added to this app too (Replit calls that state not_added).
+ */
 export const CONNECT_STEPS =
-  'In Replit, open this app, then All tools > Integrations > Gmail > Connect'
+  'In Replit, open this app, then All tools > Integrations > Gmail > Connect (if Gmail already shows on your Replit account it still has to be added to this app; or ask the Replit Agent in this app "Add the Gmail integration to this app")'
 
 export type GoogleAccount =
   | { ok: true; email: string }

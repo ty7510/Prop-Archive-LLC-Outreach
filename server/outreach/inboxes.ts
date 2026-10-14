@@ -366,14 +366,17 @@ export function mailErrorText(err: unknown): string {
     : base
 }
 
-function errorText(err: unknown): string {
+function errorText(err: unknown, inbox?: Pick<SendingInbox, 'email' | 'smtp_host'>): string {
   // imapflow puts the server's own words in responseText ("Command failed" is all the message says).
   const detail = err as { responseText?: unknown; authenticationFailed?: unknown }
   const base = err instanceof Error ? err.message : String(err)
   const msg =
     typeof detail.responseText === 'string' && detail.responseText ? detail.responseText : base
   if (detail.authenticationFailed === true || /auth|credential|password|535|534|login/i.test(msg)) {
-    return `Login refused: ${msg}. Use an app password, not your normal password.`
+    // On Google's servers the easier way in is Sign in with Google, not another password.
+    return inbox && isGoogleMailHost(inbox.smtp_host)
+      ? `Login refused: ${msg}. Or skip the password: ${googleSignInFix(inbox.email)}`
+      : `Login refused: ${msg}. Use an app password, not your normal password.`
   }
   return msg
 }
@@ -386,7 +389,10 @@ async function testGoogleInbox(
 ): Promise<InboxTestResult> {
   if (!googleSignedIn(inbox)) {
     const fix = googleSignInFix(inbox.email, acct)
-    return { smtp: { ok: false, message: fix }, imap: { ok: false, message: fix }, google: true }
+    // A saved password Gmail will refuse: say why, after the easier way in.
+    const shape = appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
+    const smtp = shape ? `${fix} Or, to use a password instead: ${shape}` : fix
+    return { smtp: { ok: false, message: smtp }, imap: { ok: false, message: fix }, google: true }
   }
   const result: InboxTestResult = {
     smtp: { ok: false, message: '' },
@@ -430,8 +436,14 @@ async function testGoogleInbox(
 export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promise<InboxTestResult> {
   if (isGoogleMailHost(inbox.smtp_host)) {
     const acct = await refreshGoogleAccount(deps, { fresh: true })
-    // Signed in with Google, or no password to try: Google sign-in is the way in.
-    if (googleSignedIn(inbox) || !inbox.smtp_pass) return testGoogleInbox(deps, inbox, acct)
+    // Signed in with Google, no password to try, or a saved password that cannot be an app
+    // password (Gmail will refuse it): Google sign-in is the way in, so the Test says how.
+    if (
+      googleSignedIn(inbox) ||
+      !inbox.smtp_pass ||
+      appPasswordProblem(inbox.smtp_host, inbox.smtp_pass)
+    )
+      return testGoogleInbox(deps, inbox, acct)
   }
   const result: InboxTestResult = {
     smtp: { ok: false, message: '' },
@@ -472,7 +484,7 @@ export async function testInbox(deps: OutreachDeps, inbox: SendingInbox): Promis
       await client.mailboxOpen('INBOX')
       result.imap = { ok: true, message: 'Replies will be read from this inbox' }
     } catch (err) {
-      result.imap = { ok: false, message: errorText(err) }
+      result.imap = { ok: false, message: errorText(err, inbox) }
     } finally {
       await client.logout().catch(() => undefined)
     }
