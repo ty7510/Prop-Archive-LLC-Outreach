@@ -106,7 +106,8 @@ export function trackedLinks(
 /** The variable values for one lead. Everything is a string; unknown facts are ''. */
 export function buildVars(lead: Lead, settings: Settings, ctx: LinkContext): TemplateVars {
   const split = splitName(lead.full_name)
-  const first = (lead.first_name ?? '').trim() || split.first_name
+  // Records give "Jay M" or "Thomas M.": the greeting drops the middle initial.
+  const first = ((lead.first_name ?? '').trim() || split.first_name).replace(/\s+[A-Za-z]\.?$/, '')
   const full = (lead.full_name ?? '').trim() || [first, lead.last_name ?? ''].join(' ').trim()
   return {
     first_name: first || 'there',

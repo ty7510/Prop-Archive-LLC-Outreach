@@ -404,6 +404,13 @@ export type QueueItem = z.infer<typeof QueueItemSchema>
 export const QueueSchema = z.object({
   groups: z.record(ChannelSchema, z.array(QueueItemSchema)),
   total: z.number().int().min(0),
+  /** Tasks Theo skipped in the last 7 days, so one skipped by mistake can come back. */
+  skipped_recently: z.array(QueueItemSchema),
+  /** Per channel: tasks done today and the daily goal (the channel's daily cap). */
+  today: z.record(
+    ChannelSchema,
+    z.object({ done: z.number().int().min(0), goal: z.number().int().min(0) }),
+  ),
 })
 export type Queue = z.infer<typeof QueueSchema>
 

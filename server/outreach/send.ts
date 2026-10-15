@@ -3,7 +3,7 @@
 // row is marked `sending` right before the provider call. A row left in `sending` (the process died
 // mid-send) is never resent by the machine: its outcome is unknown and only Theo can check.
 import { createHmac } from 'node:crypto'
-import { and, asc, eq, gt, inArray, isNull, lte, or } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm'
 import { isGoogleMailHost, type SendingInbox, type Settings } from '../../shared/settings.ts'
 import { HUMAN_CHANNELS, type Channel, type MessageStatus } from '../../shared/types.ts'
 import {
@@ -102,6 +102,198 @@ async function loadDue(deps: OutreachDeps, nowIso: string): Promise<DueRow[]> {
   return rows
 }
 
+/**
+ * Theo's LinkedIn goal is the LinkedIn daily cap. While he is under it, the next LinkedIn notes
+ * come up now instead of on their day: enrollments whose next step is their sequence's first
+ * LinkedIn step (after the email before it) and whose profile research found, soonest first.
+ */
+async function loadUpcomingLinkedIn(
+  deps: OutreachDeps,
+  nowIso: string,
+  limit: number,
+): Promise<DueRow[]> {
+  if (limit <= 0) return []
+  const rows = await deps.db
+    .select({ enrollment: enrollments, lead: leads, sequence: sequences })
+    .from(enrollments)
+    .innerJoin(leads, eq(leads.id, enrollments.lead_id))
+    .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
+    .innerJoin(
+      sequenceSteps,
+      and(
+        eq(sequenceSteps.sequence_id, enrollments.sequence_id),
+        eq(sequenceSteps.step_index, enrollments.current_step),
+      ),
+    )
+    .where(
+      and(
+        eq(enrollments.status, 'active'),
+        gt(enrollments.next_send_at, nowIso),
+        // Never a first step: an enrollment started for a later date keeps that date.
+        gt(enrollments.current_step, 0),
+        eq(sequenceSteps.channel, 'linkedin'),
+        eq(sequences.active, true),
+        sql`trim(coalesce(${leads.linkedin_url}, '')) <> ''`,
+      ),
+    )
+    .orderBy(asc(enrollments.next_send_at))
+    .limit(limit * 4)
+  const firstLinkedIn = new Map<string, number | undefined>()
+  const out: DueRow[] = []
+  for (const row of rows) {
+    if (!firstLinkedIn.has(row.sequence.id)) {
+      const steps = await stepsFor(deps, row.sequence.id)
+      firstLinkedIn.set(row.sequence.id, steps.find((s) => s.channel === 'linkedin')?.step_index)
+    }
+    // A second LinkedIn step (a message after the connection) keeps its wait.
+    if (firstLinkedIn.get(row.sequence.id) !== row.enrollment.current_step) continue
+    out.push(row)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/** One LinkedIn profile, however the link was written. */
+function profileKey(url: string): string {
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split(/[?#]/)[0]!
+    .replace(/\/+$/, '')
+}
+
+/**
+ * Leads already past their sequence's first LinkedIn step that never got the note (research found
+ * the profile after the step was skipped) get it now, while Theo is under his LinkedIn goal. One
+ * note per person: a lead or profile with a LinkedIn task already (done, waiting, or skipped by
+ * Theo) is left alone. The enrollment does not move, so the emails and the postcard keep their
+ * dates. Returns how many tasks it queued.
+ */
+async function catchUpLinkedIn(
+  deps: OutreachDeps,
+  settings: Settings,
+  limit: number,
+): Promise<number> {
+  if (limit <= 0) return 0
+  const { db } = deps
+  const rows = await db
+    .select({ enrollment: enrollments, lead: leads, sequence: sequences, step: sequenceSteps })
+    .from(enrollments)
+    .innerJoin(leads, eq(leads.id, enrollments.lead_id))
+    .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
+    .innerJoin(sequenceSteps, eq(sequenceSteps.sequence_id, enrollments.sequence_id))
+    .where(
+      and(
+        eq(enrollments.status, 'active'),
+        eq(sequences.active, true),
+        eq(sequenceSteps.channel, 'linkedin'),
+        lt(sequenceSteps.step_index, enrollments.current_step),
+        sql`trim(coalesce(${leads.linkedin_url}, '')) <> ''`,
+      ),
+    )
+    .orderBy(desc(leads.icp_score), asc(enrollments.started_at))
+    .limit(500)
+  if (rows.length === 0) return 0
+
+  const neverReached = (m: Pick<Message, 'status' | 'error'>) =>
+    (m.status === 'skipped' || m.status === 'failed') &&
+    NEVER_REACHED_ERRORS.includes(m.error ?? '')
+  const taskLeads = new Set<string>()
+  const taskProfiles = new Set<string>()
+  for (const m of await db
+    .select({
+      lead_id: messages.lead_id,
+      to_address: messages.to_address,
+      status: messages.status,
+      error: messages.error,
+    })
+    .from(messages)
+    .where(and(eq(messages.channel, 'linkedin'), eq(messages.direction, 'out')))) {
+    if (neverReached(m)) continue
+    taskLeads.add(m.lead_id)
+    if (m.to_address?.trim()) taskProfiles.add(profileKey(m.to_address))
+  }
+
+  const stepsCache = new Map<string, SequenceStep[]>()
+  const now = deps.now().toISOString()
+  let queued = 0
+  for (const { enrollment, lead, sequence, step } of rows) {
+    if (queued >= limit) break
+    const profile = lead.linkedin_url!.trim()
+    if (taskLeads.has(lead.id) || taskProfiles.has(profileKey(profile))) continue
+    let steps = stepsCache.get(sequence.id)
+    if (!steps) {
+      steps = await stepsFor(deps, sequence.id)
+      stepsCache.set(sequence.id, steps)
+    }
+    if (steps.find((s) => s.channel === 'linkedin')?.step_index !== step.step_index) continue
+    if (await contactBlocker(db, lead)) continue
+    const key = idempotencyKey(enrollment.id, step.step_index, enrollment.run)
+    const existing = (
+      await db.select().from(messages).where(eq(messages.idempotency_key, key)).limit(1)
+    )[0]
+    if (existing && !neverReached(existing)) continue
+
+    const rendered = await renderStepForLead(
+      step,
+      lead,
+      settings,
+      { baseUrl: deps.baseUrl, channel: 'linkedin', sequenceName: sequence.name },
+      deps.llm,
+    )
+    const task = {
+      subject: null,
+      body: rendered.body,
+      to_address: profile,
+      status: 'ready_for_human' as const,
+      provider: 'human',
+      error: null,
+    }
+    let message: Message
+    if (existing) {
+      await db.update(messages).set(task).where(eq(messages.id, existing.id))
+      message = { ...existing, ...task }
+    } else {
+      message = {
+        id: newId(),
+        lead_id: lead.id,
+        enrollment_id: enrollment.id,
+        step_id: step.id,
+        channel: 'linkedin',
+        direction: 'out',
+        idempotency_key: key,
+        provider_message_id: null,
+        scheduled_at: now,
+        sent_at: null,
+        attempts: 0,
+        classification: null,
+        raw: null,
+        created_at: now,
+        ...task,
+      }
+      try {
+        await db.insert(messages).values(message)
+      } catch {
+        continue // another run took this key first
+      }
+    }
+    taskLeads.add(lead.id)
+    taskProfiles.add(profileKey(profile))
+    await db.insert(events).values({
+      id: newId(),
+      lead_id: lead.id,
+      kind: 'queued',
+      detail: { sequence: sequence.name, channel: 'linkedin', step: step.step_index },
+      at: now,
+    })
+    await notifyHumanQueueWebhook(deps, settings, message, lead)
+    queued++
+  }
+  return queued
+}
+
 async function stepsFor(deps: OutreachDeps, sequenceId: string): Promise<SequenceStep[]> {
   return deps.db
     .select()
@@ -167,7 +359,10 @@ async function advance(
     // profile) keeps the schedule, so two emails never land days early, close together.
     const delay =
       outcome === 'unreachable' && row.enrollment.current_step === 0 ? 0 : next.delay_days
-    const at = nextSendAt(settings, now, delay, deps.random)
+    // A LinkedIn note pulled ahead of its day (Theo is under his daily goal) leaves the steps
+    // after it on their own dates: count from the day it was due, not from now.
+    const dueAt = row.enrollment.next_send_at ? new Date(row.enrollment.next_send_at) : now
+    const at = nextSendAt(settings, dueAt > now ? dueAt : now, delay, deps.random)
     await db
       .update(enrollments)
       .set({ current_step: nextIndex, next_send_at: at ? at.toISOString() : null })
@@ -494,8 +689,10 @@ async function sendDueUnlocked(
   let waitingForReplies = 0
   let waitingForGap = 0
   const due = await loadDue(deps, now.toISOString())
-  if (due.length === 0) return result
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
+  const linkedInRoom = () => (settings.channels.linkedin ? remaining.linkedin : 0)
+  const early = new Set(await loadUpcomingLinkedIn(deps, now.toISOString(), linkedInRoom()))
+  if (due.length === 0 && early.size === 0 && linkedInRoom() === 0) return result
   const stepsCache = new Map<string, SequenceStep[]>()
   const refusedNoAddress = new Set<Channel>()
   let day: InboxDay | null = null
@@ -516,7 +713,9 @@ async function sendDueUnlocked(
     )
   }
 
-  for (const row of due) {
+  for (const row of [...due, ...early]) {
+    // Notes pulled ahead of their day only fill what is left of today's LinkedIn goal.
+    if (early.has(row) && linkedInRoom() <= 0) break
     let channel: Channel = row.sequence.channel
     try {
       if (options.onlyLinkedIn) {
@@ -877,6 +1076,10 @@ async function sendDueUnlocked(
     }
   }
 
+  const caughtUp = await catchUpLinkedIn(deps, settings, linkedInRoom())
+  remaining.linkedin -= caughtUp
+  result.queued += caughtUp
+
   if (result.sent + result.dryRun + result.queued + result.skipped > 0) {
     await logActivity(
       'info',
@@ -887,6 +1090,7 @@ async function sendDueUnlocked(
         ...(waitingForReplies > 0 ? { waiting_for_reply_check: waitingForReplies } : {}),
         ...(waitingForGap > 0 ? { waiting_for_recipient_gap: waitingForGap } : {}),
         ...(restarted > 0 ? { restarted } : {}),
+        ...(caughtUp > 0 ? { linkedin_caught_up: caughtUp } : {}),
       },
       null,
       db,
