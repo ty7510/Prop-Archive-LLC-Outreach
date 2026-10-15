@@ -163,21 +163,27 @@ export async function updateSequence(
   if (input.steps) {
     // Preserve identity for text edits so pending messages still identify their exact step.
     const replacements = stepRows(id, channel, input.steps)
-    const kept = new Set<string>()
+    const removed = current.steps
+      .filter(
+        (old) =>
+          !replacements.some((s) => s.step_index === old.step_index && s.channel === old.channel),
+      )
+      .map((s) => s.id)
+    if (removed.length)
+      await deps.db.delete(sequenceSteps).where(inArray(sequenceSteps.id, removed))
     for (const replacement of replacements) {
       const old = current.steps.find(
         (s) => s.step_index === replacement.step_index && s.channel === replacement.channel,
       )
       if (old) {
-        kept.add(old.id)
-        await deps.db.update(sequenceSteps).set({ ...replacement, id: old.id })
+        await deps.db
+          .update(sequenceSteps)
+          .set({ ...replacement, id: old.id })
           .where(eq(sequenceSteps.id, old.id))
       } else {
         await deps.db.insert(sequenceSteps).values(replacement)
       }
     }
-    const removed = current.steps.filter((s) => !kept.has(s.id)).map((s) => s.id)
-    if (removed.length) await deps.db.delete(sequenceSteps).where(inArray(sequenceSteps.id, removed))
   }
   await logActivity(
     'info',

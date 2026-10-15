@@ -33,7 +33,8 @@ export const CAP_STATUSES = ['sent', 'ready_for_human', 'dry_run'] as const
 
 /**
  * Outbound messages per channel that count against today's cap in the send window's zone:
- * rows created today with a capped status, plus anything with a sent_at today.
+ * rows created today with a capped status, anything sent today, and all pending human tasks.
+ * Pending tasks reserve slots even across midnight; skipping releases the reservation.
  */
 export async function countTodayByChannel(
   db: Db,

@@ -483,7 +483,10 @@ async function sendDueUnlocked(
   await skipProfilelessTasks(deps)
   // Inboxes on Google's servers may send through Sign in with Google: learn (cached a minute)
   // whether it is connected before deciding which inbox may send.
-  if (!options.onlyLinkedIn && settings.sending_inboxes.some((i) => i.active && isGoogleMailHost(i.smtp_host))) {
+  if (
+    !options.onlyLinkedIn &&
+    settings.sending_inboxes.some((i) => i.active && isGoogleMailHost(i.smtp_host))
+  ) {
     await refreshGoogleAccount(deps)
   }
   const restarted = options.onlyLinkedIn ? 0 : await restartUntouched(deps, settings)
@@ -517,9 +520,10 @@ async function sendDueUnlocked(
     let channel: Channel = row.sequence.channel
     try {
       if (options.onlyLinkedIn) {
-        const steps = stepsCache.get(row.sequence.id) ?? await stepsFor(deps, row.sequence.id)
+        const steps = stepsCache.get(row.sequence.id) ?? (await stepsFor(deps, row.sequence.id))
         stepsCache.set(row.sequence.id, steps)
-        if (steps.find((s) => s.step_index === row.enrollment.current_step)?.channel !== 'linkedin') continue
+        if (steps.find((s) => s.step_index === row.enrollment.current_step)?.channel !== 'linkedin')
+          continue
       }
       const blocker = await contactBlocker(db, row.lead)
       if (blocker) {

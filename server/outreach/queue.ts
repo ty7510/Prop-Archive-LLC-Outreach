@@ -1,7 +1,15 @@
 // The human queue: ready_for_human messages, done / skip, and the print page for letters.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Queue, QueueActionResult, QueueItem } from '../../shared/types.ts'
-import { enrollments, events, leads, messages, sequenceSteps, sequences, type Message } from '../db/schema.ts'
+import {
+  enrollments,
+  events,
+  leads,
+  messages,
+  sequenceSteps,
+  sequences,
+  type Message,
+} from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { badRequest, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
@@ -13,25 +21,42 @@ import { sendDue } from './send.ts'
 
 /** Pending LinkedIn notes follow the template; completed history remains a snapshot. */
 async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promise<string> {
-  if (message.channel !== 'linkedin' || message.status !== 'ready_for_human' || !message.enrollment_id) {
+  if (
+    message.channel !== 'linkedin' ||
+    message.status !== 'ready_for_human' ||
+    !message.enrollment_id
+  ) {
     return message.body
   }
-  const [context] = await deps.db.select({ lead: leads, sequence: sequences })
+  const [context] = await deps.db
+    .select({ lead: leads, sequence: sequences })
     .from(enrollments)
     .innerJoin(leads, eq(leads.id, enrollments.lead_id))
     .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
     .where(eq(enrollments.id, message.enrollment_id))
   if (!context) return message.body
-  const steps = await deps.db.select().from(sequenceSteps).where(
-    and(eq(sequenceSteps.sequence_id, context.sequence.id), eq(sequenceSteps.channel, 'linkedin')),
-  )
+  const steps = await deps.db
+    .select()
+    .from(sequenceSteps)
+    .where(
+      and(
+        eq(sequenceSteps.sequence_id, context.sequence.id),
+        eq(sequenceSteps.channel, 'linkedin'),
+      ),
+    )
   // Older edits deleted step IDs. Recover only when there is one unambiguous LinkedIn step.
-  const step = steps.find((s) => s.id === message.step_id) ?? (steps.length === 1 ? steps[0] : undefined)
+  const step =
+    steps.find((s) => s.id === message.step_id) ?? (steps.length === 1 ? steps[0] : undefined)
   if (!step || step.body.includes('{{ai_opener}}')) return message.body
   const settings = await getSettings(deps.db)
-  return renderTemplate(step.body, buildVars(context.lead, settings, {
-    baseUrl: deps.baseUrl, channel: 'linkedin', sequenceName: context.sequence.name,
-  })).text
+  return renderTemplate(
+    step.body,
+    buildVars(context.lead, settings, {
+      baseUrl: deps.baseUrl,
+      channel: 'linkedin',
+      sequenceName: context.sequence.name,
+    }),
+  ).text
 }
 
 function personOf(lead: { full_name: string | null; company: string | null }): string {
@@ -120,7 +145,21 @@ export async function actOnQueueItem(
   await logActivity('info', `queue_${action}`, { channel: msg.channel }, msg.lead_id, db)
   if (action === 'skip' && msg.channel === 'linkedin') {
     // Refill this human channel only. Never send email as a side effect of a skip.
-    await sendDue(deps, { onlyLinkedIn: true })
+    try {
+      await sendDue(deps, { onlyLinkedIn: true })
+    } catch (error) {
+      // The skip already succeeded. Preserve that result; the scheduler can retry the refill.
+      await logActivity(
+        'error',
+        'queue_refill_failed',
+        {
+          channel: msg.channel,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        msg.lead_id,
+        db,
+      )
+    }
   }
   return { message_id: messageId, status }
 }
