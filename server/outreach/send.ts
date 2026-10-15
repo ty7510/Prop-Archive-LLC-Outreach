@@ -516,6 +516,11 @@ async function sendDueUnlocked(
   for (const row of due) {
     let channel: Channel = row.sequence.channel
     try {
+      if (options.onlyLinkedIn) {
+        const steps = stepsCache.get(row.sequence.id) ?? await stepsFor(deps, row.sequence.id)
+        stepsCache.set(row.sequence.id, steps)
+        if (steps.find((s) => s.step_index === row.enrollment.current_step)?.channel !== 'linkedin') continue
+      }
       const blocker = await contactBlocker(db, row.lead)
       if (blocker) {
         await stopLead(deps, row.lead.id, blocker)

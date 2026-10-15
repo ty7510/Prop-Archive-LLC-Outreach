@@ -161,9 +161,23 @@ export async function updateSequence(
     })
     .where(eq(sequences.id, id))
   if (input.steps) {
-    // Replace all steps. Old step ids go away; message rows keep working (step_id is set null on delete).
-    await deps.db.delete(sequenceSteps).where(eq(sequenceSteps.sequence_id, id))
-    await deps.db.insert(sequenceSteps).values(stepRows(id, channel, input.steps))
+    // Preserve identity for text edits so pending messages still identify their exact step.
+    const replacements = stepRows(id, channel, input.steps)
+    const kept = new Set<string>()
+    for (const replacement of replacements) {
+      const old = current.steps.find(
+        (s) => s.step_index === replacement.step_index && s.channel === replacement.channel,
+      )
+      if (old) {
+        kept.add(old.id)
+        await deps.db.update(sequenceSteps).set({ ...replacement, id: old.id })
+          .where(eq(sequenceSteps.id, old.id))
+      } else {
+        await deps.db.insert(sequenceSteps).values(replacement)
+      }
+    }
+    const removed = current.steps.filter((s) => !kept.has(s.id)).map((s) => s.id)
+    if (removed.length) await deps.db.delete(sequenceSteps).where(inArray(sequenceSteps.id, removed))
   }
   await logActivity(
     'info',
