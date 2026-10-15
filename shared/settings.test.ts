@@ -43,7 +43,7 @@ describe('DEFAULT_SETTINGS', () => {
     expect(DEFAULT_SETTINGS.daily_caps).toEqual({
       email: 20,
       mail: 10,
-      linkedin: 15,
+      linkedin: 25,
       instagram: 10,
       call: 10,
     })

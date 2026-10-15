@@ -20,7 +20,7 @@ import type { OutreachDeps } from './deps.ts'
 import { contactBlocker } from './enroll.ts'
 import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { buildVars, renderTemplate } from './templates.ts'
-import { sendDue } from './send.ts'
+import { profileKey, sendDue } from './send.ts'
 
 /** Pending LinkedIn notes follow the template; completed history remains a snapshot. */
 async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promise<string> {
@@ -102,6 +102,44 @@ function toItem(r: Awaited<ReturnType<typeof queueRows>>[number], body: string):
   }
 }
 
+/**
+ * Does someone already have a LinkedIn note waiting or sent from another sequence or lead row?
+ * Notes of the message's own enrollment (a message after they connect) do not count.
+ */
+async function linkedInNoteHolders(deps: OutreachDeps, exceptId?: string) {
+  const rows = (
+    await deps.db
+      .select({
+        id: messages.id,
+        lead_id: messages.lead_id,
+        enrollment_id: messages.enrollment_id,
+        to_address: messages.to_address,
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.channel, 'linkedin'),
+          eq(messages.direction, 'out'),
+          inArray(messages.status, ['ready_for_human', 'sent']),
+        ),
+      )
+  ).filter((r) => r.id !== exceptId)
+  return (m: Pick<Message, 'lead_id' | 'enrollment_id' | 'to_address'>) => {
+    const profile = m.to_address?.trim() ? profileKey(m.to_address) : null
+    return rows.some(
+      (r) =>
+        (!m.enrollment_id || r.enrollment_id !== m.enrollment_id) &&
+        (r.lead_id === m.lead_id ||
+          (profile !== null && !!r.to_address?.trim() && profileKey(r.to_address) === profile)),
+    )
+  }
+}
+
+/** A LinkedIn or Instagram task with no profile to open cannot be done. */
+function noProfile(m: Pick<Message, 'channel' | 'to_address'>): boolean {
+  return (m.channel === 'linkedin' || m.channel === 'instagram') && !m.to_address?.trim()
+}
+
 /** How far back a skip can still be undone. */
 const BRING_BACK_DAYS = 7
 
@@ -132,9 +170,20 @@ async function skippedRecently(deps: OutreachDeps): Promise<QueueItem[]> {
       inArray(messages.lead_id, [...new Set([...keys].map((k) => k.split(':')[0]!))]),
     ),
   )
-  return rows
-    .filter((r) => keys.has(`${r.message.lead_id}:${r.message.channel}`))
-    .map((r) => toItem(r, r.message.body))
+  // Not one with no profile, not someone who has a note again, and each person once (newest).
+  const hasNote = await linkedInNoteHolders(deps)
+  const seen = new Set<string>()
+  const items: QueueItem[] = []
+  for (const r of [...rows].reverse()) {
+    const m = r.message
+    if (!keys.has(`${m.lead_id}:${m.channel}`) || noProfile(m)) continue
+    if (m.channel === 'linkedin' && hasNote(m)) continue
+    const person = `${m.channel}:${m.to_address?.trim() ? profileKey(m.to_address) : m.lead_id}`
+    if (seen.has(person)) continue
+    seen.add(person)
+    items.push(toItem(r, m.body))
+  }
+  return items.reverse()
 }
 
 /** Per channel: tasks Theo marked done today, and his daily goal (the channel's daily cap). */
@@ -272,6 +321,10 @@ export async function restoreQueueItem(
       `This person is not to be contacted now (${blocker.replace(/_/g, ' ')})`,
       'LEAD_BLOCKED',
     )
+  }
+  if (noProfile(msg)) throw badRequest('There is no profile to open for this person', 'NO_PROFILE')
+  if (msg.channel === 'linkedin' && (await linkedInNoteHolders(deps, msg.id))(msg)) {
+    throw badRequest('This person already has a LinkedIn note', 'ALREADY_HAS_NOTE')
   }
   const now = deps.now().toISOString()
   await db

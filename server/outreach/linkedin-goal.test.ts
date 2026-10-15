@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { enrollments, leads, messages } from '../db/schema.ts'
 import { enrollLead } from './enroll.ts'
 import { actOnQueueItem, listQueue, restoreQueueItem } from './queue.ts'
-import { sendDue } from './send.ts'
+import { DUPLICATE_LINKEDIN_ERROR, sendDue } from './send.ts'
 import { updateSequence } from './sequences.ts'
 import { insertLead, insertSequence, setSettings, setup } from './testFixtures.ts'
 
@@ -202,5 +202,75 @@ describe('Bring back a task skipped by mistake', () => {
       code: 'NOT_SKIPPED_BY_YOU',
     })
     expect((await listQueue(deps)).skipped_recently).toHaveLength(0)
+  })
+})
+
+describe('one LinkedIn note per person', () => {
+  it('keeps one waiting task per person and skips the extra copies', async () => {
+    const { db, deps } = await goalSetup(25)
+    const lead = await insertLead(db)
+    const task = {
+      lead_id: lead.id,
+      channel: 'linkedin' as const,
+      direction: 'out' as const,
+      status: 'ready_for_human' as const,
+      provider: 'human',
+      body: 'note',
+      to_address: lead.linkedin_url,
+    }
+    await db.insert(messages).values([
+      { ...task, id: 'old', idempotency_key: 'k-old', created_at: '2026-10-13T12:00:00.000Z' },
+      { ...task, id: 'new', idempotency_key: 'k-new', created_at: '2026-10-13T13:00:00.000Z' },
+    ])
+    await sendDue(deps)
+    const rows = await db.select().from(messages)
+    expect(rows.find((m) => m.id === 'new')!.status).toBe('ready_for_human')
+    expect(rows.find((m) => m.id === 'old')).toMatchObject({
+      status: 'skipped',
+      error: DUPLICATE_LINKEDIN_ERROR,
+    })
+    expect((await listQueue(deps)).groups.linkedin).toHaveLength(1)
+  })
+
+  it('two lead rows with one profile get one note', async () => {
+    const { db, deps, sequence } = await goalSetup(25)
+    const profile = 'https://www.linkedin.com/in/one-person'
+    const a = await insertLead(db, { linkedin_url: profile })
+    const b = await insertLead(db, { linkedin_url: `${profile}/` })
+    for (const p of [a, b]) await enrollLead(deps, p.id, sequence.id)
+    await sendDue(deps) // email 1 for both
+    await sendDue(deps) // the notes come up early: only one
+    const waiting = (await linkedInTasks(db)).filter((t) => t.status === 'ready_for_human')
+    expect(waiting).toHaveLength(1)
+    const other = waiting[0]!.lead_id === a.id ? b : a
+    const enr = (await db.select().from(enrollments)).find((e) => e.lead_id === other.id)!
+    expect(enr.current_step).toBe(2) // its LinkedIn step was skipped, the emails go on
+  })
+
+  it('Bring back refuses someone who already has a note, and the list hides them', async () => {
+    const { db, deps, sequence } = await goalSetup(25)
+    const lead = await insertLead(db)
+    await enrollLead(deps, lead.id, sequence.id)
+    await sendDue(deps)
+    await sendDue(deps)
+    const [first] = await linkedInTasks(db)
+    await actOnQueueItem(deps, first!.id, 'skip')
+    // An older task for the same person is waiting (brought back earlier).
+    await db.insert(messages).values({
+      id: 'waiting',
+      idempotency_key: 'k-waiting',
+      lead_id: lead.id,
+      channel: 'linkedin',
+      direction: 'out',
+      status: 'ready_for_human',
+      provider: 'human',
+      body: 'note',
+      to_address: lead.linkedin_url,
+      created_at: '2026-10-12T12:00:00.000Z',
+    })
+    expect((await listQueue(deps)).skipped_recently).toHaveLength(0)
+    await expect(restoreQueueItem(deps, first!.id)).rejects.toMatchObject({
+      code: 'ALREADY_HAS_NOTE',
+    })
   })
 })

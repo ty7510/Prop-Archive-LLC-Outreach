@@ -154,7 +154,7 @@ async function loadUpcomingLinkedIn(
 }
 
 /** One LinkedIn profile, however the link was written. */
-function profileKey(url: string): string {
+export function profileKey(url: string): string {
   return url
     .trim()
     .toLowerCase()
@@ -162,6 +162,74 @@ function profileKey(url: string): string {
     .replace(/^www\./, '')
     .split(/[?#]/)[0]!
     .replace(/\/+$/, '')
+}
+
+/** Who already has a LinkedIn note: waiting, sent, or skipped by Theo. One note per person. */
+interface LinkedInTaken {
+  leads: Set<string>
+  profiles: Set<string>
+}
+
+function isTaken(taken: LinkedInTaken, lead: Pick<Lead, 'id' | 'linkedin_url'>): boolean {
+  const profile = lead.linkedin_url?.trim()
+  return taken.leads.has(lead.id) || (!!profile && taken.profiles.has(profileKey(profile)))
+}
+
+function markTaken(taken: LinkedInTaken, lead: Pick<Lead, 'id' | 'linkedin_url'>): void {
+  taken.leads.add(lead.id)
+  const profile = lead.linkedin_url?.trim()
+  if (profile) taken.profiles.add(profileKey(profile))
+}
+
+async function loadLinkedInTaken(deps: OutreachDeps): Promise<LinkedInTaken> {
+  const taken: LinkedInTaken = { leads: new Set(), profiles: new Set() }
+  const rows = await deps.db
+    .select({ lead_id: messages.lead_id, to_address: messages.to_address })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.channel, 'linkedin'),
+        eq(messages.direction, 'out'),
+        or(
+          inArray(messages.status, ['ready_for_human', 'sent']),
+          and(eq(messages.status, 'skipped'), isNull(messages.error)),
+        ),
+      ),
+    )
+  for (const m of rows) markTaken(taken, { id: m.lead_id, linkedin_url: m.to_address })
+  return taken
+}
+
+export const DUPLICATE_LINKEDIN_ERROR = 'this person already has a LinkedIn note'
+
+/**
+ * One waiting LinkedIn task per person (by lead and by profile link): an old task brought back
+ * next to a newer one, or two lead rows with one profile. The newest stays; the rest are skipped.
+ */
+async function skipDuplicateLinkedInTasks(deps: OutreachDeps): Promise<void> {
+  const waiting = await deps.db
+    .select({ id: messages.id, lead_id: messages.lead_id, to_address: messages.to_address })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.status, 'ready_for_human'),
+        eq(messages.channel, 'linkedin'),
+        eq(messages.direction, 'out'),
+      ),
+    )
+    .orderBy(desc(messages.created_at), desc(messages.id))
+  const seen: LinkedInTaken = { leads: new Set(), profiles: new Set() }
+  const extra: string[] = []
+  for (const m of waiting) {
+    const lead = { id: m.lead_id, linkedin_url: m.to_address }
+    if (isTaken(seen, lead)) extra.push(m.id)
+    else markTaken(seen, lead)
+  }
+  if (extra.length === 0) return
+  await deps.db
+    .update(messages)
+    .set({ status: 'skipped', error: DUPLICATE_LINKEDIN_ERROR })
+    .where(inArray(messages.id, extra))
 }
 
 /**
@@ -174,6 +242,7 @@ function profileKey(url: string): string {
 async function catchUpLinkedIn(
   deps: OutreachDeps,
   settings: Settings,
+  taken: LinkedInTaken,
   limit: number,
 ): Promise<number> {
   if (limit <= 0) return 0
@@ -200,21 +269,6 @@ async function catchUpLinkedIn(
   const neverReached = (m: Pick<Message, 'status' | 'error'>) =>
     (m.status === 'skipped' || m.status === 'failed') &&
     NEVER_REACHED_ERRORS.includes(m.error ?? '')
-  const taskLeads = new Set<string>()
-  const taskProfiles = new Set<string>()
-  for (const m of await db
-    .select({
-      lead_id: messages.lead_id,
-      to_address: messages.to_address,
-      status: messages.status,
-      error: messages.error,
-    })
-    .from(messages)
-    .where(and(eq(messages.channel, 'linkedin'), eq(messages.direction, 'out')))) {
-    if (neverReached(m)) continue
-    taskLeads.add(m.lead_id)
-    if (m.to_address?.trim()) taskProfiles.add(profileKey(m.to_address))
-  }
 
   const stepsCache = new Map<string, SequenceStep[]>()
   const now = deps.now().toISOString()
@@ -222,7 +276,7 @@ async function catchUpLinkedIn(
   for (const { enrollment, lead, sequence, step } of rows) {
     if (queued >= limit) break
     const profile = lead.linkedin_url!.trim()
-    if (taskLeads.has(lead.id) || taskProfiles.has(profileKey(profile))) continue
+    if (isTaken(taken, lead)) continue
     let steps = stepsCache.get(sequence.id)
     if (!steps) {
       steps = await stepsFor(deps, sequence.id)
@@ -279,8 +333,7 @@ async function catchUpLinkedIn(
         continue // another run took this key first
       }
     }
-    taskLeads.add(lead.id)
-    taskProfiles.add(profileKey(profile))
+    markTaken(taken, lead)
     await db.insert(events).values({
       id: newId(),
       lead_id: lead.id,
@@ -676,6 +729,7 @@ async function sendDueUnlocked(
   if (!isWithinSendWindow(settings, now)) return result
 
   await skipProfilelessTasks(deps)
+  await skipDuplicateLinkedInTasks(deps)
   // Inboxes on Google's servers may send through Sign in with Google: learn (cached a minute)
   // whether it is connected before deciding which inbox may send.
   if (
@@ -692,6 +746,7 @@ async function sendDueUnlocked(
   const remaining = remainingToday(settings, await countTodayByChannel(db, settings, now))
   const linkedInRoom = () => (settings.channels.linkedin ? remaining.linkedin : 0)
   const early = new Set(await loadUpcomingLinkedIn(deps, now.toISOString(), linkedInRoom()))
+  const taken = await loadLinkedInTaken(deps)
   if (due.length === 0 && early.size === 0 && linkedInRoom() === 0) return result
   const stepsCache = new Map<string, SequenceStep[]>()
   const refusedNoAddress = new Set<Channel>()
@@ -829,6 +884,28 @@ async function sendDueUnlocked(
         continue
       }
 
+      // One connection note per person: another lead row or an older task already has them. A
+      // later LinkedIn step (a message after they connect) follows its own enrollment.
+      const firstLinkedIn = steps.find((s) => s.channel === 'linkedin')?.step_index
+      if (channel === 'linkedin' && step.step_index === firstLinkedIn && isTaken(taken, row.lead)) {
+        if (existing) {
+          await db
+            .update(messages)
+            .set({ status: 'skipped', error: DUPLICATE_LINKEDIN_ERROR })
+            .where(eq(messages.id, existing.id))
+        }
+        await advance(deps, settings, row, steps, 'skipped')
+        await logActivity(
+          'info',
+          'send_step_skipped',
+          { channel, error: DUPLICATE_LINKEDIN_ERROR },
+          row.lead.id,
+          db,
+        )
+        result.skipped++
+        continue
+      }
+
       // Never spam: one person, not one lead row. No second email to them inside the gap (the step
       // waits); one postcard per mailing address (the step is skipped).
       const block = await recipientBlocker(db, settings, row.lead, channel, now)
@@ -944,6 +1021,7 @@ async function sendDueUnlocked(
 
       if (human) {
         await finish('ready_for_human', { provider: 'human' })
+        if (channel === 'linkedin') markTaken(taken, row.lead)
         remaining[channel]--
         result.queued++
         await advance(deps, settings, row, steps, 'queued')
@@ -1076,7 +1154,7 @@ async function sendDueUnlocked(
     }
   }
 
-  const caughtUp = await catchUpLinkedIn(deps, settings, linkedInRoom())
+  const caughtUp = await catchUpLinkedIn(deps, settings, taken, linkedInRoom())
   remaining.linkedin -= caughtUp
   result.queued += caughtUp
 
