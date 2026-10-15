@@ -147,7 +147,7 @@ function SequenceCard({ seq, main = false }: { seq: Sequence; main?: boolean }) 
   const flow = stepChannels(seq)
   const toggle = useAction((active: boolean) => updateSequence(seq.id, { active }), {
     success: (r) => (r.active ? `${r.name} is on` : `${r.name} is paused`),
-    invalidate: [['sequences'], ['readiness']],
+    invalidate: [['sequences'], ['readiness'], ['queue']],
   })
   return (
     <article className="card flex flex-col gap-3">

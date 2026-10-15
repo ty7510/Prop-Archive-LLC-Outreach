@@ -53,7 +53,7 @@ describe('nextSendAt', () => {
 })
 
 describe('daily caps', () => {
-  it('counts sent, ready_for_human and dry_run rows created today per channel, not yesterday', async () => {
+  it('counts today’s sends and dry runs plus all outstanding human reservations', async () => {
     const { db } = await setup()
     const lead = await insertLead(db)
     const today = '2026-10-13T13:00:00.000Z' // 09:00 EDT today
@@ -86,11 +86,11 @@ describe('daily caps', () => {
     await add('call', 'ready_for_human', yesterday, today) // marked done today: counts
 
     const counts = await countTodayByChannel(db, DEFAULT_SETTINGS, TUE_10)
-    expect(counts).toEqual({ email: 3, mail: 0, linkedin: 1, instagram: 0, call: 1 })
+    expect(counts).toEqual({ email: 3, mail: 0, linkedin: 2, instagram: 0, call: 1 })
 
     const left = remainingToday(DEFAULT_SETTINGS, counts)
     expect(left.email).toBe(DEFAULT_SETTINGS.daily_caps.email - 3)
-    expect(left.linkedin).toBe(DEFAULT_SETTINGS.daily_caps.linkedin - 1)
+    expect(left.linkedin).toBe(DEFAULT_SETTINGS.daily_caps.linkedin - 2)
     expect(left.mail).toBe(DEFAULT_SETTINGS.daily_caps.mail)
   })
 
