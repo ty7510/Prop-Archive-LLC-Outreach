@@ -2,9 +2,25 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Phone, Printer, Play, SkipForward, Check, Loader2 } from 'lucide-react'
+import {
+  ExternalLink,
+  Phone,
+  Printer,
+  Play,
+  SkipForward,
+  Check,
+  Loader2,
+  RotateCcw,
+} from 'lucide-react'
 import clsx from 'clsx'
-import type { ActivityEntry, AutopilotStatus, Channel, QueueItem, TodayCounts } from '@shared/types'
+import type {
+  ActivityEntry,
+  AutopilotStatus,
+  Channel,
+  Queue,
+  QueueItem,
+  TodayCounts,
+} from '@shared/types'
 import {
   getActivity,
   getAutopilot,
@@ -12,6 +28,7 @@ import {
   getSettings,
   printQueueUrl,
   queueDone,
+  queueRestore,
   queueSkip,
   startAutopilot,
   stopAutopilot,
@@ -180,7 +197,7 @@ function WaitingForYou() {
       <QueryView
         q={q}
         loading="Loading your queue"
-        isEmpty={(d) => d.total === 0}
+        isEmpty={(d) => d.total === 0 && d.skipped_recently.length === 0}
         empty={
           <Empty
             title="Nothing waiting for you"
@@ -191,8 +208,16 @@ function WaitingForYou() {
         {(data) => (
           <div className="space-y-6">
             {QUEUE_ORDER.filter((ch) => (data.groups[ch]?.length ?? 0) > 0).map((ch) => (
-              <QueueGroup key={ch} channel={ch} items={data.groups[ch] ?? []} />
+              <QueueGroup
+                key={ch}
+                channel={ch}
+                items={data.groups[ch] ?? []}
+                today={data.today[ch]}
+              />
             ))}
+            {data.skipped_recently.length > 0 ? (
+              <SkippedRecently items={data.skipped_recently} />
+            ) : null}
           </div>
         )}
       </QueryView>
@@ -200,12 +225,25 @@ function WaitingForYou() {
   )
 }
 
-function QueueGroup({ channel, items }: { channel: Channel; items: QueueItem[] }) {
+function QueueGroup({
+  channel,
+  items,
+  today,
+}: {
+  channel: Channel
+  items: QueueItem[]
+  today?: Queue['today'][Channel]
+}) {
   return (
     <div>
-      <h3 className="mb-2 flex items-center gap-2 text-lg font-medium">
+      <h3 className="mb-2 flex flex-wrap items-center gap-2 text-lg font-medium">
         <ChannelIcon channel={channel} className="text-stone-500" />
         {CHANNEL_LABEL[channel]} <span className="text-stone-500">({items.length})</span>
+        {today && today.goal > 0 ? (
+          <span className="text-base font-normal text-stone-600">
+            {today.done} of {today.goal} done today
+          </span>
+        ) : null}
         {channel === 'mail' && items.length > 1 ? (
           <a
             href={printQueueUrl(items.map((i) => i.message_id))}
@@ -223,6 +261,48 @@ function QueueGroup({ channel, items }: { channel: Channel; items: QueueItem[] }
         ))}
       </div>
     </div>
+  )
+}
+
+/** Tasks skipped in the last week, each with a way back: a skip by mistake is one click to undo. */
+function SkippedRecently({ items }: { items: QueueItem[] }) {
+  return (
+    <details className="card">
+      <summary className="min-h-tap cursor-pointer py-2 text-lg font-medium">
+        Skipped recently ({items.length})
+      </summary>
+      <ul className="mt-2 divide-y divide-stone-200">
+        {items.map((item) => (
+          <SkippedRow key={item.message_id} item={item} />
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function SkippedRow({ item }: { item: QueueItem }) {
+  const restore = useAction(queueRestore, {
+    success: `${item.person} is back in your queue`,
+    invalidate: [['queue'], ['autopilot'], ['activity']],
+  })
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 py-2">
+      <span className="flex min-w-0 items-center gap-2">
+        <ChannelIcon channel={item.channel} className="shrink-0 text-stone-500" />
+        <span className="break-words">
+          {item.person}
+          {item.company ? <span className="text-stone-600">, {item.company}</span> : null}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="btn-secondary"
+        disabled={restore.busy}
+        onClick={() => void restore.run(item.message_id)}
+      >
+        <RotateCcw className="h-4 w-4" aria-hidden /> Bring back
+      </button>
+    </li>
   )
 }
 

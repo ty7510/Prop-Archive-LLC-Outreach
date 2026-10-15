@@ -163,6 +163,8 @@ export const queueDone = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/done`, 'POST', { note })
 export const queueSkip = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/skip`, 'POST', { note })
+export const queueRestore = (messageId: string) =>
+  api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/restore`, 'POST')
 export const printQueueUrl = (ids: string[]) =>
   `/api/queue/print?ids=${ids.map(encodeURIComponent).join(',')}`
 

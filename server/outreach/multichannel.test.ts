@@ -379,8 +379,9 @@ describe('it runs by itself, with no stop and start', () => {
     at.now = minutes(16) // the next one keeps its distance from the first
     expect(await sendDue(deps)).toMatchObject({ sent: 1 })
     expect(sent).toHaveLength(2)
-    const rows = await db.select().from(messages)
-    expect(rows.every((m) => m.status === 'sent')).toBe(true)
+    // Both emails went (a LinkedIn note may come up early too: Theo is under his daily goal).
+    const emails = (await db.select().from(messages)).filter((m) => m.channel === 'email')
+    expect(emails.map((m) => m.status)).toEqual(['sent', 'sent'])
   })
 
   it('retries an email that a refused login failed twice before this change', () => {

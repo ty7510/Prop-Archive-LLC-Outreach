@@ -1,6 +1,7 @@
-// The human queue: ready_for_human messages, done / skip, and the print page for letters.
-import { and, asc, eq, inArray } from 'drizzle-orm'
-import type { Queue, QueueActionResult, QueueItem } from '../../shared/types.ts'
+// The human queue: ready_for_human messages, done / skip / bring back, and the print page for letters.
+import { and, asc, eq, gte, inArray, isNull, type SQL } from 'drizzle-orm'
+import type { Settings } from '../../shared/settings.ts'
+import { CHANNELS, type Queue, type QueueActionResult, type QueueItem } from '../../shared/types.ts'
 import {
   enrollments,
   events,
@@ -14,7 +15,9 @@ import { logActivity } from '../lib/activity.ts'
 import { badRequest, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
+import { startOfDayInTz } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
+import { contactBlocker } from './enroll.ts'
 import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { buildVars, renderTemplate } from './templates.ts'
 import { sendDue } from './send.ts'
@@ -63,9 +66,9 @@ function personOf(lead: { full_name: string | null; company: string | null }): s
   return lead.full_name?.trim() || lead.company?.trim() || 'Unknown owner'
 }
 
-/** Every ready_for_human message, oldest first, grouped by channel. */
-export async function listQueue(deps: OutreachDeps): Promise<Queue> {
-  const rows = await deps.db
+/** Queue messages matching `where`, oldest first, with the person and the step they belong to. */
+async function queueRows(deps: OutreachDeps, where: SQL | undefined) {
+  return deps.db
     .select({
       message: messages,
       lead_name: leads.full_name,
@@ -77,29 +80,101 @@ export async function listQueue(deps: OutreachDeps): Promise<Queue> {
     .innerJoin(leads, eq(leads.id, messages.lead_id))
     .leftJoin(sequenceSteps, eq(sequenceSteps.id, messages.step_id))
     .leftJoin(sequences, eq(sequences.id, sequenceSteps.sequence_id))
-    .where(and(eq(messages.status, 'ready_for_human'), eq(messages.direction, 'out')))
+    .where(and(eq(messages.direction, 'out'), where))
     .orderBy(asc(messages.created_at))
     .limit(500)
+}
 
+function toItem(r: Awaited<ReturnType<typeof queueRows>>[number], body: string): QueueItem {
+  return {
+    message_id: r.message.id,
+    lead_id: r.message.lead_id,
+    channel: r.message.channel,
+    person: personOf({ full_name: r.lead_name, company: r.lead_company }),
+    company: r.lead_company,
+    to_address: r.message.to_address,
+    subject: r.message.subject,
+    body,
+    sequence_name: r.sequence_name ?? null,
+    step_index: r.step_index ?? null,
+    scheduled_at: r.message.scheduled_at,
+    created_at: r.message.created_at,
+  }
+}
+
+/** How far back a skip can still be undone. */
+const BRING_BACK_DAYS = 7
+
+/**
+ * Tasks Theo skipped in the last week, so a skip made by mistake can come back. His skip leaves
+ * no error; the app's own skips (stopped, no profile) always carry one, so they never show here.
+ */
+async function skippedRecently(deps: OutreachDeps): Promise<QueueItem[]> {
+  const since = new Date(deps.now().getTime() - BRING_BACK_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const skips = await deps.db
+    .select({ lead_id: events.lead_id, detail: events.detail })
+    .from(events)
+    .where(and(eq(events.kind, 'note'), gte(events.at, since)))
+  const keys = new Set<string>()
+  for (const e of skips) {
+    const d = e.detail as { queue?: unknown; channel?: unknown } | null
+    if (e.lead_id && d?.queue === 'skip' && typeof d.channel === 'string') {
+      keys.add(`${e.lead_id}:${d.channel}`)
+    }
+  }
+  if (keys.size === 0) return []
+  const rows = await queueRows(
+    deps,
+    and(
+      eq(messages.status, 'skipped'),
+      eq(messages.provider, 'human'),
+      isNull(messages.error),
+      inArray(messages.lead_id, [...new Set([...keys].map((k) => k.split(':')[0]!))]),
+    ),
+  )
+  return rows
+    .filter((r) => keys.has(`${r.message.lead_id}:${r.message.channel}`))
+    .map((r) => toItem(r, r.message.body))
+}
+
+/** Per channel: tasks Theo marked done today, and his daily goal (the channel's daily cap). */
+async function doneToday(
+  deps: OutreachDeps,
+  settings: Settings,
+  dayStart: string,
+): Promise<Queue['today']> {
+  const done = await deps.db
+    .select({ channel: messages.channel })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.direction, 'out'),
+        eq(messages.status, 'sent'),
+        eq(messages.provider, 'human'),
+        gte(messages.sent_at, dayStart),
+      ),
+    )
+  const today = {} as Queue['today']
+  for (const c of CHANNELS) today[c] = { done: 0, goal: settings.daily_caps[c] }
+  for (const m of done) today[m.channel].done++
+  return today
+}
+
+/** Every ready_for_human message, oldest first, grouped by channel; recent skips; today's goals. */
+export async function listQueue(deps: OutreachDeps): Promise<Queue> {
+  const rows = await queueRows(deps, eq(messages.status, 'ready_for_human'))
   const groups: Queue['groups'] = { email: [], mail: [], linkedin: [], instagram: [], call: [] }
   for (const r of rows) {
-    const item: QueueItem = {
-      message_id: r.message.id,
-      lead_id: r.message.lead_id,
-      channel: r.message.channel,
-      person: personOf({ full_name: r.lead_name, company: r.lead_company }),
-      company: r.lead_company,
-      to_address: r.message.to_address,
-      subject: r.message.subject,
-      body: await currentLinkedInBody(deps, r.message),
-      sequence_name: r.sequence_name ?? null,
-      step_index: r.step_index ?? null,
-      scheduled_at: r.message.scheduled_at,
-      created_at: r.message.created_at,
-    }
-    groups[r.message.channel].push(item)
+    groups[r.message.channel].push(toItem(r, await currentLinkedInBody(deps, r.message)))
   }
-  return { groups, total: rows.length }
+  const settings = await getSettings(deps.db)
+  const dayStart = startOfDayInTz(deps.now(), settings.send_window.tz).toISOString()
+  return {
+    groups,
+    total: rows.length,
+    skipped_recently: await skippedRecently(deps),
+    today: await doneToday(deps, settings, dayStart),
+  }
 }
 
 /** Theo did it (done) or will not (skip). Only ready_for_human rows can be acted on. */
@@ -162,6 +237,56 @@ export async function actOnQueueItem(
     }
   }
   return { message_id: messageId, status }
+}
+
+/**
+ * Theo skipped it by mistake: the task goes back in his queue (a LinkedIn note shows the words the
+ * step has now). Never for a person who replied, opted out, bounced or was stopped since.
+ */
+export async function restoreQueueItem(
+  deps: OutreachDeps,
+  messageId: string,
+): Promise<QueueActionResult> {
+  const { db } = deps
+  const msg = (await db.select().from(messages).where(eq(messages.id, messageId)).limit(1))[0]
+  if (!msg) throw notFound('Message not found', 'MESSAGE_NOT_FOUND')
+  if (msg.status !== 'skipped' || msg.provider !== 'human' || msg.error) {
+    throw badRequest('Only a task you skipped can come back', 'NOT_SKIPPED_BY_YOU')
+  }
+  const lead = (await db.select().from(leads).where(eq(leads.id, msg.lead_id)).limit(1))[0]
+  if (!lead) throw notFound('Lead not found', 'LEAD_NOT_FOUND')
+  const enrollment = msg.enrollment_id
+    ? (
+        await db
+          .select({ status: enrollments.status })
+          .from(enrollments)
+          .where(eq(enrollments.id, msg.enrollment_id))
+          .limit(1)
+      )[0]
+    : undefined
+  const blocker =
+    (await contactBlocker(db, lead)) ??
+    (enrollment?.status.startsWith('stopped') ? enrollment.status : null)
+  if (blocker) {
+    throw badRequest(
+      `This person is not to be contacted now (${blocker.replace(/_/g, ' ')})`,
+      'LEAD_BLOCKED',
+    )
+  }
+  const now = deps.now().toISOString()
+  await db
+    .update(messages)
+    .set({ status: 'ready_for_human', sent_at: null })
+    .where(and(eq(messages.id, messageId), eq(messages.status, 'skipped')))
+  await db.insert(events).values({
+    id: newId(),
+    lead_id: msg.lead_id,
+    kind: 'note',
+    detail: { channel: msg.channel, queue: 'restore' },
+    at: now,
+  })
+  await logActivity('info', 'queue_restore', { channel: msg.channel }, msg.lead_id, db)
+  return { message_id: messageId, status: 'ready_for_human' }
 }
 
 function esc(s: string | null | undefined): string {
