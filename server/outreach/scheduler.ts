@@ -48,6 +48,7 @@ export async function countTodayByChannel(
       and(
         eq(messages.direction, 'out'),
         or(
+          eq(messages.status, 'ready_for_human'),
           and(inArray(messages.status, [...CAP_STATUSES]), gte(messages.created_at, dayStart)),
           gte(messages.sent_at, dayStart),
         ),

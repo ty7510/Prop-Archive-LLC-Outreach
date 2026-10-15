@@ -1,13 +1,38 @@
 // The human queue: ready_for_human messages, done / skip, and the print page for letters.
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Queue, QueueActionResult, QueueItem } from '../../shared/types.ts'
-import { events, leads, messages, sequenceSteps, sequences } from '../db/schema.ts'
+import { enrollments, events, leads, messages, sequenceSteps, sequences, type Message } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { badRequest, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
+import { buildVars, renderTemplate } from './templates.ts'
+import { sendDue } from './send.ts'
+
+/** Pending LinkedIn notes follow the template; completed history remains a snapshot. */
+async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promise<string> {
+  if (message.channel !== 'linkedin' || message.status !== 'ready_for_human' || !message.enrollment_id) {
+    return message.body
+  }
+  const [context] = await deps.db.select({ lead: leads, sequence: sequences })
+    .from(enrollments)
+    .innerJoin(leads, eq(leads.id, enrollments.lead_id))
+    .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
+    .where(eq(enrollments.id, message.enrollment_id))
+  if (!context) return message.body
+  const steps = await deps.db.select().from(sequenceSteps).where(
+    and(eq(sequenceSteps.sequence_id, context.sequence.id), eq(sequenceSteps.channel, 'linkedin')),
+  )
+  // Older edits deleted step IDs. Recover only when there is one unambiguous LinkedIn step.
+  const step = steps.find((s) => s.id === message.step_id) ?? (steps.length === 1 ? steps[0] : undefined)
+  if (!step || step.body.includes('{{ai_opener}}')) return message.body
+  const settings = await getSettings(deps.db)
+  return renderTemplate(step.body, buildVars(context.lead, settings, {
+    baseUrl: deps.baseUrl, channel: 'linkedin', sequenceName: context.sequence.name,
+  })).text
+}
 
 function personOf(lead: { full_name: string | null; company: string | null }): string {
   return lead.full_name?.trim() || lead.company?.trim() || 'Unknown owner'
@@ -41,7 +66,7 @@ export async function listQueue(deps: OutreachDeps): Promise<Queue> {
       company: r.lead_company,
       to_address: r.message.to_address,
       subject: r.message.subject,
-      body: r.message.body,
+      body: await currentLinkedInBody(deps, r.message),
       sequence_name: r.sequence_name ?? null,
       step_index: r.step_index ?? null,
       scheduled_at: r.message.scheduled_at,
@@ -67,11 +92,13 @@ export async function actOnQueueItem(
     throw badRequest(`This item is already marked ${msg.status.replace(/_/g, ' ')}`, 'NOT_IN_QUEUE')
   }
   const now = deps.now().toISOString()
+  const body = await currentLinkedInBody(deps, msg)
   const status = action === 'done' ? 'sent' : 'skipped'
   await db
     .update(messages)
     .set({
       status,
+      body,
       provider: 'human',
       sent_at: action === 'done' ? now : null,
       ...(note ? { error: null, raw: { note } } : {}),
@@ -91,6 +118,10 @@ export async function actOnQueueItem(
     at: now,
   })
   await logActivity('info', `queue_${action}`, { channel: msg.channel }, msg.lead_id, db)
+  if (action === 'skip' && msg.channel === 'linkedin') {
+    // Refill this human channel only. Never send email as a side effect of a skip.
+    await sendDue(deps, { onlyLinkedIn: true })
+  }
   return { message_id: messageId, status }
 }
 

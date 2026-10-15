@@ -453,7 +453,27 @@ function hostOf(baseUrl: string): string {
  * flipped to `sending` before the provider call, and never handed to a provider again once
  * the outcome is unknown.
  */
-export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
+const sendRuns = new WeakMap<OutreachDeps['db'], Promise<unknown>>()
+
+/** Serialize manual queue refills with scheduled sends in this server process. */
+export async function sendDue(
+  deps: OutreachDeps,
+  options: { onlyLinkedIn?: boolean } = {},
+): Promise<SendDueResult> {
+  const previous = sendRuns.get(deps.db) ?? Promise.resolve()
+  const run = previous.catch(() => undefined).then(() => sendDueUnlocked(deps, options))
+  sendRuns.set(deps.db, run)
+  try {
+    return await run
+  } finally {
+    if (sendRuns.get(deps.db) === run) sendRuns.delete(deps.db)
+  }
+}
+
+async function sendDueUnlocked(
+  deps: OutreachDeps,
+  options: { onlyLinkedIn?: boolean },
+): Promise<SendDueResult> {
   const { db } = deps
   const result: SendDueResult = { sent: 0, dryRun: 0, queued: 0, skipped: 0 }
   const settings = await getSettings(db)
@@ -463,10 +483,10 @@ export async function sendDue(deps: OutreachDeps): Promise<SendDueResult> {
   await skipProfilelessTasks(deps)
   // Inboxes on Google's servers may send through Sign in with Google: learn (cached a minute)
   // whether it is connected before deciding which inbox may send.
-  if (settings.sending_inboxes.some((i) => i.active && isGoogleMailHost(i.smtp_host))) {
+  if (!options.onlyLinkedIn && settings.sending_inboxes.some((i) => i.active && isGoogleMailHost(i.smtp_host))) {
     await refreshGoogleAccount(deps)
   }
-  const restarted = await restartUntouched(deps, settings)
+  const restarted = options.onlyLinkedIn ? 0 : await restartUntouched(deps, settings)
   let waitingForResearch = 0
   let waitingForReplies = 0
   let waitingForGap = 0
