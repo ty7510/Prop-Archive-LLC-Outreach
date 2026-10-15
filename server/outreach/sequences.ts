@@ -169,21 +169,23 @@ export async function updateSequence(
           !replacements.some((s) => s.step_index === old.step_index && s.channel === old.channel),
       )
       .map((s) => s.id)
-    if (removed.length)
-      await deps.db.delete(sequenceSteps).where(inArray(sequenceSteps.id, removed))
-    for (const replacement of replacements) {
-      const old = current.steps.find(
-        (s) => s.step_index === replacement.step_index && s.channel === replacement.channel,
-      )
-      if (old) {
-        await deps.db
-          .update(sequenceSteps)
-          .set({ ...replacement, id: old.id })
-          .where(eq(sequenceSteps.id, old.id))
-      } else {
-        await deps.db.insert(sequenceSteps).values(replacement)
+    // One transaction, so a failed save never leaves the sequence half edited.
+    await deps.db.transaction(async (tx) => {
+      if (removed.length) await tx.delete(sequenceSteps).where(inArray(sequenceSteps.id, removed))
+      for (const replacement of replacements) {
+        const old = current.steps.find(
+          (s) => s.step_index === replacement.step_index && s.channel === replacement.channel,
+        )
+        if (old) {
+          await tx
+            .update(sequenceSteps)
+            .set({ ...replacement, id: old.id })
+            .where(eq(sequenceSteps.id, old.id))
+        } else {
+          await tx.insert(sequenceSteps).values(replacement)
+        }
       }
-    }
+    })
   }
   await logActivity(
     'info',

@@ -64,4 +64,31 @@ describe('LinkedIn queue edits and replacement tasks', () => {
     expect(rows.filter((m) => m.status === 'sent')).toHaveLength(1)
     expect(rows.some((m) => m.channel === 'email')).toBe(false)
   })
+
+  it('saves a step whose channel changed and a removed middle step, keeping the untouched ids', async () => {
+    const { db, deps } = await setup()
+    const { sequence, steps } = await insertSequence(db, { channel: 'email' }, [
+      { delay_days: 0, channel: 'email', subject: 'S', body: 'One' },
+      { delay_days: 2, channel: 'linkedin', body: 'Two' },
+      { delay_days: 4, channel: 'mail', body: 'Three' },
+    ])
+    const changed = await updateSequence(deps, sequence.id, {
+      steps: [
+        { delay_days: 0, channel: 'email', subject: 'S', body: 'One edited' },
+        { delay_days: 2, channel: 'email', subject: 'S2', body: 'Two' },
+        { delay_days: 4, channel: 'mail', body: 'Three' },
+      ],
+    })
+    expect(changed.steps.map((s) => s.channel)).toEqual(['email', 'email', 'mail'])
+    expect(changed.steps[0]!.id).toBe(steps[0]!.id)
+    expect(changed.steps[2]!.id).toBe(steps[2]!.id)
+    const shorter = await updateSequence(deps, sequence.id, {
+      steps: [
+        { delay_days: 0, channel: 'email', subject: 'S', body: 'One edited' },
+        { delay_days: 4, channel: 'mail', body: 'Three' },
+      ],
+    })
+    expect(shorter.steps.map((s) => s.channel)).toEqual(['email', 'mail'])
+    expect(shorter.steps[0]!.id).toBe(steps[0]!.id)
+  })
 })
