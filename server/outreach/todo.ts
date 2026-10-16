@@ -153,14 +153,19 @@ async function lastRound(deps: OutreachDeps, leadId: string): Promise<number> {
   return Math.max(0, ...rows.map((r) => parseTodoKey(r.key)?.round ?? 0))
 }
 
-async function linkedInNoteSent(deps: OutreachDeps, leadId: string): Promise<boolean> {
+/** Whether anything went to this person on this channel before (a note, an email). */
+async function sentBefore(
+  deps: OutreachDeps,
+  leadId: string,
+  channel: Message['channel'],
+): Promise<boolean> {
   const rows = await deps.db
     .select({ id: messages.id })
     .from(messages)
     .where(
       and(
         eq(messages.lead_id, leadId),
-        eq(messages.channel, 'linkedin'),
+        eq(messages.channel, channel),
         eq(messages.direction, 'out'),
         eq(messages.status, 'sent'),
       ),
@@ -213,7 +218,9 @@ async function linkedInStep(
   const profile = (lead.linkedin_url ?? '').trim()
   if (!settings.channels.linkedin) return null
   if (!profile && !personFor(lead)) return null
-  const kind = (await linkedInNoteSent(deps, lead.id)) ? 'linkedin_follow_up' : 'linkedin_connect'
+  const kind = (await sentBefore(deps, lead.id, 'linkedin'))
+    ? 'linkedin_follow_up'
+    : 'linkedin_connect'
   const note = await linkedInBody(deps, settings, lead, kind)
   const found = Boolean(profile) && finderRecord(lead)?.url === profile
   return {
@@ -259,7 +266,8 @@ async function printoutStep(
 
 /**
  * The email Theo sends himself from Gmail. Only to an address that is not known to be bad and has
- * not had an email lately (min_days_between_emails); `mailed` says the printout is on its way.
+ * not had an email lately (min_days_between_emails); `mailed` says the printout is on its way. Someone
+ * who had an email on an earlier round gets a short follow-up instead of the first email again.
  */
 async function emailStep(
   deps: OutreachDeps,
@@ -271,15 +279,20 @@ async function emailStep(
   const address = (lead.email ?? '').trim()
   if (!address || lead.email_status === 'invalid') return null
   if (await recipientBlocker(deps.db, settings, lead, 'email', deps.now())) return null
-  const written = await writeHandEmail(lead, vars, mailed, deps.llm).catch(() => null)
-  const email = written ?? fallbackEmail(vars, mailed)
+  const context = { mailed, followUp: await sentBefore(deps, lead.id, 'email') }
+  const written = await writeHandEmail(lead, vars, context, deps.llm).catch(() => null)
+  const email = written ?? fallbackEmail(vars, context)
   return {
     kind: 'email',
     channel: 'email',
     subject: email.subject,
     body: email.body,
     to_address: address,
-    raw: { todo: 'email', ...(written ? { personal: true } : {}) },
+    raw: {
+      todo: 'email',
+      ...(context.followUp ? { follow_up: true } : {}),
+      ...(written ? { personal: true } : {}),
+    },
   }
 }
 

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Save, Loader2, KeyRound, Plus } from 'lucide-react'
 import clsx from 'clsx'
+import { PRINTOUT_LIMITS } from '@shared/printout'
 import type { Settings as SettingsT } from '@shared/settings'
 import { ENRICH_PROVIDER_IDS, type EnrichProviderId } from '@shared/settings'
 import {
@@ -389,10 +390,10 @@ function SettingsForm({
 
       <Section
         title="To-do list"
-        intro="Each weekday the app puts people on the Go page with every step at once: their LinkedIn note, their postcard and a call. When every step is done they move to Complete, and they come back if they have not replied."
+        intro="Each weekday the app puts people on the Go page with every step at once: their LinkedIn note, a one-page printout you mail in a folder with your card, and an email you send from Gmail. The app writes each one for that person and you proof it first. When every step is done they move to Complete, and they come back if they have not replied."
       >
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="New people per day" hint="Each one gets a LinkedIn note">
+          <Field label="New people per day" hint="Each gets a note, a printout and an email">
             <input
               type="number"
               min={0}
@@ -427,6 +428,36 @@ function SettingsForm({
                   linkedin_find_cap: Number(e.target.value),
                 })
               }
+            />
+          </Field>
+        </div>
+        <div className="space-y-4">
+          <p className="text-stone-700">
+            Every printout has a part written for that person, then these three parts, the same on
+            every page. Changing them here changes every printout.
+          </p>
+          <Field label="What Prop Archive is" hint="The box on the left of each printout">
+            <textarea
+              className="input min-h-[140px] py-2"
+              maxLength={PRINTOUT_LIMITS.overview}
+              value={draft.printout_overview}
+              onChange={(e) => set('printout_overview', e.target.value)}
+            />
+          </Field>
+          <Field label="About you" hint="The box on the right of each printout">
+            <textarea
+              className="input min-h-[120px] py-2"
+              maxLength={PRINTOUT_LIMITS.bio}
+              value={draft.printout_bio}
+              onChange={(e) => set('printout_bio', e.target.value)}
+            />
+          </Field>
+          <Field label="Closing" hint="The lines above your signature">
+            <textarea
+              className="input min-h-[80px] py-2"
+              maxLength={PRINTOUT_LIMITS.closing}
+              value={draft.printout_closing}
+              onChange={(e) => set('printout_closing', e.target.value)}
             />
           </Field>
         </div>

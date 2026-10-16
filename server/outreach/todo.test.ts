@@ -66,15 +66,28 @@ describe('to-do list', () => {
     const list = await listTodo(deps)
     expect(list.today).toEqual({ added: 2, goal: 2 })
     expect(list.people).toHaveLength(2)
+    // LinkedIn note, then the printout, then the email (2026-10-16). No call on new cards.
     expect(list.people[0]!.steps.map((s) => s.kind)).toEqual([
       'linkedin_connect',
       'postcard',
-      'call',
+      'email',
     ])
     expect(list.people[0]!.steps.every((s) => s.status === 'waiting')).toBe(true)
-    const note = list.people[0]!.steps[0]!
-    expect(note.to_address).toContain('linkedin.com/in/')
-    expect(note.body).toContain('Hi Lead')
+    const [note, printout, email] = list.people[0]!.steps
+    expect(note!.to_address).toContain('linkedin.com/in/')
+    expect(note!.body).toContain('Hi Lead')
+    // No model in tests: Theo's own words for their kind of owner, with a heading.
+    expect(printout).toMatchObject({ channel: 'mail', printout: true, problems: [] })
+    expect(printout!.subject).toBe('Lead, here is how Prop Archive can help')
+    expect(printout!.body).toContain('Prop Archive')
+    // The email goes to their address even with the app's own email off: Theo sends it himself.
+    expect(email).toMatchObject({ channel: 'email', problems: [] })
+    expect(email!.to_address).toMatch(/@example\.com$/)
+    expect(email!.subject).toBeTruthy()
+    expect(email!.body).toMatch(/^Hi Lead,/)
+    expect(email!.body).toContain('I mailed you a one-page overview')
+    expect(list.email_footer).toContain('Reply "stop"')
+    expect(list.email_footer).toContain('1500 Market St')
   })
 
   it('moves a person to Complete when every step is done, and back after 30 days', async () => {
@@ -87,7 +100,7 @@ describe('to-do list', () => {
     const after = await listTodo(deps)
     expect(after.people).toHaveLength(0)
     expect(after.complete).toHaveLength(1)
-    expect(after.complete[0]!.done.sort()).toEqual(['Call', 'LinkedIn', 'Postcard'])
+    expect(after.complete[0]!.done.sort()).toEqual(['Email', 'LinkedIn', 'Printout'])
     expect(after.complete[0]!.back_on).toBe(
       new Date(TUESDAY_10AM.getTime() + 30 * DAY).toISOString(),
     )
@@ -97,13 +110,17 @@ describe('to-do list', () => {
     expect((await fillTodo(deps)).added).toBe(0)
 
     // 30 days on (a Thursday), no reply: back as round 2. The note was sent, so now a message;
-    // the postcard waits for the 60 days between postcards.
+    // the printout waits for the 60 days between mailings; the email is a short follow-up.
     at.now = new Date(TUESDAY_10AM.getTime() + 30 * DAY)
     expect((await fillTodo(deps)).added).toBe(1)
     const back = (await listTodo(deps)).people[0]!
     expect(back.lead_id).toBe(lead.id)
     expect(back.round).toBe(2)
-    expect(back.steps.map((s) => s.kind)).toEqual(['linkedin_follow_up', 'call'])
+    expect(back.steps.map((s) => s.kind)).toEqual(['linkedin_follow_up', 'email'])
+    const followUp = back.steps[1]!
+    expect(followUp.body).toContain('Following up on my email from last month')
+    expect(followUp.body).not.toContain('mailed you')
+    expect(followUp.problems).toEqual([])
   })
 
   it('a reply drops the waiting steps, never recycles them, and lists them under Replied', async () => {
@@ -176,13 +193,53 @@ describe('to-do list', () => {
     })
     await fillTodo(deps)
     let card = (await listTodo(deps)).people[0]!
-    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'call'])
+    // The note is on the card anyway (to copy), with no profile yet: the card offers a search.
+    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    expect(card.steps[0]!.to_address).toBeNull()
+    expect(card.steps[0]!.body).toContain('Hi Pat')
     expect(card.linkedin_missing).toBe('not_found')
 
+    // The profile Theo pastes joins that same note.
+    const noteId = card.steps[0]!.message_id
     const r = await saveLinkedInProfile(deps, lead.id, 'linkedin.com/in/lead-person')
     expect(r.queued).toBe(true)
     card = (await listTodo(deps)).people[0]!
-    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'call'])
+    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    expect(card.steps[0]).toMatchObject({
+      message_id: noteId,
+      to_address: 'https://www.linkedin.com/in/lead-person/',
+      found_by_app: false,
+    })
+    expect(card.linkedin_missing).toBeNull()
+  })
+
+  it('no name and no profile: no LinkedIn step, the printout and email still come', async () => {
+    const { db, deps } = await todoSetup()
+    await insertLead(db, {
+      full_name: 'Fairmount Rentals LLC',
+      first_name: null,
+      last_name: null,
+      company: 'Fairmount Rentals LLC',
+      owner_kind: 'llc',
+      linkedin_url: null,
+    })
+    await fillTodo(deps)
+    const card = (await listTodo(deps)).people[0]!
+    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'email'])
+    expect(card.linkedin_missing).toBe('no_name')
+    expect(card.steps[0]!.subject).toBe('How Prop Archive can help Fairmount Rentals LLC')
+    expect(card.steps[1]!.body).toMatch(/^Hi,/)
+  })
+
+  it('no email, or a bad one: no email step', async () => {
+    const { db, deps } = await todoSetup()
+    await insertLead(db, { email: null })
+    await insertLead(db, { email_status: 'invalid' })
+    await fillTodo(deps)
+    const people = (await listTodo(deps)).people
+    expect(people).toHaveLength(2)
+    for (const p of people)
+      expect(p.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard'])
   })
 
   it('never puts someone on the suppression list on it', async () => {

@@ -33,12 +33,15 @@ export default function CopyButton({
   label = 'Copy',
   className,
   compact = false,
+  onCopy,
 }: {
   text: string
   label?: string
   className?: string
   /** Icon only, for rows of fields. */
   compact?: boolean
+  /** Called as it copies, e.g. to save the words being copied. */
+  onCopy?: () => void
 }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
 
@@ -49,6 +52,7 @@ export default function CopyButton({
   }, [state])
 
   async function onClick() {
+    onCopy?.()
     setState((await copyText(text)) ? 'copied' : 'failed')
   }
 

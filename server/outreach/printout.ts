@@ -6,7 +6,7 @@
 import type { PrintoutParts } from '../../shared/printout.ts'
 import type { Settings } from '../../shared/settings.ts'
 import type { Lead } from '../db/schema.ts'
-import { titleCase } from '../lib/text.ts'
+import { isLlc, titleCase } from '../lib/text.ts'
 import { copyProblems } from './copyRules.ts'
 import type { Llm } from './deps.ts'
 import { cleanNote, noteFacts } from './linkedinNote.ts'
@@ -23,23 +23,50 @@ function quieter(s: string): string {
 /** The name fields of the template vars (any of them may be missing). */
 export type NameVars = Partial<Record<'company' | 'full_name' | 'first_name', string>>
 
-/** Their company as it reads on paper, or '' when there is none or it is just their name. */
+/**
+ * Their company as it reads on paper, or '' when there is none or it is just their own name. An
+ * owner on record as a company ("Fairmount Rentals LLC") is that company.
+ */
 export function companyName(vars: NameVars): string {
   const company = (vars.company ?? '').trim()
-  if (!company || company.toLowerCase() === (vars.full_name ?? '').trim().toLowerCase()) return ''
+  const full = (vars.full_name ?? '').trim()
+  if (!company) return isLlc(full) ? quieter(full) : ''
+  if (company.toLowerCase() === full.toLowerCase() && !isLlc(company)) return ''
   return quieter(company)
 }
 
-function firstNameOf(vars: NameVars): string {
+/**
+ * The first name to greet them by, or '' when there is no person's name: for "Fairmount Rentals
+ * LLC" the template vars guess "Fairmount", which is not anybody's name.
+ */
+export function personFirstName(vars: NameVars): string {
   const first = (vars.first_name ?? '').trim()
-  return first && first !== 'there' ? quieter(first) : ''
+  if (!first || first === 'there') return ''
+  const full = (vars.full_name ?? '').trim()
+  if (isLlc(full) && full.split(/\s+/)[0]?.toLowerCase() === first.toLowerCase()) return ''
+  return quieter(first)
+}
+
+/**
+ * The template vars with the name fields made safe for a letter or an email. A company owner's
+ * name is their company, so it is given as the company and not as a person's name.
+ */
+export function letterVars(vars: TemplateVars): TemplateVars {
+  const company = companyName(vars)
+  const full = quieter(vars.full_name ?? '')
+  return {
+    ...vars,
+    first_name: personFirstName(vars) || 'there',
+    company,
+    full_name: company && company.toLowerCase() === full.toLowerCase() ? '' : full,
+  }
 }
 
 /** The printout's heading: their company when there is one. */
 export function printoutHeading(vars: NameVars): string {
   const company = companyName(vars)
   if (company) return `How Prop Archive can help ${company}`
-  const first = firstNameOf(vars)
+  const first = personFirstName(vars)
   return first
     ? `${first}, here is how Prop Archive can help`
     : 'How Prop Archive can help with your rentals'
@@ -95,7 +122,7 @@ export async function writePrintout(
   llm: Llm | null,
 ): Promise<string | null> {
   if (!llm) return null
-  const facts = noteFacts(lead, { ...vars, company: companyName(vars) })
+  const facts = noteFacts(lead, letterVars(vars))
   const prompt = [
     `Facts about this person:\n${facts.join('\n') || '(none)'}`,
     'Write the part about them.',
@@ -148,7 +175,10 @@ export function printoutParts(
     overview: settings.printout_overview,
     bio: settings.printout_bio,
     closing: settings.printout_closing,
-    preparedFor: [name, company].filter(Boolean),
+    // Once each: a company owner's name is the company.
+    preparedFor: [name, company].filter(
+      (v, i, all) => v && all.findIndex((w) => w.toLowerCase() === v.toLowerCase()) === i,
+    ),
     date: letterDate(settings, now),
     ownerName: settings.owner_name,
     email: settings.reply_to || settings.owner_email,

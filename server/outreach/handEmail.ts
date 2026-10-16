@@ -9,19 +9,59 @@ import type { Lead } from '../db/schema.ts'
 import { copyProblems } from './copyRules.ts'
 import type { Llm } from './deps.ts'
 import { BANNED, cleanNote, noteFacts } from './linkedinNote.ts'
-import { companyName } from './printout.ts'
+import { companyName, letterVars, personFirstName } from './printout.ts'
 import type { TemplateVars } from './templates.ts'
 
 export const EMAIL_WORDS = { min: 50, max: 150 } as const
+/** A follow-up is shorter: they already had the first email. */
+export const FOLLOW_UP_WORDS = { min: 25, max: 100 } as const
 
 export interface HandEmail {
   subject: string
   body: string
 }
 
+/** What this email is: whether the printout is on its way, and whether they had an email before. */
+export interface EmailContext {
+  mailed: boolean
+  followUp: boolean
+}
+
 const HandEmailSchema = z.object({ subject: z.string(), body: z.string() })
 
-export function emailSystem(mailed: boolean): string {
+/** Theo emailed them on an earlier round and they did not answer: a short, new follow-up. */
+function followUpSystem(mailed: boolean): string {
+  const parts = [
+    '"Hi <first name>," on its own line, or just "Hi," when there is no first name.',
+    'One line saying this follows his email from last month, with no guilt and no pressure.',
+    'One new reason it might matter to them, picked from the facts: one concrete moment in their week that Prop Archive makes easier. Do not repeat a whole pitch.',
+    ...(mailed
+      ? [
+          'One short line saying he also mailed them a one-page overview and his card. Never say when it arrives.',
+        ]
+      : []),
+    "The ask, one sentence: a 15-minute look, and that a one-word no is fine if it's not a fit right now.",
+    'The last line before his name says the "Join the beta" button and the link to proparchive.app are in his signature below.',
+    '"Theo" on its own line.',
+  ]
+  return [
+    'You write one short follow-up email from Theo to one Philadelphia landlord or property manager. Theo emailed them about a month ago and they did not answer. Theo reads it, then sends it himself from Gmail.',
+    'Prop Archive is one place for a small landlord or manager to keep leases and documents, repair requests and rent, with a portal each for tenants, owners and contractors.',
+    'The body, in this order, 35 to 80 words:',
+    ...parts.map((p, i) => `${i + 1}. ${p}`),
+    'The subject: 2 to 6 words, low pressure, no clickbait, no numbers.',
+    'Rules:',
+    '- Name their company once when one is given and it is not just their own name.',
+    '- The facts are only for choosing the situation. Never state a count, an address, a license, a violation, a sale or anything else that shows they were looked up. Never invent anything.',
+    '- Sound like one person typing fast: contractions, plain words. No exclamation marks, no emoji, no links (just say proparchive.app), no numbers except "15 minutes", no em-dash character.',
+    '- Never write: I hope, reach out, came across, quick question, circling back, touching base, checking in, bumping this, synergy, leverage, solution.',
+    '- Never mention prices, discounts, customers, user numbers, awards, pitch competitions, money raised, contracts or paperwork, and never say the beta is new, empty or waiting for its first user.',
+  ].join('\n')
+}
+
+export function emailSystem(context: EmailContext): string {
+  if (context.followUp) return followUpSystem(context.mailed)
+  const mailed = context.mailed
   const parts = [
     '"Hi <first name>," on its own line, or just "Hi," when there is no first name.',
     'The first sentence names a problem an owner like them really has, picked from the facts. It is about them, not Theo.',
@@ -67,8 +107,11 @@ export function subjectProblems(subject: string): string[] {
   return problems
 }
 
-export function emailProblems(email: HandEmail): string[] {
-  const problems = [...subjectProblems(email.subject), ...copyProblems(email.body, EMAIL_WORDS)]
+export function emailProblems(
+  email: HandEmail,
+  words: { min: number; max: number } = EMAIL_WORDS,
+): string[] {
+  const problems = [...subjectProblems(email.subject), ...copyProblems(email.body, words)]
   if (!/proparchive\.app/i.test(email.body)) {
     problems.push('it does not point to proparchive.app in his signature')
   }
@@ -76,15 +119,28 @@ export function emailProblems(email: HandEmail): string[] {
 }
 
 /** Theo's own email, used when Claude is not there or breaks the rules. */
-export function fallbackEmail(vars: TemplateVars, mailed: boolean): HandEmail {
-  const first = (vars.first_name ?? '').trim()
+export function fallbackEmail(vars: TemplateVars, context: EmailContext): HandEmail {
+  const first = personFirstName(vars)
   const company = companyName(vars)
+  const mailed = context.mailed
+  if (context.followUp) {
+    return {
+      subject: 'Following up on Prop Archive',
+      body: [
+        first ? `Hi ${first},` : 'Hi,',
+        `Following up on my email from last month. If repairs, leases or rent ever pile up at the worst times${company ? ` at ${company}` : ''}, Prop Archive keeps all three in one place, so fewer things land on your phone.${mailed ? ' I mailed you a one-page overview and my card too.' : ''}`,
+        "Worth a 15-minute look? If it's not a fit right now, a one-word no is fine too.",
+        'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
+        'Theo',
+      ].join('\n\n'),
+    }
+  }
   return {
     subject: company
       ? `Leases, repairs and rent at ${company}`
       : 'Leases, repairs and rent in one place',
     body: [
-      first && first !== 'there' ? `Hi ${first},` : 'Hi,',
+      first ? `Hi ${first},` : 'Hi,',
       'If your leases live in one folder, repair requests in your texts and rent in a spreadsheet, you know how much of the week goes to keeping it all straight.',
       'Prop Archive puts it in one place, with a portal each for tenants, owners and contractors, so fewer things land on your phone.',
       `This is my second company, and I grew up around landlords, realtors and property managers.${mailed ? ' I mailed you a one-page overview and my card too.' : ''}`,
@@ -111,21 +167,24 @@ export function withFooter(body: string, settings: Pick<Settings, 'physical_addr
 export async function writeHandEmail(
   lead: Pick<Lead, 'persona' | 'owner_kind' | 'enrichment'>,
   vars: TemplateVars,
-  mailed: boolean,
+  context: EmailContext,
   llm: Llm | null,
 ): Promise<HandEmail | null> {
   if (!llm) return null
-  const facts = noteFacts(lead, { ...vars, company: companyName(vars) })
+  const words = context.followUp ? FOLLOW_UP_WORDS : EMAIL_WORDS
+  const facts = noteFacts(lead, letterVars(vars))
   const prompt = [
     `Facts about this person:\n${facts.join('\n') || '(none)'}`,
-    'Write the subject and the body.',
+    context.followUp
+      ? 'Write the subject and the body of the follow-up.'
+      : 'Write the subject and the body.',
   ].join('\n\n')
   let ask = prompt
   for (let attempt = 0; attempt < 2; attempt++) {
     let out: HandEmail | null
     try {
       out = await llm.structured(ask, HandEmailSchema, {
-        system: emailSystem(mailed),
+        system: emailSystem(context),
         maxTokens: 700,
       })
     } catch {
@@ -133,7 +192,7 @@ export async function writeHandEmail(
     }
     if (!out) return null
     const email = { subject: cleanNote(out.subject), body: cleanNote(out.body) }
-    const problems = emailProblems(email)
+    const problems = emailProblems(email, words)
     if (problems.length === 0) return email
     ask = `${prompt}\n\nYour last email broke the rules (${problems.join('; ')}):\nSubject: ${email.subject}\n\n${email.body}\n\nWrite it again.`
   }
