@@ -133,7 +133,7 @@ export async function todoCandidates(
       and(
         eq(leads.do_not_contact, false),
         notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
-        sql`(trim(coalesce(${leads.mailing_street}, '')) <> '' or trim(coalesce(${leads.phone}, '')) <> '' or trim(coalesce(${leads.linkedin_url}, '')) <> '')`,
+        sql`(trim(coalesce(${leads.mailing_street}, '')) <> '' or trim(coalesce(${leads.email}, '')) <> '' or trim(coalesce(${leads.phone}, '')) <> '' or trim(coalesce(${leads.linkedin_url}, '')) <> '')`,
         sql`not exists (select 1 from ${messages} m where m.lead_id = ${leads.id} and m.direction = 'out' and (
           m.status = 'ready_for_human'
           or (m.status = 'sent' and m.provider = 'human' and m.sent_at > ${since})
@@ -505,8 +505,8 @@ export async function addLinkedInStepToOpenCard(
   const round = Math.max(0, ...open.map((m) => parseTodoKey(m.key)?.round ?? 0))
   if (round === 0) return false
   const profile = (lead.linkedin_url ?? '').trim()
-  // Their note is already on the card without a profile: the pasted profile joins it.
-  const waiting = open.find((m) => m.channel === 'linkedin' && !(m.to_address ?? '').trim())
+  // Their note is already on the card: the pasted profile joins it (or replaces a wrong one).
+  const waiting = open.find((m) => m.channel === 'linkedin')
   if (waiting && profile) {
     const raw = (waiting.raw ?? {}) as Record<string, unknown>
     const saved = await deps.db
@@ -516,7 +516,6 @@ export async function addLinkedInStepToOpenCard(
       .returning({ id: messages.id })
     return saved.length > 0
   }
-  if (open.some((m) => m.channel === 'linkedin')) return false
   const step = await linkedInStep(deps, settings, lead)
   if (!step) return false
   return (await insertSteps(deps, lead, round, [step])) > 0

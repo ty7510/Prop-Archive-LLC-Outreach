@@ -28,7 +28,13 @@ import {
   printoutHeading,
   writePrintout,
 } from './printout.ts'
-import { actOnQueueItem, editStepText, printoutDoc, printPage } from './queue.ts'
+import {
+  actOnQueueItem,
+  editStepText,
+  printoutDoc,
+  printPage,
+  saveLinkedInProfile,
+} from './queue.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 import { clearStepProfile, fillTodo, listTodo, todoKey, upgradeOpenCards } from './todo.ts'
 import { getSettings } from '../lib/settings.ts'
@@ -273,6 +279,38 @@ describe('proofing and editing on the to-do list', () => {
       to_address: null,
     })
     expect(card.linkedin_missing).toBe('not_found')
+  })
+
+  it('a pasted profile replaces a wrong one on the waiting note', async () => {
+    const { db, deps } = await todoSetup()
+    const lead = await insertLead(db, { full_name: 'Pat Lee', first_name: 'Pat', last_name: 'Lee' })
+    await fillTodo(deps)
+    const note = (await listTodo(deps)).people[0]!.steps[0]!
+    await saveLinkedInProfile(deps, lead.id, 'https://www.linkedin.com/in/the-right-pat-lee')
+    const card = (await listTodo(deps)).people[0]!
+    expect(card.steps[0]).toMatchObject({
+      message_id: note.message_id,
+      to_address: 'https://www.linkedin.com/in/the-right-pat-lee/',
+    })
+    expect(card.steps.filter((s) => s.channel === 'linkedin')).toHaveLength(1)
+  })
+
+  it('someone with only an email address still goes on the list, with their email', async () => {
+    const { db, deps } = await todoSetup()
+    await insertLead(db, {
+      full_name: 'Fairmount Rentals LLC',
+      first_name: null,
+      last_name: null,
+      company: 'Fairmount Rentals LLC',
+      phone: null,
+      linkedin_url: null,
+      mailing_street: null,
+    })
+    expect((await fillTodo(deps)).added).toBe(1)
+    const card = (await listTodo(deps)).people[0]!
+    expect(card.steps.map((s) => s.kind)).toEqual(['email'])
+    // No printout on its way, so the email does not say one is.
+    expect(card.steps[0]!.body).not.toContain('mailed you')
   })
 
   it('the app never sends the email: Sent it only writes it down', async () => {
