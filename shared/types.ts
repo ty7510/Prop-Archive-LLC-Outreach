@@ -407,8 +407,18 @@ export const QueueItemSchema = z.object({
   /** To call or write to them himself. */
   phone: z.string().nullable(),
   email: z.string().nullable(),
+  /** A LinkedIn note written for this person and their company (waiting notes only). */
+  personal_note: z.boolean().optional(),
 })
 export type QueueItem = z.infer<typeof QueueItemSchema>
+
+/** One waiting LinkedIn note: written for the person when `personal`, else Theo's own note. */
+export const LinkedInNoteSchema = z.object({
+  message_id: z.string(),
+  body: z.string(),
+  personal: z.boolean(),
+})
+export type LinkedInNote = z.infer<typeof LinkedInNoteSchema>
 
 /** Someone in the sequence with no LinkedIn profile yet: Theo can look them up and paste it. */
 export const LinkedInWantedSchema = z.object({

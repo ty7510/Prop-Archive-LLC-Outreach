@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, notInArray, sql, type SQL } f
 import type { Settings } from '../../shared/settings.ts'
 import {
   CHANNELS,
+  type LinkedInNote,
   type LinkedInProfileResult,
   type LinkedInWanted,
   type Queue,
@@ -16,6 +17,7 @@ import {
   messages,
   sequenceSteps,
   sequences,
+  type Lead,
   type Message,
 } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
@@ -27,17 +29,24 @@ import type { OutreachDeps } from './deps.ts'
 import { computeChannels } from '../enrich/channels.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
-import { buildVars, renderTemplate } from './templates.ts'
+import { writePersonalNote } from './linkedinNote.ts'
+import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
 
-/** Pending LinkedIn notes follow the template; completed history remains a snapshot. */
-async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promise<string> {
+/**
+ * A waiting LinkedIn note's lead and the step's text rendered for them (Theo's own note), or null
+ * when the note is not waiting, has no step, or the step writes its own opener ({{ai_opener}}).
+ */
+async function linkedInTemplate(
+  deps: OutreachDeps,
+  message: Message,
+): Promise<{ lead: Lead; vars: TemplateVars; text: string } | null> {
   if (
     message.channel !== 'linkedin' ||
     message.status !== 'ready_for_human' ||
     !message.enrollment_id
   ) {
-    return message.body
+    return null
   }
   const [context] = await deps.db
     .select({ lead: leads, sequence: sequences })
@@ -45,7 +54,7 @@ async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promis
     .innerJoin(leads, eq(leads.id, enrollments.lead_id))
     .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
     .where(eq(enrollments.id, message.enrollment_id))
-  if (!context) return message.body
+  if (!context) return null
   const steps = await deps.db
     .select()
     .from(sequenceSteps)
@@ -58,16 +67,89 @@ async function currentLinkedInBody(deps: OutreachDeps, message: Message): Promis
   // Older edits deleted step IDs. Recover only when there is one unambiguous LinkedIn step.
   const step =
     steps.find((s) => s.id === message.step_id) ?? (steps.length === 1 ? steps[0] : undefined)
-  if (!step || step.body.includes('{{ai_opener}}')) return message.body
+  if (!step || step.body.includes('{{ai_opener}}')) return null
   const settings = await getSettings(deps.db)
-  return renderTemplate(
-    step.body,
-    buildVars(context.lead, settings, {
-      baseUrl: deps.baseUrl,
-      channel: 'linkedin',
-      sequenceName: context.sequence.name,
-    }),
-  ).text
+  const vars = buildVars(context.lead, settings, {
+    baseUrl: deps.baseUrl,
+    channel: 'linkedin',
+    sequenceName: context.sequence.name,
+  })
+  return { lead: context.lead, vars, text: renderTemplate(step.body, vars).text }
+}
+
+/** The note written for this person, and the text of Theo's note it was written from. */
+interface PersonalNoteMark {
+  template: string
+  at: string
+}
+
+function personalNoteMark(raw: unknown): PersonalNoteMark | null {
+  const mark = (raw as { personal_note?: unknown } | null)?.personal_note as
+    Partial<PersonalNoteMark> | undefined
+  return typeof mark?.template === 'string' && typeof mark.at === 'string'
+    ? { template: mark.template, at: mark.at }
+    : null
+}
+
+/**
+ * What a waiting LinkedIn note says now: the note written for this person while Theo's note is
+ * unchanged, otherwise Theo's note as the step reads today. Completed history stays a snapshot.
+ */
+async function currentLinkedInBody(
+  deps: OutreachDeps,
+  message: Message,
+): Promise<{ body: string; personal: boolean }> {
+  const template = await linkedInTemplate(deps, message)
+  if (!template) return { body: message.body, personal: false }
+  if (personalNoteMark(message.raw)?.template === template.text) {
+    return { body: message.body, personal: true }
+  }
+  return { body: template.text, personal: false }
+}
+
+/** One note written at a time per message, however many requests ask for it. */
+const writing = new Map<string, Promise<LinkedInNote>>()
+
+/**
+ * The note for one waiting LinkedIn message, written for that person and their company and saved
+ * on the message, so it is written once. Theo's own note when there is no model or it fails.
+ */
+export function personalLinkedInNote(deps: OutreachDeps, messageId: string): Promise<LinkedInNote> {
+  const inFlight = writing.get(messageId)
+  if (inFlight) return inFlight
+  const job = (async (): Promise<LinkedInNote> => {
+    const [msg] = await deps.db.select().from(messages).where(eq(messages.id, messageId)).limit(1)
+    if (!msg) throw notFound('Message not found', 'MESSAGE_NOT_FOUND')
+    const current = await currentLinkedInBody(deps, msg)
+    if (current.personal) return { message_id: msg.id, ...current }
+    const template = await linkedInTemplate(deps, msg)
+    if (!template) return { message_id: msg.id, ...current }
+    const note = await writePersonalNote(template.lead, template.vars, template.text, deps.llm)
+    if (!note) return { message_id: msg.id, body: template.text, personal: false }
+    const mark: PersonalNoteMark = { template: template.text, at: deps.now().toISOString() }
+    const saved = await deps.db
+      .update(messages)
+      .set({ body: note, raw: { personal_note: mark } })
+      .where(and(eq(messages.id, msg.id), eq(messages.status, 'ready_for_human')))
+      .returning({ id: messages.id })
+    if (saved.length === 0) return { message_id: msg.id, body: msg.body, personal: false }
+    return { message_id: msg.id, body: note, personal: true }
+  })().finally(() => writing.delete(messageId))
+  writing.set(messageId, job)
+  return job
+}
+
+/** Write the missing notes in the background, two at a time; the next queue load shows them. */
+function writeMissingNotes(deps: OutreachDeps, messageIds: string[]): void {
+  if (!deps.llm || messageIds.length === 0) return
+  const todo = messageIds.filter((id) => !writing.has(id))
+  const next = async (): Promise<void> => {
+    const id = todo.shift()
+    if (!id) return
+    await personalLinkedInNote(deps, id).catch(() => undefined)
+    await next()
+  }
+  void Promise.all([next(), next()])
 }
 
 function personOf(lead: { full_name: string | null; company: string | null }): string {
@@ -293,9 +375,13 @@ async function linkedInWanted(deps: OutreachDeps, limit = 15): Promise<LinkedInW
 export async function listQueue(deps: OutreachDeps): Promise<Queue> {
   const rows = await queueRows(deps, eq(messages.status, 'ready_for_human'))
   const groups: Queue['groups'] = { email: [], mail: [], linkedin: [], instagram: [], call: [] }
+  const unwritten: string[] = []
   for (const r of rows) {
-    groups[r.message.channel].push(toItem(r, await currentLinkedInBody(deps, r.message)))
+    const current = await currentLinkedInBody(deps, r.message)
+    if (r.message.channel === 'linkedin' && !current.personal) unwritten.push(r.message.id)
+    groups[r.message.channel].push({ ...toItem(r, current.body), personal_note: current.personal })
   }
+  writeMissingNotes(deps, unwritten)
   const settings = await getSettings(deps.db)
   const dayStart = startOfDayInTz(deps.now(), settings.send_window.tz).toISOString()
   return {
@@ -323,7 +409,7 @@ export async function actOnQueueItem(
     throw badRequest(`This item is already marked ${msg.status.replace(/_/g, ' ')}`, 'NOT_IN_QUEUE')
   }
   const now = deps.now().toISOString()
-  const body = await currentLinkedInBody(deps, msg)
+  const { body } = await currentLinkedInBody(deps, msg)
   const status = action === 'done' ? 'sent' : 'skipped'
   await db
     .update(messages)

@@ -3,7 +3,13 @@ import { Router } from 'express'
 import { QueueActionBodySchema } from '../../shared/types.ts'
 import { asyncHandler, parseOr400 } from '../lib/http.ts'
 import { outreachDeps } from '../outreach/index.ts'
-import { actOnQueueItem, listQueue, printPage, restoreQueueItem } from '../outreach/queue.ts'
+import {
+  actOnQueueItem,
+  listQueue,
+  personalLinkedInNote,
+  printPage,
+  restoreQueueItem,
+} from '../outreach/queue.ts'
 
 export const queueRouter = Router()
 
@@ -44,6 +50,14 @@ queueRouter.post(
   asyncHandler(async (req, res) => {
     const body = parseOr400(QueueActionBodySchema, req.body ?? {})
     res.json(await actOnQueueItem(outreachDeps(), String(req.params.messageId), 'skip', body.note))
+  }),
+)
+
+// POST /api/queue/:messageId/note -> LinkedInNote (written for this person once, then saved)
+queueRouter.post(
+  '/:messageId/note',
+  asyncHandler(async (req, res) => {
+    res.json(await personalLinkedInNote(outreachDeps(), String(req.params.messageId)))
   }),
 )
 
