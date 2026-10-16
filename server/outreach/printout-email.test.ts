@@ -87,7 +87,7 @@ const GOOD_EMAIL: HandEmail = {
     'When repair texts and leases live in different places, the week gets eaten by keeping it all straight.',
     'Prop Archive keeps them in one place, with a portal each for tenants, owners and contractors.',
     'This is my second company, and I grew up around landlords and property managers. I mailed you a one-page overview and my card too.',
-    "It's free while we're in beta, plus two months free after the public launch, and there's nothing to sign. Worth a 15-minute look?",
+    "It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Worth a 15-minute look?",
     'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
     'Theo',
   ].join('\n\n'),
@@ -116,6 +116,14 @@ describe('the words', () => {
     ]) {
       expect(hasEmDash(text)).toBe(false)
     }
+    // The same offer as the website and its terms: six months free at launch (Theo, 2026-10-16).
+    expect(DEFAULT_PRINTOUT_OVERVIEW).toContain('six months free at launch')
+    expect(fallbackEmail(vars, { mailed: true, followUp: false }).body).toContain(
+      'six months free at launch',
+    )
+    expect(
+      `${DEFAULT_PRINTOUT_OVERVIEW} ${fallbackEmail(vars, { mailed: true, followUp: false }).body}`,
+    ).not.toMatch(/two months/i)
     expect(DEFAULT_PRINTOUT_OVERVIEW.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.overview)
     expect(DEFAULT_PRINTOUT_BIO.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.bio)
     expect(DEFAULT_PRINTOUT_CLOSING.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.closing)

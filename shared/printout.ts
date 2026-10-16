@@ -6,7 +6,7 @@
 
 export const DEFAULT_PRINTOUT_OVERVIEW = [
   'Prop Archive is one place to run your rentals. Leases and documents, repair requests and rent live together instead of across texts, email and spreadsheets. Tenants, owners and contractors each get their own portal, so the questions that used to land on your phone have somewhere to go.',
-  "It's built for owners with a handful of doors up to small management teams, so you can run as tight as the big portfolios without their software bill. It's free while we're in beta, plus two months free after the public launch, and there's nothing to sign.",
+  "It's built for owners with a handful of doors up to small management teams, so you can run as tight as the big portfolios without their software bill. It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign.",
 ].join('\n\n')
 
 export const DEFAULT_PRINTOUT_BIO =

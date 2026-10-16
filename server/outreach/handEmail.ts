@@ -72,7 +72,7 @@ export function emailSystem(context: EmailContext): string {
           'One short line saying he also mailed them a one-page overview and his card. Never say when it arrives.',
         ]
       : []),
-    "The beta, in these words or very close: free while we're in beta, plus two months free after the public launch, and there's nothing to sign.",
+    "The beta, in these words or very close: free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Write the number as the word six.",
     'The ask, one sentence: a 15-minute look.',
     'The last line before his name says the "Join the beta" button and the link to proparchive.app are in his signature below.',
     '"Theo" on its own line.',
@@ -144,7 +144,7 @@ export function fallbackEmail(vars: TemplateVars, context: EmailContext): HandEm
       'If your leases live in one folder, repair requests in your texts and rent in a spreadsheet, you know how much of the week goes to keeping it all straight.',
       'Prop Archive puts it in one place, with a portal each for tenants, owners and contractors, so fewer things land on your phone.',
       `This is my second company, and I grew up around landlords, realtors and property managers.${mailed ? ' I mailed you a one-page overview and my card too.' : ''}`,
-      "It's free while we're in beta, plus two months free after the public launch, and there's nothing to sign. Worth a 15-minute look?",
+      "It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Worth a 15-minute look?",
       'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
       'Theo',
     ].join('\n\n'),
