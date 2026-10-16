@@ -19,6 +19,7 @@ import { outreachDeps } from '../outreach/index.ts'
 import { recordOutcome } from '../outreach/outcomes.ts'
 import { actOnQueueItem, saveLinkedInProfile } from '../outreach/queue.ts'
 import { rejectLinkedInProfile } from '../outreach/linkedinFinder.ts'
+import { clearStepProfile } from '../outreach/todo.ts'
 import {
   createSequence,
   deleteSequence,
@@ -135,7 +136,11 @@ leadOutreachRouter.post(
     const body = parseOr400(WrongProfileBodySchema, req.body ?? {})
     const deps = outreachDeps()
     await rejectLinkedInProfile(deps, String(req.params.id))
-    if (body.message_id) await actOnQueueItem(deps, body.message_id, 'skip', 'wrong person')
+    // On the to-do list the note stays on the card without the profile, so Theo can find them
+    // himself; anywhere else the task is skipped as before.
+    if (body.message_id && !(await clearStepProfile(deps, body.message_id))) {
+      await actOnQueueItem(deps, body.message_id, 'skip', 'wrong person')
+    }
     res.json({ ok: true })
   }),
 )

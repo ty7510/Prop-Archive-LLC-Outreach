@@ -16,7 +16,8 @@ import ReplyForm from './ReplyForm.tsx'
 const STEP_TITLE: Record<TodoStepKind, string> = {
   linkedin_connect: 'Send a LinkedIn connection note',
   linkedin_follow_up: 'Send a LinkedIn message',
-  postcard: 'Mail a postcard',
+  postcard: 'Mail the printout',
+  email: 'Send the email',
   call: 'Call them',
 }
 

@@ -1,14 +1,24 @@
 // The human queue: ready_for_human messages, done / skip / bring back, and the print page for letters.
 import { and, asc, desc, eq, gte, inArray, isNull, notInArray, sql, type SQL } from 'drizzle-orm'
+import {
+  PRINTOUT_CSS,
+  PRINTOUT_FIT_SCRIPT,
+  PRINTOUT_LIMITS,
+  printoutSection,
+} from '../../shared/printout.ts'
 import type { Settings } from '../../shared/settings.ts'
 import {
   CHANNELS,
+  type EditStepBody,
+  type EditStepResult,
   type LinkedInNote,
   type LinkedInProfileResult,
   type LinkedInWanted,
+  type PrintoutDoc,
   type Queue,
   type QueueActionResult,
   type QueueItem,
+  type TodoStepKind,
 } from '../../shared/types.ts'
 import {
   enrollments,
@@ -28,11 +38,12 @@ import { startOfDayInTz } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
 import { computeChannels } from '../enrich/channels.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
-import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
+import { parsePostal, POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { writePersonalNote } from './linkedinNote.ts'
+import { printoutParts } from './printout.ts'
 import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
-import { addLinkedInStepToOpenCard } from './todo.ts'
+import { addLinkedInStepToOpenCard, parseTodoKey, stepProblems, TODO_KEY_PREFIX } from './todo.ts'
 
 /**
  * A waiting LinkedIn note's lead and the step's text rendered for them (Theo's own note), or null
@@ -594,47 +605,87 @@ function esc(s: string | null | undefined): string {
   return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-function parsePostal(to: string | null): PostalAddress | null {
-  if (!to) return null
-  try {
-    const v = JSON.parse(to) as Partial<PostalAddress> | null
-    if (v && typeof v === 'object' && typeof v.street === 'string') {
-      return {
-        name: v.name ?? '',
-        ...(v.company ? { company: v.company } : {}),
-        street: v.street,
-        city: v.city ?? '',
-        state: v.state ?? '',
-        zip: v.zip ?? '',
-      }
-    }
-  } catch {
-    // not JSON
-  }
-  return null
+/** The address lines for an envelope or label. */
+function addressLines(to: PostalAddress | null, fallbackName: string): string[] {
+  const name = to?.name || fallbackName
+  return to
+    ? [name, to.company, to.street, `${to.city}, ${to.state} ${to.zip}`.trim()].filter(
+        (l): l is string => Boolean(l),
+      )
+    : [name]
 }
 
-/** A print-ready page: one letter per sheet with the address block, body and a hand-sign line. */
-export async function printPage(deps: OutreachDeps, ids: string[]): Promise<string> {
+/**
+ * The print page. To-do printouts are one US Letter sheet each (shared/printout.ts), with a link to
+ * proof and edit each one; older sequence mail prints as a 4x6 postcard or a letter. With
+ * `labels`, the same people as address labels for the envelopes (Avery 5163, 10 a sheet).
+ */
+export async function printPage(
+  deps: OutreachDeps,
+  ids: string[],
+  opts: { labels?: boolean } = {},
+): Promise<string> {
   const settings = await getSettings(deps.db)
+  const now = deps.now()
   const rows =
     ids.length === 0
       ? []
       : await deps.db
-          .select({ message: messages, lead_name: leads.full_name, lead_company: leads.company })
+          .select({
+            message: messages,
+            lead_name: leads.full_name,
+            lead_first: leads.first_name,
+            lead_company: leads.company,
+          })
           .from(messages)
           .innerJoin(leads, eq(leads.id, messages.lead_id))
           .where(and(inArray(messages.id, ids), eq(messages.channel, 'mail')))
+  // The order Theo picked them in.
+  rows.sort((a, b) => ids.indexOf(a.message.id) - ids.indexOf(b.message.id))
+  const fromLine = [
+    settings.owner_name,
+    'Prop Archive LLC',
+    settings.physical_address.trim(),
+  ].filter(Boolean)
+  const fromHtml = `${esc(settings.owner_name)}<br>Prop Archive LLC<br>${esc(settings.physical_address).replace(/,\s*/, '<br>')}`
+
+  if (opts.labels) {
+    const labels = rows.map((r) => {
+      const lines = addressLines(
+        parsePostal(r.message.to_address),
+        personOf({ full_name: r.lead_name, company: r.lead_company }),
+      )
+      return `<div class="label"><div class="from">${fromLine.map(esc).join(', ')}</div><div class="to">${lines.map(esc).join('<br>')}</div></div>`
+    })
+    const sheets: string[] = []
+    for (let i = 0; i < labels.length; i += 10) {
+      sheets.push(`<section class="labels-sheet">${labels.slice(i, i + 10).join('')}</section>`)
+    }
+    return printDocument(
+      'Envelope labels',
+      `${labels.length} ${labels.length === 1 ? 'label' : 'labels'} for Avery 5163 or 8163 sheets (2 x 4 in, 10 a sheet). In the print box pick Letter, Margins None and Scale 100. Print one on plain paper first and hold it over a label sheet to check it lines up.`,
+      sheets.join('\n'),
+    )
+  }
+
+  const isPrintout = isPrintoutMessage
   const pieces = rows
     .map((r) => {
+      if (isPrintout(r.message)) {
+        return printoutSection(
+          printoutParts(
+            settings,
+            r.message,
+            { full_name: r.lead_name, company: r.lead_company, first_name: r.lead_first },
+            now,
+          ),
+        )
+      }
       const to = parsePostal(r.message.to_address)
       const name = to?.name || personOf({ full_name: r.lead_name, company: r.lead_company })
-      const addr = to
-        ? [name, to.company, to.street, `${to.city}, ${to.state} ${to.zip}`.trim()].filter(Boolean)
-        : [name]
-      const toHtml = addr.map((l) => esc(l)).join('<br>')
-      // "1500 Market St, Philadelphia, PA 19102": the street on one line, city, state and zip below.
-      const fromHtml = `${esc(settings.owner_name)}<br>Prop Archive LLC<br>${esc(settings.physical_address).replace(/,\s*/, '<br>')}`
+      const toHtml = addressLines(to, name)
+        .map((l) => esc(l))
+        .join('<br>')
       if (r.message.body.length > POSTCARD_MAX_CHARS) {
         return `<section class="letter">
   <header>
@@ -656,28 +707,60 @@ export async function printPage(deps: OutreachDeps, ids: string[]): Promise<stri
 </section>`
     })
     .join('\n')
-  const cards = rows.filter((r) => r.message.body.length <= POSTCARD_MAX_CHARS).length
-  const letters = rows.length - cards
+  const printouts = rows.filter((r) => isPrintout(r.message)).length
+  const cards = rows.filter(
+    (r) => !isPrintout(r.message) && r.message.body.length <= POSTCARD_MAX_CHARS,
+  ).length
+  const letters = rows.length - printouts - cards
   const counted = [
+    printouts ? `${printouts} ${printouts === 1 ? 'printout' : 'printouts'}` : '',
     cards ? `${cards} ${cards === 1 ? 'postcard' : 'postcards'}` : '',
     letters ? `${letters} ${letters === 1 ? 'letter' : 'letters'}` : '',
   ]
     .filter(Boolean)
     .join(', ')
-  const empty = `<p class="empty">Nothing to print. Pick postcards in the queue first.</p>`
+  const how = [
+    printouts
+      ? 'Read each page first: Proof and edit (top right of a page, not printed) changes it. Each printout is one US Letter sheet: in the print box pick Letter, Margins None and Scale 100. Put each in a folder with your business card.'
+      : '',
+    cards
+      ? 'Load 4x6 postcard stock and print double-sided (flip on the short edge), then sign, stamp and mail.'
+      : '',
+    'To download instead, pick "Save as PDF" as the printer.',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const labelsLink = printouts
+    ? `<a class="tool-link" href="/api/queue/print?ids=${rows
+        .filter((r) => isPrintout(r.message))
+        .map((r) => encodeURIComponent(r.message.id))
+        .join(',')}&labels=1" target="_blank" rel="noreferrer">Envelope labels</a>`
+    : ''
+  return printDocument(
+    printouts ? 'Printouts to print' : 'Postcards to print',
+    `${counted || 'Nothing selected'}. ${how}`,
+    pieces || '<p class="empty">Nothing to print. Pick printouts on your list first.</p>',
+    labelsLink,
+  )
+}
+
+function printDocument(title: string, help: string, body: string, extra = ''): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Postcards to print</title>
+<title>${esc(title)}</title>
 <style>
   @page { margin: 0; }
   @page card { size: 6in 4in; margin: 0; }
   @page letter { size: letter; margin: 0; }
+  @page labels { size: 8.5in 11in; margin: 0; }
   body { margin: 0; font-family: Georgia, 'Times New Roman', serif; color: #111; background: #eee; }
-  .toolbar { position: sticky; top: 0; background: #fff; padding: 12px 16px; border-bottom: 1px solid #ccc; font-family: Arial, sans-serif; font-size: 15px; line-height: 1.5; }
-  .toolbar button { font-size: 18px; padding: 10px 18px; min-height: 44px; cursor: pointer; margin-right: 12px; }
+  .toolbar { position: sticky; top: 0; z-index: 2; background: #fff; padding: 12px 16px; border-bottom: 1px solid #ccc; font-family: Arial, sans-serif; font-size: 15px; line-height: 1.5; }
+  .toolbar button, .toolbar .tool-link { font-size: 18px; padding: 10px 18px; min-height: 44px; cursor: pointer; margin-right: 12px; display: inline-block; box-sizing: border-box; border: 1px solid #888; border-radius: 6px; background: #f5f5f4; color: #111; text-decoration: none; font-family: Arial, sans-serif; }
+  .toolbar .fit-note { display: block; color: #b91c1c; font-weight: 700; }
+  .toolbar .fit-note:empty { display: none; }
   .card { page: card; background: #fff; width: 6in; height: 4in; margin: 16px auto; padding: 0.35in; box-sizing: border-box; page-break-after: always; break-after: page; overflow: hidden; position: relative; }
   .card.message article { white-space: pre-wrap; font-size: 16px; line-height: 1.5; }
   .card.address .from { font-size: 10px; line-height: 1.35; max-width: 2.6in; }
@@ -688,14 +771,139 @@ export async function printPage(deps: OutreachDeps, ids: string[]): Promise<stri
   .letter article { white-space: pre-wrap; font-size: 15px; line-height: 1.6; flex: 1; }
   footer { margin-top: 3rem; display: flex; align-items: flex-end; gap: 1rem; font-size: 14px; }
   footer .line { flex: 0 0 3in; border-bottom: 1px solid #111; }
+  .labels-sheet { page: labels; box-sizing: border-box; width: 8.5in; height: 10.98in; margin: 16px auto; padding: 0.5in 0.15625in 0; background: #fff; display: grid; grid-template-columns: 4in 4in; column-gap: 0.1875in; grid-auto-rows: 2in; align-content: start; break-after: page; page-break-after: always; }
+  .labels-sheet:last-of-type { break-after: auto; page-break-after: auto; }
+  .label { box-sizing: border-box; padding: 0.2in 0.3in; overflow: hidden; font-family: Arial, Helvetica, sans-serif; outline: 1px dashed #ccc; outline-offset: -1px; }
+  .label .from { font-size: 7.5pt; line-height: 1.3; color: #333; }
+  .label .to { margin: 0.16in 0 0 0.6in; font-size: 11pt; line-height: 1.35; }
   .empty { font-family: Arial, sans-serif; text-align: center; padding: 3rem; font-size: 18px; }
-  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter { margin: 0; } }
+  ${PRINTOUT_CSS}
+  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter, .labels-sheet { margin: 0; } .label { outline: none; } }
   @media (max-width: 700px) { .letter { width: auto; min-height: 0; padding: 1rem; } }
 </style>
 </head>
 <body>
-<div class="toolbar"><button onclick="window.print()">Print or save as PDF</button><span>${counted || 'Nothing selected'}. Load 4x6 postcard stock and print double-sided (flip on the short edge). To download instead, pick "Save as PDF" as the printer. Then sign, stamp and mail.</span></div>
-${pieces || empty}
+<div class="toolbar"><button onclick="window.print()">Print or save as PDF</button>${extra}<span>${esc(help)}</span><span id="fit-note" class="fit-note"></span></div>
+${body}
+<script>${PRINTOUT_FIT_SCRIPT}</script>
 </body>
 </html>`
+}
+
+/** A to-do printout (one letter page), as opposed to an old 4x6 postcard or sequence mail. */
+export function isPrintoutMessage(
+  m: Pick<Message, 'channel' | 'raw' | 'idempotency_key'>,
+): boolean {
+  return (
+    m.channel === 'mail' &&
+    m.idempotency_key.startsWith(TODO_KEY_PREFIX) &&
+    (m.raw as { printout?: unknown } | null)?.printout === true
+  )
+}
+
+/** One printout with everything its page shows, so Theo can proof and edit it. */
+export async function printoutDoc(deps: OutreachDeps, messageId: string): Promise<PrintoutDoc> {
+  const row = (
+    await deps.db
+      .select({ message: messages, lead: leads })
+      .from(messages)
+      .innerJoin(leads, eq(leads.id, messages.lead_id))
+      .where(eq(messages.id, messageId))
+      .limit(1)
+  )[0]
+  if (!row) throw notFound('Printout not found', 'MESSAGE_NOT_FOUND')
+  if (!isPrintoutMessage(row.message)) throw badRequest('This is not a printout', 'NOT_A_PRINTOUT')
+  const settings = await getSettings(deps.db)
+  const { editHref: _edit, ...parts } = printoutParts(settings, row.message, row.lead, deps.now())
+  const to = parsePostal(row.message.to_address)
+  return {
+    message_id: row.message.id,
+    lead_id: row.lead.id,
+    status: row.message.status,
+    person: personOf(row.lead),
+    address: to ? addressLines(to, personOf(row.lead)).join(', ') : '',
+    parts,
+    problems: stepProblems('postcard', {
+      subject: row.message.subject,
+      body: row.message.body,
+      printout: true,
+    }),
+  }
+}
+
+/** The longest Theo's words may be on each kind of step. */
+const EDIT_LIMITS = {
+  /** LinkedIn allows 200 characters on a free account and 300 with Premium. */
+  linkedin: 300,
+  printout: PRINTOUT_LIMITS.body,
+  heading: PRINTOUT_LIMITS.heading,
+  postcard: 1_400,
+  email: 6_000,
+  subject: 200,
+} as const
+
+/**
+ * Theo's own words on a waiting to-do step: a LinkedIn note, a printout's heading and part about
+ * them, or an email's subject and body. Saved as he wrote them; the house-rule checks come back as
+ * hints, never as a refusal.
+ */
+export async function editStepText(
+  deps: OutreachDeps,
+  messageId: string,
+  input: EditStepBody,
+): Promise<EditStepResult> {
+  const msg = (await deps.db.select().from(messages).where(eq(messages.id, messageId)).limit(1))[0]
+  if (!msg) throw notFound('Message not found', 'MESSAGE_NOT_FOUND')
+  const parsed = parseTodoKey(msg.idempotency_key)
+  if (!parsed || !msg.idempotency_key.startsWith(TODO_KEY_PREFIX)) {
+    throw badRequest('Only steps on your to-do list can be edited here', 'NOT_TODO')
+  }
+  if (msg.status !== 'ready_for_human') {
+    throw badRequest(`This step is already marked ${msg.status.replace(/_/g, ' ')}`, 'NOT_IN_QUEUE')
+  }
+  const kind = parsed.kind as TodoStepKind
+  const body = input.body.replace(/\r\n?/g, '\n').trim()
+  if (!body) throw badRequest('Write something first', 'EMPTY_TEXT')
+  const printout = isPrintoutMessage(msg)
+  const tooLong = (limit: number, what: string) => {
+    throw badRequest(`The ${what} is too long: keep it under ${limit} characters`, 'TOO_LONG')
+  }
+  let subject = msg.subject
+  if (kind === 'linkedin_connect' || kind === 'linkedin_follow_up') {
+    if (body.length > EDIT_LIMITS.linkedin) tooLong(EDIT_LIMITS.linkedin, 'note')
+  } else if (kind === 'postcard') {
+    if (printout) {
+      if (body.length > EDIT_LIMITS.printout) tooLong(EDIT_LIMITS.printout, 'part about them')
+      if (input.subject !== undefined) {
+        if (input.subject.length > EDIT_LIMITS.heading) tooLong(EDIT_LIMITS.heading, 'heading')
+        subject = input.subject || null
+      }
+    } else if (body.length > EDIT_LIMITS.postcard) {
+      tooLong(EDIT_LIMITS.postcard, 'postcard')
+    }
+  } else if (kind === 'email') {
+    if (body.length > EDIT_LIMITS.email) tooLong(EDIT_LIMITS.email, 'email')
+    if (input.subject !== undefined) {
+      if (!input.subject) throw badRequest('The email needs a subject', 'EMPTY_SUBJECT')
+      subject = input.subject
+    }
+  } else {
+    throw badRequest('This step has no words to edit', 'NOT_EDITABLE')
+  }
+  const raw = (msg.raw ?? {}) as Record<string, unknown>
+  const saved = await deps.db
+    .update(messages)
+    .set({ body, subject, raw: { ...raw, edited_at: deps.now().toISOString() } })
+    .where(and(eq(messages.id, msg.id), eq(messages.status, 'ready_for_human')))
+    .returning({ id: messages.id })
+  if (saved.length === 0) {
+    throw badRequest('This step was just marked done or skipped', 'NOT_IN_QUEUE')
+  }
+  await logActivity('info', 'todo_text_edited', { kind }, msg.lead_id, deps.db)
+  return {
+    message_id: msg.id,
+    subject,
+    body,
+    problems: stepProblems(kind, { subject, body, printout }),
+  }
 }

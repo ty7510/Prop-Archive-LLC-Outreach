@@ -1,11 +1,14 @@
 // The to-do list (Theo, 2026-10-16: "kill the automatic sequence, just give me instructions",
 // "when every step is complete put them in the complete section and recycle them 30 days later if
 // no replies"). Each send day up to settings.people_per_day people go on the list with every step
-// at once: their LinkedIn note (the app finds the profile and writes the note for them), their
-// postcard and a call. Steps are ready_for_human messages keyed todo:<lead>:<round>:<kind>, so Done,
-// Skip and the print page work as before. When no step is waiting the person is complete; once
+// at once, in the order Theo does them (2026-10-16: "a linkedin message then a printout i will mail
+// in a folder with my business card then a email; all hand sent by me but not written by me"):
+// their LinkedIn note (the app finds the profile and writes the note for them), a one-page
+// printout about their company, and an email he sends from Gmail. He proofs and can edit each one
+// first. Steps are ready_for_human messages keyed todo:<lead>:<round>:<kind>, so Done, Skip and the
+// print page work as before. When no step is waiting the person is complete; once
 // recycle_after_days pass since their last step with no reply, they come back as a new round.
-import { and, desc, eq, gte, inArray, like, notInArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, like, notInArray, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/settings.ts'
 import type {
   CompletePerson,
@@ -22,11 +25,14 @@ import { getSettings } from '../lib/settings.ts'
 import { startOfDayInTz, zonedParts } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
+import { ruleProblems } from './copyRules.ts'
+import { emailFooter, fallbackEmail, subjectProblems, writeHandEmail } from './handEmail.ts'
 import { FINDER_RETRY_DAYS, finderRecord, findLinkedInFor, personFor } from './linkedinFinder.ts'
-import { writePersonalNote } from './linkedinNote.ts'
-import { postalAddressFor } from './mail.ts'
+import { noteProblems, writePersonalNote } from './linkedinNote.ts'
+import { postalAddressFor, type PostalAddress } from './mail.ts'
+import { fallbackPrintout, printoutHeading, writePrintout } from './printout.ts'
 import { recipientBlocker } from './recipients.ts'
-import { buildVars, renderTemplate } from './templates.ts'
+import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 
 export const TODO_KEY_PREFIX = 'todo:'
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -36,13 +42,15 @@ export const STEP_ORDER: readonly TodoStepKind[] = [
   'linkedin_connect',
   'linkedin_follow_up',
   'postcard',
+  'email',
   'call',
 ]
 
 export const STEP_LABEL: Record<TodoStepKind, string> = {
   linkedin_connect: 'LinkedIn note',
   linkedin_follow_up: 'LinkedIn message',
-  postcard: 'Postcard',
+  postcard: 'Printout',
+  email: 'Email',
   call: 'Call',
 }
 
@@ -53,17 +61,6 @@ export const DEFAULT_CONNECT_NOTE =
 /** Someone who already got a connection note (an earlier round): a short message instead. */
 export const FOLLOW_UP_NOTE =
   "Hi {{first_name}}, thanks for connecting. What's the biggest headache with your rentals right now? If it's repairs or rent spread across texts, I'd be glad to show you Prop Archive. 15 minutes?"
-
-export const DEFAULT_POSTCARD =
-  "Hi {{first_name}}, I'm Theo. I built Prop Archive for Philly landlords: leases, repairs and rent in one place, so nothing lives in old texts. See it at {{site_link}}"
-
-/** What to say on the call: the problem first, then one question. */
-export const CALL_SCRIPT = [
-  "Hi {{first_name}}, it's Theo from Prop Archive here in Philly. Most owners I talk to lose hours chasing repairs and rent across texts and spreadsheets. Is that a headache for you too?",
-  '',
-  'If yes: ask how they handle it today, then offer 15 minutes to show them.',
-  'No answer: leave your name, Prop Archive and your number, once.',
-].join('\n')
 
 export function todoKey(leadId: string, round: number, kind: TodoStepKind | 'none'): string {
   return `${TODO_KEY_PREFIX}${leadId}:${round}:${kind}`
@@ -82,7 +79,7 @@ function personOf(lead: Pick<Lead, 'full_name' | 'company'>): string {
 async function mainStepText(
   deps: OutreachDeps,
   settings: Settings,
-  channel: 'linkedin' | 'mail',
+  channel: 'linkedin',
 ): Promise<string | null> {
   if (!settings.main_sequence_id) return null
   const rows = await deps.db
@@ -196,28 +193,108 @@ async function linkedInBody(
 interface NewStep {
   kind: TodoStepKind
   channel: Message['channel']
+  /** The email's subject or the printout's heading. */
+  subject?: string | null
   body: string
   to_address: string | null
   raw: Record<string, unknown>
 }
 
+/**
+ * The LinkedIn note. With no profile on file the step still comes, so Theo has the note to copy:
+ * the card then gives him a LinkedIn search for them and a box to paste the profile. Nobody to
+ * search for (no person's name and no profile) means no LinkedIn step.
+ */
 async function linkedInStep(
   deps: OutreachDeps,
   settings: Settings,
   lead: Lead,
 ): Promise<NewStep | null> {
   const profile = (lead.linkedin_url ?? '').trim()
-  if (!profile || !settings.channels.linkedin) return null
+  if (!settings.channels.linkedin) return null
+  if (!profile && !personFor(lead)) return null
   const kind = (await linkedInNoteSent(deps, lead.id)) ? 'linkedin_follow_up' : 'linkedin_connect'
   const note = await linkedInBody(deps, settings, lead, kind)
-  const found = finderRecord(lead)?.url === profile
+  const found = Boolean(profile) && finderRecord(lead)?.url === profile
   return {
     kind,
     channel: 'linkedin',
     body: note.body,
-    to_address: profile,
+    to_address: profile || null,
     raw: { todo: kind, found_by_app: found, ...(note.personal ? { personal: true } : {}) },
   }
+}
+
+/** The part of the printout about them: written for them, else Theo's words for their kind. */
+async function printoutText(
+  deps: OutreachDeps,
+  lead: Lead,
+  vars: TemplateVars,
+): Promise<{ heading: string; body: string; personal: boolean }> {
+  const written = await writePrintout(lead, vars, deps.llm).catch(() => null)
+  return {
+    heading: printoutHeading(vars),
+    body: written ?? fallbackPrintout(lead),
+    personal: Boolean(written),
+  }
+}
+
+/** The printout (one letter page) Theo mails in a folder with his business card. */
+async function printoutStep(
+  deps: OutreachDeps,
+  lead: Lead,
+  vars: TemplateVars,
+  postal: PostalAddress,
+): Promise<NewStep> {
+  const text = await printoutText(deps, lead, vars)
+  return {
+    kind: 'postcard',
+    channel: 'mail',
+    subject: text.heading,
+    body: text.body,
+    to_address: JSON.stringify(postal),
+    raw: { todo: 'postcard', printout: true, ...(text.personal ? { personal: true } : {}) },
+  }
+}
+
+/**
+ * The email Theo sends himself from Gmail. Only to an address that is not known to be bad and has
+ * not had an email lately (min_days_between_emails); `mailed` says the printout is on its way.
+ */
+async function emailStep(
+  deps: OutreachDeps,
+  settings: Settings,
+  lead: Lead,
+  vars: TemplateVars,
+  mailed: boolean,
+): Promise<NewStep | null> {
+  const address = (lead.email ?? '').trim()
+  if (!address || lead.email_status === 'invalid') return null
+  if (await recipientBlocker(deps.db, settings, lead, 'email', deps.now())) return null
+  const written = await writeHandEmail(lead, vars, mailed, deps.llm).catch(() => null)
+  const email = written ?? fallbackEmail(vars, mailed)
+  return {
+    kind: 'email',
+    channel: 'email',
+    subject: email.subject,
+    body: email.body,
+    to_address: address,
+    raw: { todo: 'email', ...(written ? { personal: true } : {}) },
+  }
+}
+
+/** House-rule checks on a step's words as they are now, for Theo to proof. */
+export function stepProblems(
+  kind: TodoStepKind,
+  step: { subject: string | null; body: string; printout: boolean },
+): string[] {
+  if (kind === 'linkedin_connect' || kind === 'linkedin_follow_up') return noteProblems(step.body)
+  if (kind === 'postcard') return step.printout ? ruleProblems(step.body) : []
+  if (kind === 'email') {
+    if (!step.body.trim()) return ['it is empty']
+    return [...subjectProblems(step.subject ?? ''), ...ruleProblems(step.body)]
+  }
+  return []
 }
 
 async function insertSteps(
@@ -237,6 +314,7 @@ async function insertSteps(
         direction: 'out',
         status: 'ready_for_human',
         idempotency_key: todoKey(lead.id, round, step.kind),
+        subject: step.subject ?? null,
         body: step.body,
         to_address: step.to_address,
         provider: 'human',
@@ -317,37 +395,19 @@ export async function addPerson(
     channel: 'mail',
     sequenceName: 'To do',
   })
-  const steps: NewStep[] = []
-  const li = await linkedInStep(deps, settings, lead)
-  if (li) steps.push(li)
+  // LinkedIn note, then the printout, then the email. The three are written at the same time.
   const postal = postalAddressFor(lead)
-  if (postal && !(await recipientBlocker(deps.db, settings, lead, 'mail', now))) {
-    const text = (await mainStepText(deps, settings, 'mail')) ?? DEFAULT_POSTCARD
-    steps.push({
-      kind: 'postcard',
-      channel: 'mail',
-      body: renderTemplate(text, vars).text,
-      to_address: JSON.stringify(postal),
-      raw: { todo: 'postcard' },
-    })
-  }
-  if ((lead.phone ?? '').trim() && settings.channels.call) {
-    const callVars = buildVars(lead, settings, {
-      baseUrl: deps.baseUrl,
-      channel: 'call',
-      sequenceName: 'To do',
-    })
-    steps.push({
-      kind: 'call',
-      channel: 'call',
-      body: renderTemplate(CALL_SCRIPT, callVars).text,
-      to_address: lead.phone,
-      raw: { todo: 'call' },
-    })
-  }
+  const mailing =
+    postal && !(await recipientBlocker(deps.db, settings, lead, 'mail', now)) ? postal : null
+  const written = await Promise.all([
+    linkedInStep(deps, settings, lead),
+    mailing ? printoutStep(deps, lead, vars, mailing) : Promise.resolve(null),
+    emailStep(deps, settings, lead, vars, Boolean(mailing)),
+  ])
+  const steps = written.filter((s): s is NewStep => s !== null)
 
   if (steps.length === 0) {
-    // Nothing to do this round (postcard sent lately, no phone, no profile).
+    // Nothing to do this round (printout mailed lately, no address, no email, nobody on LinkedIn).
     await markEmptyRound(deps, lead.id, round, 'nothing to do this round')
     return 0
   }
@@ -375,6 +435,18 @@ export async function fillTodo(
 ): Promise<{ added: number; reason?: string }> {
   const settings = await getSettings(deps.db)
   if (settings.sequences_on) return { added: 0, reason: 'timed sequences are on' }
+  // Cards made before printouts get theirs, a few each round, whatever the day.
+  try {
+    await upgradeOpenCards(deps, settings)
+  } catch (error) {
+    await logActivity(
+      'warn',
+      'todo_upgrade_failed',
+      { error: error instanceof Error ? error.message : String(error) },
+      null,
+      deps.db,
+    )
+  }
   const day = today(settings, deps.now())
   if (!day.sendDay) return { added: 0, reason: 'not a send day' }
   const room = Math.min(
@@ -402,7 +474,13 @@ export async function addLinkedInStepToOpenCard(
   const lead = (await deps.db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0]
   if (!lead) return false
   const open = await deps.db
-    .select({ key: messages.idempotency_key, channel: messages.channel })
+    .select({
+      id: messages.id,
+      key: messages.idempotency_key,
+      channel: messages.channel,
+      to_address: messages.to_address,
+      raw: messages.raw,
+    })
     .from(messages)
     .where(
       and(
@@ -413,6 +491,19 @@ export async function addLinkedInStepToOpenCard(
     )
   const round = Math.max(0, ...open.map((m) => parseTodoKey(m.key)?.round ?? 0))
   if (round === 0) return false
+  const profile = (lead.linkedin_url ?? '').trim()
+  // Their note is already on the card without a profile: the pasted profile joins it.
+  const waiting = open.find((m) => m.channel === 'linkedin' && !(m.to_address ?? '').trim())
+  if (waiting && profile) {
+    const raw = (waiting.raw ?? {}) as Record<string, unknown>
+    const saved = await deps.db
+      .update(messages)
+      .set({ to_address: profile, raw: { ...raw, found_by_app: false } })
+      .where(and(eq(messages.id, waiting.id), eq(messages.status, 'ready_for_human')))
+      .returning({ id: messages.id })
+    return saved.length > 0
+  }
+  if (open.some((m) => m.channel === 'linkedin')) return false
   const step = await linkedInStep(deps, settings, lead)
   if (!step) return false
   return (await insertSteps(deps, lead, round, [step])) > 0
@@ -469,20 +560,30 @@ async function openCards(deps: OutreachDeps): Promise<TodoPerson[]> {
       .map((x) => {
         const status = stepStatus(x.m.status)
         if (!status) return null
-        const raw = (x.m.raw ?? {}) as { found_by_app?: unknown }
+        const raw = (x.m.raw ?? {}) as { found_by_app?: unknown; printout?: unknown }
+        const kind = x.kind as TodoStepKind
+        const printout = x.m.channel === 'mail' && raw.printout === true
         return {
           message_id: x.m.id,
-          kind: x.kind as TodoStepKind,
+          kind,
           channel: x.m.channel,
           status,
+          subject: x.m.subject,
           body: x.m.body,
           to_address: x.m.to_address,
           found_by_app: raw.found_by_app === true,
+          printout,
+          problems:
+            status === 'waiting'
+              ? stepProblems(kind, { subject: x.m.subject, body: x.m.body, printout })
+              : [],
         }
       })
       .filter((s): s is TodoStep => s !== null)
       .sort((a, b) => STEP_ORDER.indexOf(a.kind) - STEP_ORDER.indexOf(b.kind))
-    const hasLinkedIn = steps.some((s) => s.channel === 'linkedin' && s.status !== 'skipped')
+    const hasLinkedIn = steps.some(
+      (s) => s.channel === 'linkedin' && s.status !== 'skipped' && (s.to_address ?? '').trim(),
+    )
     cards.push({
       lead_id: lead.id,
       person: personOf(lead),
@@ -502,7 +603,8 @@ async function openCards(deps: OutreachDeps): Promise<TodoPerson[]> {
 
 const CHANNEL_DONE_LABEL: Partial<Record<Message['channel'], string>> = {
   linkedin: 'LinkedIn',
-  mail: 'Postcard',
+  mail: 'Printout',
+  email: 'Email',
   call: 'Call',
   instagram: 'Instagram',
 }
@@ -596,5 +698,92 @@ export async function listTodo(deps: OutreachDeps): Promise<TodoList> {
     replied: await repliedPeople(deps),
     today: { added: await addedSince(deps, day.start), goal: settings.people_per_day },
     recycle_after_days: settings.recycle_after_days,
+    email_footer: emailFooter(settings),
+    gmail_user: (settings.reply_to || settings.owner_email).trim(),
   }
+}
+
+/**
+ * "Not them" on a profile the app found: the profile leaves the step but the note stays, so Theo
+ * can search LinkedIn himself and paste the right one. Returns false when it is not a waiting
+ * LinkedIn step on the to-do list.
+ */
+export async function clearStepProfile(deps: OutreachDeps, messageId: string): Promise<boolean> {
+  const msg = (await deps.db.select().from(messages).where(eq(messages.id, messageId)).limit(1))[0]
+  if (
+    !msg ||
+    msg.status !== 'ready_for_human' ||
+    msg.channel !== 'linkedin' ||
+    !msg.idempotency_key.startsWith(TODO_KEY_PREFIX)
+  ) {
+    return false
+  }
+  const raw = (msg.raw ?? {}) as Record<string, unknown>
+  const saved = await deps.db
+    .update(messages)
+    .set({ to_address: null, raw: { ...raw, found_by_app: false } })
+    .where(and(eq(messages.id, msg.id), eq(messages.status, 'ready_for_human')))
+    .returning({ id: messages.id })
+  return saved.length > 0
+}
+
+/**
+ * Cards made before printouts (2026-10-16) still hold a 4x6 postcard and no email. A few at a time,
+ * a waiting postcard becomes a printout written for them and their email joins the card.
+ * Returns how many cards changed.
+ */
+export async function upgradeOpenCards(
+  deps: OutreachDeps,
+  settings: Settings,
+  limit = 3,
+): Promise<number> {
+  const rows = await deps.db
+    .select({ message: messages, lead: leads })
+    .from(messages)
+    .innerJoin(leads, eq(leads.id, messages.lead_id))
+    .where(
+      and(
+        eq(messages.status, 'ready_for_human'),
+        eq(messages.channel, 'mail'),
+        like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`),
+        sql`coalesce(${messages.raw} ->> 'printout', '') <> 'true'`,
+        notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+      ),
+    )
+    .orderBy(asc(messages.created_at))
+    .limit(limit)
+  let changed = 0
+  for (const { message, lead } of rows) {
+    const parsed = parseTodoKey(message.idempotency_key)
+    if (!parsed || parsed.kind !== 'postcard') continue
+    if (await contactBlocker(deps.db, lead)) continue
+    const vars = buildVars(lead, settings, {
+      baseUrl: deps.baseUrl,
+      channel: 'mail',
+      sequenceName: 'To do',
+    })
+    const [text, email] = await Promise.all([
+      printoutText(deps, lead, vars),
+      emailStep(deps, settings, lead, vars, true),
+    ])
+    const raw = (message.raw ?? {}) as Record<string, unknown>
+    const saved = await deps.db
+      .update(messages)
+      .set({
+        subject: text.heading,
+        body: text.body,
+        raw: {
+          ...raw,
+          printout: true,
+          was_postcard: true,
+          ...(text.personal ? { personal: true } : {}),
+        },
+      })
+      .where(and(eq(messages.id, message.id), eq(messages.status, 'ready_for_human')))
+      .returning({ id: messages.id })
+    if (saved.length === 0) continue
+    if (email) await insertSteps(deps, lead, parsed.round, [email])
+    changed++
+  }
+  return changed
 }

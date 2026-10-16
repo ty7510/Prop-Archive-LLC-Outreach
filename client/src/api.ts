@@ -17,6 +17,9 @@ import type {
   Me,
   OutcomeBody,
   LinkedInNote,
+  EditStepBody,
+  EditStepResult,
+  PrintoutDoc,
   LinkedInProfileResult,
   Paged,
   ProvidersResponse,
@@ -181,6 +184,14 @@ export const linkedInWrongPerson = (leadId: string, messageId?: string) =>
   })
 export const printQueueUrl = (ids: string[]) =>
   `/api/queue/print?ids=${ids.map(encodeURIComponent).join(',')}`
+/** The same people as envelope address labels (Avery 5163, 10 a sheet). */
+export const printLabelsUrl = (ids: string[]) => `${printQueueUrl(ids)}&labels=1`
+/** One printout to proof and edit: this person's part plus the page as it prints. */
+export const getPrintout = (messageId: string) =>
+  api<PrintoutDoc>(`/api/queue/${encodeURIComponent(messageId)}/printout`)
+/** Save Theo's own words on a waiting step (a LinkedIn note, an email, a printout's part). */
+export const editStepText = (messageId: string, body: EditStepBody) =>
+  api<EditStepResult>(`/api/queue/${encodeURIComponent(messageId)}/text`, 'PUT', body)
 
 // autopilot
 export const getAutopilot = () => api<AutopilotStatus>('/api/autopilot')

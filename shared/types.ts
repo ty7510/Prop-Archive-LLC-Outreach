@@ -444,11 +444,16 @@ export const LinkedInProfileResultSchema = z.object({
 })
 export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
 
-/** One step on a person's to-do card. */
+/**
+ * One step on a person's to-do card. `postcard` is the printout (one US Letter page mailed in a
+ * folder with Theo's card since 2026-10-16; older cards may still hold a 4x6 postcard), `email` is
+ * written by the app and sent by Theo from Gmail, and `call` is only on cards made before then.
+ */
 export const TodoStepKindSchema = z.enum([
   'linkedin_connect',
   'linkedin_follow_up',
   'postcard',
+  'email',
   'call',
 ])
 export type TodoStepKind = z.infer<typeof TodoStepKindSchema>
@@ -458,12 +463,18 @@ export const TodoStepSchema = z.object({
   kind: TodoStepKindSchema,
   channel: ChannelSchema,
   status: z.enum(['waiting', 'done', 'skipped']),
-  /** The note, the postcard text or what to say on the call. */
+  /** The note, the printout's part about them, the email or what to say on the call. */
   body: z.string(),
+  /** The email's subject, or the printout's heading. */
+  subject: z.string().nullable(),
   /** Profile link, postal address JSON or phone. */
   to_address: z.string().nullable(),
   /** LinkedIn only: the app found this profile itself, so Theo checks it is the right person. */
   found_by_app: z.boolean(),
+  /** Mail only: a one-page printout (true) or an old 4x6 postcard (false). */
+  printout: z.boolean(),
+  /** House-rule checks on the words as they are now, for proofing. Empty when all is well. */
+  problems: z.array(z.string()),
 })
 export type TodoStep = z.infer<typeof TodoStepSchema>
 
@@ -478,7 +489,10 @@ export const TodoPersonSchema = z.object({
   /** 1 the first time on the list, 2 after one recycle, and so on. */
   round: z.number().int().min(1),
   steps: z.array(TodoStepSchema),
-  /** No LinkedIn step: the finder found no profile (Theo can paste one) or there is no name. */
+  /**
+   * No LinkedIn profile yet: `not_found` when the finder found none (the LinkedIn step still has
+   * the note, with a search button and a paste box), `no_name` when there is no name to search.
+   */
   linkedin_missing: z.enum(['not_found', 'no_name']).nullable(),
   added_at: z.string(),
 })
@@ -519,6 +533,10 @@ export const TodoListSchema = z.object({
   /** New people put on the list today, and the daily number. */
   today: z.object({ added: z.number().int(), goal: z.number().int() }),
   recycle_after_days: z.number().int(),
+  /** The lines under every email Theo sends from the list (opt-out and mailing address). */
+  email_footer: z.string(),
+  /** The Gmail account Open in Gmail writes from (reply_to, else owner_email). */
+  gmail_user: z.string(),
 })
 export type TodoList = z.infer<typeof TodoListSchema>
 
@@ -538,6 +556,52 @@ export const QueueSchema = z.object({
   ),
 })
 export type Queue = z.infer<typeof QueueSchema>
+
+/** Theo's own words for a waiting step (the note, the email, the printout's part about them). */
+export const EditStepBodySchema = z.object({
+  /** The email's subject or the printout's heading. Ignored for a LinkedIn note. */
+  subject: z.string().trim().max(200).optional(),
+  body: z.string().max(6000),
+})
+export type EditStepBody = z.infer<typeof EditStepBodySchema>
+
+export const EditStepResultSchema = z.object({
+  message_id: z.string(),
+  subject: z.string().nullable(),
+  body: z.string(),
+  /** House-rule checks on what was saved (it is saved anyway: Theo has the last word). */
+  problems: z.array(z.string()),
+})
+export type EditStepResult = z.infer<typeof EditStepResultSchema>
+
+/** Everything one printout page shows (shared/printout.ts PrintoutParts, without the edit link). */
+export const PrintoutPartsSchema = z.object({
+  heading: z.string(),
+  body: z.string(),
+  overview: z.string(),
+  bio: z.string(),
+  closing: z.string(),
+  preparedFor: z.array(z.string()),
+  date: z.string(),
+  ownerName: z.string(),
+  email: z.string(),
+  site: z.string(),
+})
+export type PrintoutPartsData = z.infer<typeof PrintoutPartsSchema>
+
+/** One printout to proof and edit. heading/body are this person's; the rest is from Settings. */
+export const PrintoutDocSchema = z.object({
+  message_id: z.string(),
+  lead_id: z.string(),
+  status: MessageStatusSchema,
+  person: z.string(),
+  /** Where it is mailed, one line ('' when there is no address). */
+  address: z.string(),
+  parts: PrintoutPartsSchema,
+  /** House-rule checks on this person's part as it is now. */
+  problems: z.array(z.string()),
+})
+export type PrintoutDoc = z.infer<typeof PrintoutDocSchema>
 
 export const QueueActionBodySchema = z.object({
   note: z.string().max(2000).optional(),

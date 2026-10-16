@@ -1,6 +1,12 @@
 // Settings keys, defaults and validation (spec section 7). Owned by the scaffold.
 // The server stores each key as one row in the `settings` table; the API exposes the merged object.
 import { z } from 'zod'
+import {
+  DEFAULT_PRINTOUT_BIO,
+  DEFAULT_PRINTOUT_CLOSING,
+  DEFAULT_PRINTOUT_OVERVIEW,
+  PRINTOUT_LIMITS,
+} from './printout.ts'
 import { ChannelSchema, PersonaSchema } from './types.ts'
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -268,6 +274,12 @@ export const SettingsSchema = z.object({
   people_per_day: z.number().int().min(0).max(100).default(25),
   /** To-do list: days after a person's last step before they come back if they have not replied. */
   recycle_after_days: z.number().int().min(1).max(365).default(30),
+  /** The printout (one letter page Theo mails in a folder with his card): what Prop Archive is. */
+  printout_overview: z.string().max(PRINTOUT_LIMITS.overview).default(DEFAULT_PRINTOUT_OVERVIEW),
+  /** The printout: a few lines about Theo. */
+  printout_bio: z.string().max(PRINTOUT_LIMITS.bio).default(DEFAULT_PRINTOUT_BIO),
+  /** The printout: the lines above his signature. */
+  printout_closing: z.string().max(PRINTOUT_LIMITS.closing).default(DEFAULT_PRINTOUT_CLOSING),
 
   email_provider: z.enum(['smtp', 'resend']).default('smtp'),
   mail_provider: z.enum(['lob', 'print']).default('print'),

@@ -27,6 +27,27 @@ export function postalAddressFor(lead: Lead): PostalAddress | null {
   }
 }
 
+/** The postal address saved on a mail message (JSON text), or null when it is not one. */
+export function parsePostal(to: string | null): PostalAddress | null {
+  if (!to) return null
+  try {
+    const v = JSON.parse(to) as Partial<PostalAddress> | null
+    if (v && typeof v === 'object' && typeof v.street === 'string') {
+      return {
+        name: v.name ?? '',
+        ...(v.company ? { company: v.company } : {}),
+        street: v.street,
+        city: v.city ?? '',
+        state: v.state ?? '',
+        zip: v.zip ?? '',
+      }
+    }
+  } catch {
+    // not JSON
+  }
+  return null
+}
+
 export interface LobResult {
   kind: 'postcard' | 'letter'
   id: string | null
