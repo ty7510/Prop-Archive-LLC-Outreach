@@ -388,6 +388,57 @@ function SettingsForm({
       </Section>
 
       <Section
+        title="To-do list"
+        intro="Each weekday the app puts people on the Go page with every step at once: their LinkedIn note, their postcard and a call. When every step is done they move to Complete, and they come back if they have not replied."
+      >
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="New people per day" hint="Each one gets a LinkedIn note">
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="input"
+              value={draft.people_per_day}
+              onChange={(e) => set('people_per_day', Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Days before they come back" hint="After their last step, if no reply">
+            <input
+              type="number"
+              min={1}
+              max={365}
+              className="input"
+              value={draft.recycle_after_days}
+              onChange={(e) => set('recycle_after_days', Number(e.target.value))}
+            />
+          </Field>
+          <Field
+            label="LinkedIn searches per month"
+            hint="The app finds profiles, about 4 cents each"
+          >
+            <input
+              type="number"
+              min={0}
+              className="input"
+              value={draft.enrichment.linkedin_find_cap}
+              onChange={(e) =>
+                set('enrichment', {
+                  ...draft.enrichment,
+                  linkedin_find_cap: Number(e.target.value),
+                })
+              }
+            />
+          </Field>
+        </div>
+        <Toggle
+          checked={draft.sequences_on}
+          onChange={(v) => set('sequences_on', v)}
+          label="Timed sequences instead (the old way)"
+          description="On: steps come up one at a time on their day instead of the to-do list."
+        />
+      </Section>
+
+      <Section
         title="Channels"
         intro="Turn a channel on and set how many per day. LinkedIn, Instagram, calls and postcards are done by you. With Email off the app sends no email and skips the email steps."
       >

@@ -38,8 +38,11 @@ export function capFor(caps: MonthlyCreditCap, provider: EnrichProviderId): numb
   return null
 }
 
+/** Enrichment providers plus the LinkedIn finder (server/outreach/linkedinFinder.ts). */
+export type UsageProvider = EnrichProviderId | 'linkedin_find'
+
 export async function creditsUsed(
-  provider: EnrichProviderId,
+  provider: UsageProvider,
   range: MonthRange,
   db: Db = getDb(),
 ): Promise<{ used: number; calls: number }> {
@@ -67,7 +70,7 @@ export function wouldExceedCap(used: number, cost: number, cap: number | null): 
 }
 
 export async function recordUsage(
-  provider: EnrichProviderId,
+  provider: UsageProvider,
   credits: number,
   leadId: string | null,
   at: Date,

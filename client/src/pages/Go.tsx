@@ -43,6 +43,7 @@ import LinkedInPaste from '../components/LinkedInPaste.tsx'
 import LinkedInRun from '../components/LinkedInRun.tsx'
 import ReplyForm from '../components/ReplyForm.tsx'
 import NotBuilt from '../components/NotBuilt.tsx'
+import { CompleteSection, RepliedSection, TodoSection } from '../components/TodoSections.tsx'
 import { Empty, ErrorNote, Loading, QueryView } from '../components/QueryState.tsx'
 import { ChannelIcon } from '../components/ChannelIcons.tsx'
 import {
@@ -74,6 +75,8 @@ export default function Go() {
   const on = auto.data?.on ?? false
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const emailOn = settings.data?.channels.email ?? false
+  // Timed sequences off: the to-do list with every step per person (Theo, 2026-10-16).
+  const todoMode = settings.data ? !settings.data.sequences_on : false
 
   const applyStatus = (s: AutopilotStatus) => {
     void qc.invalidateQueries({ queryKey: ['readiness'] })
@@ -101,11 +104,13 @@ export default function Go() {
           label="Autopilot"
         />
         <p className="text-lg text-stone-700">
-          {!liveMode
-            ? 'Dry run: nothing is sent, everything is queued'
-            : emailOn
-              ? 'Live: email and mail go out in the send window'
-              : "Live: each weekday, today's LinkedIn notes and postcards show up below"}
+          {todoMode
+            ? `Each weekday up to ${settings.data?.people_per_day ?? 0} people go on your list below, with their LinkedIn found and their note written. The app sends nothing itself.`
+            : !liveMode
+              ? 'Dry run: nothing is sent, everything is queued'
+              : emailOn
+                ? 'Live: email and mail go out in the send window'
+                : "Live: each weekday, today's LinkedIn notes and postcards show up below"}
         </p>
         {auto.data ? (
           <p className="text-sm text-stone-500">
@@ -127,7 +132,7 @@ export default function Go() {
             )}
             Run one round now
           </button>
-          {!liveMode ? (
+          {!liveMode && !todoMode ? (
             <Link href="/settings#danger" className="btn-secondary">
               Turn on Live mode
             </Link>
@@ -136,7 +141,7 @@ export default function Go() {
         {switchNotBuilt ? <NotBuilt what="Starting and stopping the autopilot." /> : null}
       </section>
 
-      <section>
+      <section hidden={todoMode}>
         <h2 className="mb-3">Today</h2>
         <QueryView q={auto} loading="Loading today's numbers">
           {(s) => (
@@ -153,9 +158,18 @@ export default function Go() {
         {auto.data ? <JobsLine jobs={auto.data.jobs} /> : null}
       </section>
 
-      <WaitingForYou />
-
-      <WroteBack />
+      {todoMode ? (
+        <>
+          <TodoSection />
+          <CompleteSection />
+          <RepliedSection />
+        </>
+      ) : (
+        <>
+          <WaitingForYou />
+          <WroteBack />
+        </>
+      )}
 
       <LiveFeed />
     </div>

@@ -36,7 +36,7 @@ export default function ReplyForm({
     () => leadOutcome(leadId, { kind: 'replied', channel: where, note: note.trim() || undefined }),
     {
       success: `${person} marked as replied. Nothing more goes to them.`,
-      invalidate: [['queue'], ['autopilot'], ['activity'], ['leads'], ['lead', leadId]],
+      invalidate: [['queue'], ['todo'], ['autopilot'], ['activity'], ['leads'], ['lead', leadId]],
       onSuccess: () => {
         setOpen(false)
         onSaved?.()

@@ -32,6 +32,7 @@ import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { writePersonalNote } from './linkedinNote.ts'
 import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
+import { addLinkedInStepToOpenCard } from './todo.ts'
 
 /**
  * A waiting LinkedIn note's lead and the step's text rendered for them (Theo's own note), or null
@@ -560,6 +561,9 @@ export async function saveLinkedInProfile(
     at: now,
   })
   await logActivity('info', 'linkedin_profile_saved', { by: 'hand' }, leadId, db)
+  if (!(await getSettings(db)).sequences_on) {
+    return { linkedin_url: url, queued: await addLinkedInStepToOpenCard(deps, leadId) }
+  }
   try {
     await sendDue(deps, { onlyLinkedIn: true })
   } catch (error) {

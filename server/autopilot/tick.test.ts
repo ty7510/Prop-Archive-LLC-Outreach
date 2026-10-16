@@ -24,7 +24,7 @@ afterEach(() => {
 const statuses = (t: TickSummary) => Object.fromEntries(t.jobs.map((j) => [j.job, j.status]))
 
 describe('runTick', () => {
-  it('runs the six jobs in spec order and records ok rows', async () => {
+  it('runs the seven jobs in spec order and records ok rows', async () => {
     registerFakes(calls)
     const c = clock(INSIDE_WINDOW)
     const t = await runTick({ db, now: c.now, warned: new Set() })
@@ -35,6 +35,7 @@ describe('runTick', () => {
       enrich: 'ok',
       enroll: 'ok',
       send: 'ok',
+      todo: 'ok',
       sync_replies: 'ok',
       housekeeping: 'ok',
     })
@@ -44,6 +45,7 @@ describe('runTick', () => {
       'enrichLeads',
       'enroll',
       'send',
+      'todo',
       'sync_replies',
     ])
     expect(t.jobs.find((j) => j.job === 'enrich')?.summary).toEqual({
@@ -58,12 +60,12 @@ describe('runTick', () => {
     })
 
     const rows = await db.select().from(jobRuns)
-    expect(rows).toHaveLength(6)
+    expect(rows).toHaveLength(7)
     expect(rows.every((r) => r.status === 'ok')).toBe(true)
     expect(rows.every((r) => r.started_at === INSIDE_WINDOW.toISOString())).toBe(true)
 
     const log = await db.select().from(activityLog)
-    expect(log).toHaveLength(6)
+    expect(log).toHaveLength(7)
     expect(log.every((l) => l.level === 'info')).toBe(true)
     expect(log.map((l) => l.event).sort()).toEqual([...JOB_ORDER].sort())
     expect(log.find((l) => l.event === 'send')?.detail).toEqual({
@@ -86,10 +88,11 @@ describe('runTick', () => {
       enrich: 'ok',
       enroll: 'ok',
       send: 'ok',
+      todo: 'ok',
       sync_replies: 'not_due',
       housekeeping: 'not_due',
     })
-    expect(calls).toEqual(['pickBatch:10', 'enrichLeads', 'enroll', 'send'])
+    expect(calls).toEqual(['pickBatch:10', 'enrichLeads', 'enroll', 'send', 'todo'])
   })
 
   it('sync_replies runs again after 10 minutes, housekeeping after an hour, discover the next day', async () => {
@@ -168,6 +171,7 @@ describe('runTick', () => {
       enrich: 'not_built',
       enroll: 'not_built',
       send: 'not_built',
+      todo: 'not_built',
       sync_replies: 'not_built',
       housekeeping: 'ok',
     })

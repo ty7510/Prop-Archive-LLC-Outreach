@@ -728,6 +728,8 @@ async function sendDueUnlocked(
   const result: SendDueResult = { sent: 0, dryRun: 0, queued: 0, skipped: 0 }
   const settings = await getSettings(db)
   const now = deps.now()
+  // Timed sequences off: the to-do list (todo.ts) puts every step up at once instead.
+  if (!settings.sequences_on) return result
   if (!isWithinSendWindow(settings, now)) return result
 
   await skipProfilelessTasks(deps)

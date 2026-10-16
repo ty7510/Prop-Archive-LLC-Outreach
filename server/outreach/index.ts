@@ -7,6 +7,7 @@ import { enrollEligible, enrollLead, stopLead } from './enroll.ts'
 import { syncReplies } from './replies.ts'
 import { sendDue } from './send.ts'
 import { renderStep } from './sequences.ts'
+import { fillTodo } from './todo.ts'
 
 /** Build an OutreachModule over a deps bag. Tests pass testDeps(db, fakes). */
 export function createOutreach(deps: OutreachDeps): OutreachModule {
@@ -20,6 +21,7 @@ export function createOutreach(deps: OutreachDeps): OutreachModule {
     },
     sendDue: () => sendDue(deps),
     syncReplies: () => syncReplies(deps),
+    fillTodo: () => fillTodo(deps),
     renderStep: (stepId, leadId) => renderStep(deps, stepId, leadId),
   }
 }
@@ -49,6 +51,7 @@ registerModule('outreach', {
   stopLead: (leadId, reason) => createOutreach(outreachDeps()).stopLead(leadId, reason),
   sendDue: () => createOutreach(outreachDeps()).sendDue(),
   syncReplies: () => createOutreach(outreachDeps()).syncReplies(),
+  fillTodo: () => createOutreach(outreachDeps()).fillTodo(),
   renderStep: (stepId, leadId) => createOutreach(outreachDeps()).renderStep(stepId, leadId),
 })
 

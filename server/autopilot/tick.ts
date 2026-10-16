@@ -17,6 +17,7 @@ export const JOB_ORDER = [
   'enrich',
   'enroll',
   'send',
+  'todo',
   'sync_replies',
   'housekeeping',
 ] as const
@@ -209,6 +210,10 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
   else if (!isWithinSendWindow(settings, now())) {
     jobs.push({ job: 'send', status: 'outside_window', ms: 0 })
   } else jobs.push(await runJob('send', () => outreach.sendDue(), db, now))
+
+  // 4b. todo: every tick, any hour of a send day: put today's people on the to-do list.
+  if (!outreach) jobs.push(notBuilt('todo'))
+  else jobs.push(await runJob('todo', () => outreach.fillTodo(), db, now))
 
   // 5. sync_replies: every 10 minutes.
   {

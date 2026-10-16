@@ -22,6 +22,8 @@ export interface OutreachModule {
   stopLead(leadId: string, reason: string): Promise<void>
   sendDue(): Promise<{ sent: number; dryRun: number; queued: number; skipped: number }>
   syncReplies(): Promise<{ received: number }>
+  /** The Go page to-do list: put today's people on it (server/outreach/todo.ts). */
+  fillTodo(): Promise<{ added: number; reason?: string }>
   renderStep(stepId: string, leadId: string): Promise<{ subject?: string; body: string }>
 }
 

@@ -45,6 +45,10 @@ export function registerFakes(calls: string[], options: FakeOptions = {}): void 
       calls.push('sync_replies')
       return { received: 1 }
     },
+    fillTodo: async () => {
+      calls.push('todo')
+      return { added: 0 }
+    },
     renderStep: async () => ({ body: '' }),
   })
 }

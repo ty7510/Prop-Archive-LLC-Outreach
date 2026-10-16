@@ -6,6 +6,7 @@ import { Router } from 'express'
 import {
   EnrollBodySchema,
   LinkedInProfileBodySchema,
+  WrongProfileBodySchema,
   OutcomeBodySchema,
   SequenceCreateSchema,
   SequencePreviewBodySchema,
@@ -16,7 +17,8 @@ import { asyncHandler, parseOr400 } from '../lib/http.ts'
 import { enrollLead, stopLead } from '../outreach/enroll.ts'
 import { outreachDeps } from '../outreach/index.ts'
 import { recordOutcome } from '../outreach/outcomes.ts'
-import { saveLinkedInProfile } from '../outreach/queue.ts'
+import { actOnQueueItem, saveLinkedInProfile } from '../outreach/queue.ts'
+import { rejectLinkedInProfile } from '../outreach/linkedinFinder.ts'
 import {
   createSequence,
   deleteSequence,
@@ -123,6 +125,18 @@ leadOutreachRouter.post(
   asyncHandler(async (req, res) => {
     const body = parseOr400(LinkedInProfileBodySchema, req.body)
     res.json(await saveLinkedInProfile(outreachDeps(), String(req.params.id), body.url))
+  }),
+)
+
+// POST /api/leads/:id/linkedin/wrong { message_id? } -> { ok } : the profile is someone else
+leadOutreachRouter.post(
+  '/:id/linkedin/wrong',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(WrongProfileBodySchema, req.body ?? {})
+    const deps = outreachDeps()
+    await rejectLinkedInProfile(deps, String(req.params.id))
+    if (body.message_id) await actOnQueueItem(deps, body.message_id, 'skip', 'wrong person')
+    res.json({ ok: true })
   }),
 )
 

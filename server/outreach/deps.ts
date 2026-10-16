@@ -10,6 +10,7 @@ import type { z } from 'zod'
 import { getDb, type Db } from '../db/client.ts'
 import { env, type Env } from '../env.ts'
 import { createGmailApi, noGmail, type GmailApi } from './gmail.ts'
+import { anthropicLinkedInSearch, type LinkedInSearch } from './linkedinFinder.ts'
 
 /** Spec section 2: the one model every Claude call uses. Haiku 5.5 is the lowest-cost Claude model. */
 export const CLAUDE_MODEL = 'claude-haiku-5-5'
@@ -90,6 +91,8 @@ export interface OutreachDeps {
   smtp: (() => Mailer) | null
   /** null when ANTHROPIC_API_KEY is not set. */
   llm: Llm | null
+  /** Claude web search on linkedin.com for the LinkedIn finder; null without ANTHROPIC_API_KEY. */
+  linkedInSearch: LinkedInSearch | null
   /** null when IMAP_* is not set. */
   imap: (() => ImapClient) | null
   /**
@@ -214,6 +217,9 @@ export function defaultDeps(db: Db = getDb(), e: Env = env): OutreachDeps {
     baseUrl: publicBaseUrl(process.env, e.PORT),
     smtp: hasSmtp ? () => smtpMailer(e) : null,
     llm: e.ANTHROPIC_API_KEY ? anthropicLlm(e.ANTHROPIC_API_KEY, e.ANTHROPIC_WORKSPACE_ID) : null,
+    linkedInSearch: e.ANTHROPIC_API_KEY
+      ? anthropicLinkedInSearch(e.ANTHROPIC_API_KEY, e.ANTHROPIC_WORKSPACE_ID)
+      : null,
     imap: hasImap ? () => imapClient(e) : null,
     smtpForInbox: inboxMailer,
     imapForInbox: inboxImap,
@@ -245,6 +251,7 @@ export function testDeps(db: Db, overrides: Partial<OutreachDeps> = {}): Outreac
     baseUrl: 'https://outreach.test',
     smtp: null,
     llm: null,
+    linkedInSearch: null,
     imap: null,
     smtpForInbox: () => {
       throw new Error('inbox SMTP is not available in this test')

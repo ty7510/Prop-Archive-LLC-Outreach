@@ -10,6 +10,7 @@ import {
   printPage,
   restoreQueueItem,
 } from '../outreach/queue.ts'
+import { fillTodo, listTodo } from '../outreach/todo.ts'
 
 export const queueRouter = Router()
 
@@ -18,6 +19,22 @@ queueRouter.get(
   '/',
   asyncHandler(async (_req, res) => {
     res.json(await listQueue(outreachDeps()))
+  }),
+)
+
+// GET /api/queue/todo -> TodoList (people with every step, complete, replied)
+queueRouter.get(
+  '/todo',
+  asyncHandler(async (_req, res) => {
+    res.json(await listTodo(outreachDeps()))
+  }),
+)
+
+// POST /api/queue/todo/fill -> { added } : put today's people on the list now, not next round
+queueRouter.post(
+  '/todo/fill',
+  asyncHandler(async (_req, res) => {
+    res.json(await fillTodo(outreachDeps(), { limit: 25 }))
   }),
 )
 
