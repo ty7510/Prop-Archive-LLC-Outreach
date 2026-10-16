@@ -26,6 +26,7 @@ import type {
   RenderedStep,
   SequenceCreate,
   SequenceUpdate,
+  TodoList,
 } from '@shared/types'
 import type { SendingInbox, Settings } from '@shared/settings'
 import type { Lead, LeadDetail, Sequence } from './types.ts'
@@ -171,6 +172,13 @@ export const queueNote = (messageId: string) =>
   api<LinkedInNote>(`/api/queue/${encodeURIComponent(messageId)}/note`, 'POST')
 export const queueRestore = (messageId: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/restore`, 'POST')
+export const getTodo = () => api<TodoList>('/api/queue/todo')
+export const fillTodoNow = () =>
+  api<{ added: number; reason?: string }>('/api/queue/todo/fill', 'POST')
+export const linkedInWrongPerson = (leadId: string, messageId?: string) =>
+  api<{ ok: true }>(`/api/leads/${encodeURIComponent(leadId)}/linkedin/wrong`, 'POST', {
+    message_id: messageId,
+  })
 export const printQueueUrl = (ids: string[]) =>
   `/api/queue/print?ids=${ids.map(encodeURIComponent).join(',')}`
 

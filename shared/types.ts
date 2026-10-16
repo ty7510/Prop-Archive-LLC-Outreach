@@ -434,12 +434,93 @@ export const LinkedInProfileBodySchema = z.object({
 })
 export type LinkedInProfileBody = z.infer<typeof LinkedInProfileBodySchema>
 
+export const WrongProfileBodySchema = z.object({ message_id: z.string().optional() })
+export type WrongProfileBody = z.infer<typeof WrongProfileBodySchema>
+
 export const LinkedInProfileResultSchema = z.object({
   linkedin_url: z.string(),
   /** A note for them is waiting on the Go page now. */
   queued: z.boolean(),
 })
 export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
+
+/** One step on a person's to-do card. */
+export const TodoStepKindSchema = z.enum([
+  'linkedin_connect',
+  'linkedin_follow_up',
+  'postcard',
+  'call',
+])
+export type TodoStepKind = z.infer<typeof TodoStepKindSchema>
+
+export const TodoStepSchema = z.object({
+  message_id: z.string(),
+  kind: TodoStepKindSchema,
+  channel: ChannelSchema,
+  status: z.enum(['waiting', 'done', 'skipped']),
+  /** The note, the postcard text or what to say on the call. */
+  body: z.string(),
+  /** Profile link, postal address JSON or phone. */
+  to_address: z.string().nullable(),
+  /** LinkedIn only: the app found this profile itself, so Theo checks it is the right person. */
+  found_by_app: z.boolean(),
+})
+export type TodoStep = z.infer<typeof TodoStepSchema>
+
+export const TodoPersonSchema = z.object({
+  lead_id: z.string(),
+  person: z.string(),
+  company: z.string().nullable(),
+  property_count: z.number().int(),
+  city: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  /** 1 the first time on the list, 2 after one recycle, and so on. */
+  round: z.number().int().min(1),
+  steps: z.array(TodoStepSchema),
+  /** No LinkedIn step: the finder found no profile (Theo can paste one) or there is no name. */
+  linkedin_missing: z.enum(['not_found', 'no_name']).nullable(),
+  added_at: z.string(),
+})
+export type TodoPerson = z.infer<typeof TodoPersonSchema>
+
+export const CompletePersonSchema = z.object({
+  lead_id: z.string(),
+  person: z.string(),
+  company: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  /** What Theo did, e.g. ["LinkedIn note", "Postcard"]. */
+  done: z.array(z.string()),
+  last_done_at: z.string(),
+  /** When they come back on the list if they have not replied. */
+  back_on: z.string(),
+})
+export type CompletePerson = z.infer<typeof CompletePersonSchema>
+
+export const RepliedPersonSchema = z.object({
+  lead_id: z.string(),
+  person: z.string(),
+  company: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+  status: LeadStatusSchema,
+  channel: ChannelSchema.nullable(),
+  /** What they said, when Theo wrote it down or it came by email. */
+  note: z.string().nullable(),
+  replied_at: z.string(),
+})
+export type RepliedPerson = z.infer<typeof RepliedPersonSchema>
+
+export const TodoListSchema = z.object({
+  people: z.array(TodoPersonSchema),
+  complete: z.array(CompletePersonSchema),
+  replied: z.array(RepliedPersonSchema),
+  /** New people put on the list today, and the daily number. */
+  today: z.object({ added: z.number().int(), goal: z.number().int() }),
+  recycle_after_days: z.number().int(),
+})
+export type TodoList = z.infer<typeof TodoListSchema>
 
 export const QueueSchema = z.object({
   groups: z.record(ChannelSchema, z.array(QueueItemSchema)),

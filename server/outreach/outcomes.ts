@@ -1,6 +1,6 @@
 // Outcomes that stop outreach: demo booked, beta joined, not interested, replied (webhook, lead
 // panel, Go page).
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { Channel, LeadStatus, OutcomeKind } from '../../shared/types.ts'
 import { events, leads, messages, type Lead } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
@@ -57,6 +57,17 @@ export async function recordOutcome(
   const lead = rows[0]
   if (!lead) throw notFound('Lead not found', 'LEAD_NOT_FOUND')
   await stopLead(deps, leadId, kind)
+  // Steps still waiting on their to-do card are dropped: nothing more goes to them.
+  await db
+    .update(messages)
+    .set({ status: 'skipped', error: `stopped: ${kind}` })
+    .where(
+      and(
+        eq(messages.lead_id, leadId),
+        eq(messages.direction, 'out'),
+        eq(messages.status, 'ready_for_human'),
+      ),
+    )
   if (kind === 'replied') {
     const channel = reply.channel ?? 'linkedin'
     const note = reply.note?.trim() || null

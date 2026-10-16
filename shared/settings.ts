@@ -61,6 +61,8 @@ export const EnrichmentSettingsSchema = z.object({
     pdl: 50,
     claude_research: 200,
   }),
+  /** LinkedIn finder searches per month (about 4 cents each): server/outreach/linkedinFinder.ts. */
+  linkedin_find_cap: z.number().int().min(0).default(300),
 })
 export type EnrichmentSettings = z.infer<typeof EnrichmentSettingsSchema>
 
@@ -240,6 +242,7 @@ export const SettingsSchema = z.object({
   enrichment: EnrichmentSettingsSchema.default({
     providers: ['li_license', 'claude_research', 'hunter', 'apollo', 'pdl'],
     monthly_credit_cap: { hunter: 50, apollo: 100, pdl: 50, claude_research: 200 },
+    linkedin_find_cap: 300,
   }),
 
   sequence_by_persona: SequenceByPersonaSchema.default({
@@ -256,6 +259,15 @@ export const SettingsSchema = z.object({
   my_facebook: z.string().trim().max(300).default(''),
   /** The one sequence the autopilot puts new leads into. null: per-channel sequence_by_persona. */
   main_sequence_id: z.string().nullable().default(null),
+  /**
+   * The old way: timed sequences that queue each step on its day. Off since 2026-10-16 (Theo: "kill
+   * the automatic sequence"): the Go page to-do list puts every step for a person up at once.
+   */
+  sequences_on: z.boolean().default(true),
+  /** To-do list: new people put on the list per send day (each gets a LinkedIn note). */
+  people_per_day: z.number().int().min(0).max(100).default(25),
+  /** To-do list: days after a person's last step before they come back if they have not replied. */
+  recycle_after_days: z.number().int().min(1).max(365).default(30),
 
   email_provider: z.enum(['smtp', 'resend']).default('smtp'),
   mail_provider: z.enum(['lob', 'print']).default('print'),

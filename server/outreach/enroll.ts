@@ -333,6 +333,7 @@ export async function enrollEligible(deps: OutreachDeps): Promise<{ enrolled: nu
   const { db } = deps
   const settings = await getSettings(db)
   const now = deps.now()
+  if (!settings.sequences_on) return { enrolled: 0 }
   const personas = settings.personas as readonly string[]
   if (personas.length === 0) return { enrolled: 0 }
 

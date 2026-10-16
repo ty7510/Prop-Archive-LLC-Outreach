@@ -3,11 +3,17 @@
 // Idempotent: server/index.ts calls seed(db) on first boot and `npm run seed` runs it by hand.
 // A sequence whose name already exists is left alone, so Theo's edits in the UI survive a re-seed.
 import { join } from 'node:path'
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, ne } from 'drizzle-orm'
 import { PERSONAS, type Channel, type Persona } from '../../shared/types.ts'
 import type { PersonaSequences, SequenceByPersona } from '../../shared/settings.ts'
 import type { Db } from '../db/client.ts'
-import { sequenceSteps, sequences, settings as settingsTable } from '../db/schema.ts'
+import {
+  enrollments,
+  messages,
+  sequenceSteps,
+  sequences,
+  settings as settingsTable,
+} from '../db/schema.ts'
 import { newId } from '../lib/ids.ts'
 import { loadSettings, updateSettings } from '../lib/settings.ts'
 import { nowIso } from '../lib/time.ts'
@@ -321,5 +327,34 @@ export async function switchEmailsOffOnce(db: Db): Promise<boolean> {
       .where(eq(sequences.id, settings.main_sequence_id))
   }
   await markKey(db, EMAILS_OFF_KEY)
+  return true
+}
+
+const TODO_LIST_KEY = '_todo_list_v1'
+
+/**
+ * Theo, 2026-10-16: "kill the automatic sequence, just give me instructions". Once per database:
+ * timed sequences go off, open enrollments stop, and their waiting steps leave the queue, so the
+ * Go page to-do list (server/outreach/todo.ts) is the one list. Those people come back on it as
+ * cards with every step at once. Switching sequences back on in Settings stays his choice.
+ */
+export async function switchToTodoListOnce(db: Db): Promise<boolean> {
+  if (await hasKey(db, TODO_LIST_KEY)) return false
+  await updateSettings({ sequences_on: false }, db)
+  await db
+    .update(enrollments)
+    .set({ status: 'stopped_manual' })
+    .where(inArray(enrollments.status, ['active', 'paused']))
+  await db
+    .update(messages)
+    .set({ status: 'skipped', error: 'moved to the to-do list' })
+    .where(
+      and(
+        isNotNull(messages.enrollment_id),
+        eq(messages.direction, 'out'),
+        inArray(messages.status, ['ready_for_human', 'queued']),
+      ),
+    )
+  await markKey(db, TODO_LIST_KEY)
   return true
 }

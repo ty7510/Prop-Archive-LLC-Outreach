@@ -299,6 +299,7 @@ describe('leads API', () => {
       },
       sendDue: async () => ({ sent: 0, dryRun: 0, queued: 0, skipped: 0 }),
       syncReplies: async () => ({ received: 0 }),
+      fillTodo: async () => ({ added: 0 }),
       renderStep: async () => ({ body: '' }),
     })
     await agent.patch(`/api/leads/${id}`).send({ do_not_contact: true })

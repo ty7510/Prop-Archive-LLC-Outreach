@@ -59,7 +59,7 @@ describe('Autopilot', () => {
   it('a manual tick runs even while autopilot is off and shows up in status', async () => {
     pilot = new Autopilot({ db: () => db, now: () => INSIDE_WINDOW })
     const t = await pilot.runTick()
-    expect(t.jobs).toHaveLength(6)
+    expect(t.jobs).toHaveLength(7)
     expect(calls).toContain('discover')
     const s = await pilot.status()
     expect(s.on).toBe(false)
@@ -72,6 +72,7 @@ describe('Autopilot', () => {
       'housekeeping',
       'send',
       'sync_replies',
+      'todo',
     ])
     expect(s.jobs.send?.status).toBe('ok')
     expect(s.jobs.send?.summary).toEqual({ sent: 0, dryRun: 4, queued: 2, skipped: 0 })
@@ -102,12 +103,13 @@ describe('Autopilot', () => {
     expect(s.on).toBe(true)
     expect(s.nextTick).toBe(new Date(INSIDE_WINDOW.getTime() + 15).toISOString())
     await waitFor(() => calls.includes('sync_replies'))
-    expect(calls.slice(0, 6)).toEqual([
+    expect(calls.slice(0, 7)).toEqual([
       'discover',
       'pickBatch:10',
       'enrichLeads',
       'enroll',
       'send',
+      'todo',
       'sync_replies',
     ])
 

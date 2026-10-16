@@ -127,7 +127,7 @@ describe('/api/activity', () => {
     await agent.post('/api/autopilot/tick')
     const res = await agent.get('/api/activity')
     expect(res.status).toBe(200)
-    expect(res.body).toHaveLength(6)
+    expect(res.body).toHaveLength(7)
     const ats = res.body.map((e: { at: string }) => e.at)
     expect([...ats].sort().reverse()).toEqual(ats)
     expect(res.body.every((e: { level: string }) => e.level === 'info')).toBe(true)

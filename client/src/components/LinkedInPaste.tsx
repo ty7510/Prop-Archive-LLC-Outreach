@@ -23,11 +23,8 @@ export default function LinkedInPaste({
 }) {
   const [url, setUrl] = useState('')
   const save = useAction(() => saveLinkedInProfile(leadId, url), {
-    success: (r) =>
-      r.queued
-        ? `Saved. ${person}'s LinkedIn note is waiting on the Go page.`
-        : `Saved. ${person}'s note comes up in the next send window, within your daily goal.`,
-    invalidate: [['queue'], ['leads'], ['lead', leadId], ['autopilot']],
+    success: (r) => (r.queued ? `Saved. ${person}'s LinkedIn note is on their card.` : `Saved.`),
+    invalidate: [['queue'], ['todo'], ['leads'], ['lead', leadId], ['autopilot']],
     onSuccess: () => {
       setUrl('')
       onSaved?.()
