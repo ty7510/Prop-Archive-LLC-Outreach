@@ -1,12 +1,14 @@
 // Human queue API (linkedin, instagram, call, print mail). FILLED BY: the outreach builder.
 import { Router } from 'express'
-import { QueueActionBodySchema } from '../../shared/types.ts'
+import { EditStepBodySchema, QueueActionBodySchema } from '../../shared/types.ts'
 import { asyncHandler, parseOr400 } from '../lib/http.ts'
 import { outreachDeps } from '../outreach/index.ts'
 import {
   actOnQueueItem,
+  editStepText,
   listQueue,
   personalLinkedInNote,
+  printoutDoc,
   printPage,
   restoreQueueItem,
 } from '../outreach/queue.ts'
@@ -38,7 +40,8 @@ queueRouter.post(
   }),
 )
 
-// GET /api/queue/print?ids=a,b,c -> HTML page, one letter per page
+// GET /api/queue/print?ids=a,b,c[&labels=1] -> HTML page: one printout (or postcard) per sheet,
+// or with labels=1 the same people as envelope address labels
 queueRouter.get(
   '/print',
   asyncHandler(async (req, res) => {
@@ -48,7 +51,25 @@ queueRouter.get(
       .map((s) => s.trim())
       .filter(Boolean)
       .slice(0, 200)
-    res.type('html').send(await printPage(outreachDeps(), ids))
+    const labels = req.query.labels === '1'
+    res.type('html').send(await printPage(outreachDeps(), ids, { labels }))
+  }),
+)
+
+// GET /api/queue/:messageId/printout -> PrintoutDoc (proof and edit one printout)
+queueRouter.get(
+  '/:messageId/printout',
+  asyncHandler(async (req, res) => {
+    res.json(await printoutDoc(outreachDeps(), String(req.params.messageId)))
+  }),
+)
+
+// PUT /api/queue/:messageId/text { subject?, body } -> EditStepResult (Theo's words on a waiting step)
+queueRouter.put(
+  '/:messageId/text',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(EditStepBodySchema, req.body ?? {})
+    res.json(await editStepText(outreachDeps(), String(req.params.messageId), body))
   }),
 )
 

@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery } from '@tanstack/react-query'
-import { ListChecks, Loader2, Printer, UserPlus } from 'lucide-react'
+import { ListChecks, Loader2, Printer, Tag, UserPlus } from 'lucide-react'
 import type { TodoList } from '@shared/types'
-import { fillTodoNow, getTodo, printQueueUrl } from '../api.ts'
+import { fillTodoNow, getTodo, printLabelsUrl, printQueueUrl } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { CHANNEL_LABEL, relativeTime, shortDateTime } from '../lib/format.ts'
 import { Empty, QueryView } from './QueryState.tsx'
@@ -70,14 +70,20 @@ export function TodoSection() {
       <QueryView q={q} loading="Loading your list">
         {(data) => (
           <div className="space-y-4">
-            <TodoRun open={runOpen} onClose={() => setRunOpen(false)} people={data.people} />
+            <TodoRun
+              open={runOpen}
+              onClose={() => setRunOpen(false)}
+              people={data.people}
+              footer={data.email_footer}
+              gmailUser={data.gmail_user}
+            />
             <div className="flex flex-wrap gap-2">
               {data.people.length > 0 ? (
                 <button type="button" className="btn-primary" onClick={() => setRunOpen(true)}>
                   <ListChecks className="h-4 w-4" aria-hidden /> Start: one person at a time
                 </button>
               ) : null}
-              <PrintAllPostcards data={data} />
+              <PrintAll data={data} />
               {data.today.added < data.today.goal ? (
                 <button
                   type="button"
@@ -97,12 +103,17 @@ export function TodoSection() {
             {data.people.length === 0 ? (
               <Empty
                 title="Nothing to do right now"
-                hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, their postcard and a call.`}
+                hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
               />
             ) : (
               <div className="grid min-w-0 gap-4 lg:grid-cols-2">
                 {data.people.map((p) => (
-                  <TodoCard key={p.lead_id} person={p} />
+                  <TodoCard
+                    key={p.lead_id}
+                    person={p}
+                    footer={data.email_footer}
+                    gmailUser={data.gmail_user}
+                  />
                 ))}
               </div>
             )}
@@ -113,15 +124,46 @@ export function TodoSection() {
   )
 }
 
-function PrintAllPostcards({ data }: { data: TodoList }) {
-  const ids = data.people.flatMap((p) =>
-    p.steps.filter((s) => s.kind === 'postcard' && s.status === 'waiting').map((s) => s.message_id),
+/** Every waiting printout on one print page, their envelope labels, and any old postcards. */
+function PrintAll({ data }: { data: TodoList }) {
+  const waiting = data.people.flatMap((p) =>
+    p.steps.filter((s) => s.kind === 'postcard' && s.status === 'waiting'),
   )
-  if (ids.length < 2) return null
+  const printouts = waiting.filter((s) => s.printout).map((s) => s.message_id)
+  const postcards = waiting.filter((s) => !s.printout).map((s) => s.message_id)
   return (
-    <a href={printQueueUrl(ids)} target="_blank" rel="noreferrer" className="btn-secondary">
-      <Printer className="h-4 w-4" aria-hidden /> Print all {ids.length} postcards
-    </a>
+    <>
+      {printouts.length > 1 ? (
+        <a
+          href={printQueueUrl(printouts)}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary"
+        >
+          <Printer className="h-4 w-4" aria-hidden /> Print all {printouts.length} printouts
+        </a>
+      ) : null}
+      {printouts.length > 0 ? (
+        <a
+          href={printLabelsUrl(printouts)}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary"
+        >
+          <Tag className="h-4 w-4" aria-hidden /> Envelope labels
+        </a>
+      ) : null}
+      {postcards.length > 1 ? (
+        <a
+          href={printQueueUrl(postcards)}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary"
+        >
+          <Printer className="h-4 w-4" aria-hidden /> Print all {postcards.length} postcards
+        </a>
+      ) : null}
+    </>
   )
 }
 
@@ -170,9 +212,11 @@ export function CompleteSection() {
                 channel={
                   p.done.includes('LinkedIn')
                     ? 'linkedin'
-                    : p.done.includes('Call')
-                      ? 'call'
-                      : 'mail'
+                    : p.done.includes('Email')
+                      ? 'email'
+                      : p.done.includes('Call')
+                        ? 'call'
+                        : 'mail'
                 }
                 onSaved={() => setHidden((h) => new Set(h).add(p.lead_id))}
               />

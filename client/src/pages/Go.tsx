@@ -105,7 +105,7 @@ export default function Go() {
         />
         <p className="text-lg text-stone-700">
           {todoMode
-            ? `Each weekday up to ${settings.data?.people_per_day ?? 0} people go on your list below, with their LinkedIn found and their note written. The app sends nothing itself.`
+            ? `Each weekday up to ${settings.data?.people_per_day ?? 0} people go on your list below, with their LinkedIn note, printout and email written for you to proof. The app sends nothing itself.`
             : !liveMode
               ? 'Dry run: nothing is sent, everything is queued'
               : emailOn

@@ -10,11 +10,16 @@ export default function TodoRun({
   open,
   onClose,
   people,
+  footer,
+  gmailUser,
 }: {
   open: boolean
   onClose: () => void
   /** The live list: a person drops out when their last step is done. */
   people: TodoPerson[]
+  /** The lines under every email, and the Gmail account Open in Gmail writes from. */
+  footer: string
+  gmailUser: string
 }) {
   const [index, setIndex] = useState(0)
   const at = Math.min(index, Math.max(0, people.length - 1))
@@ -47,7 +52,7 @@ export default function TodoRun({
               </button>
             </div>
           </div>
-          <TodoCard key={person.lead_id} person={person} />
+          <TodoCard key={person.lead_id} person={person} footer={footer} gmailUser={gmailUser} />
         </div>
       ) : (
         <div className="space-y-4">

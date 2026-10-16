@@ -33,7 +33,7 @@ export const LINKEDIN_NOTE_SYSTEM = [
   'Return the note only, nothing before or after it.',
 ].join('\n')
 
-const BANNED = [
+export const BANNED = [
   'i hope',
   'reach out',
   'reaching out',
