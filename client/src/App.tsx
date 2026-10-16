@@ -9,6 +9,7 @@ import Leads from './pages/Leads.tsx'
 import Sequences from './pages/Sequences.tsx'
 import Settings from './pages/Settings.tsx'
 import Go from './pages/Go.tsx'
+import Printout from './pages/Printout.tsx'
 
 const NAV = [
   { href: '/leads', label: 'Leads', icon: Users },
@@ -140,6 +141,11 @@ export default function App() {
       <Route path="/go">
         <Protected>
           <Go />
+        </Protected>
+      </Route>
+      <Route path="/printout/:id">
+        <Protected>
+          <Printout />
         </Protected>
       </Route>
       <Route>

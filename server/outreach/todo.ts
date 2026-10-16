@@ -28,8 +28,9 @@ import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { ruleProblems } from './copyRules.ts'
 import { emailFooter, fallbackEmail, subjectProblems, writeHandEmail } from './handEmail.ts'
 import { FINDER_RETRY_DAYS, finderRecord, findLinkedInFor, personFor } from './linkedinFinder.ts'
-import { noteProblems, writePersonalNote } from './linkedinNote.ts'
+import { LINKEDIN_NOTE_MAX, writePersonalNote } from './linkedinNote.ts'
 import { postalAddressFor, type PostalAddress } from './mail.ts'
+import { checkOwnership, needsOwnershipCheck } from './ownership.ts'
 import { fallbackPrintout, printoutHeading, writePrintout } from './printout.ts'
 import { recipientBlocker } from './recipients.ts'
 import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
@@ -301,7 +302,15 @@ export function stepProblems(
   kind: TodoStepKind,
   step: { subject: string | null; body: string; printout: boolean },
 ): string[] {
-  if (kind === 'linkedin_connect' || kind === 'linkedin_follow_up') return noteProblems(step.body)
+  // A LinkedIn note is often Theo's own words as he wrote them: only the length is worth a word.
+  if (kind === 'linkedin_connect' || kind === 'linkedin_follow_up') {
+    if (!step.body.trim()) return ['it is empty']
+    return step.body.length > LINKEDIN_NOTE_MAX
+      ? [
+          `it is ${step.body.length} characters; a free LinkedIn account allows ${LINKEDIN_NOTE_MAX}`,
+        ]
+      : []
+  }
   if (kind === 'postcard') return step.printout ? ruleProblems(step.body) : []
   if (kind === 'email') {
     if (!step.body.trim()) return ['it is empty']
@@ -382,6 +391,25 @@ export async function addPerson(
     return 0
   }
   let lead = input
+  // Sold off their rentals lately (the city's property records): not a landlord to contact now.
+  if (needsOwnershipCheck(lead, now)) {
+    try {
+      const own = await checkOwnership(deps, settings, lead)
+      lead = own.lead
+      if (own.status === 'sold_off') {
+        await markEmptyRound(deps, input.id, round, 'not contacted: sold their properties')
+        return 0
+      }
+    } catch (error) {
+      await logActivity(
+        'warn',
+        'ownership_check_failed',
+        { error: error instanceof Error ? error.message : String(error) },
+        lead.id,
+        deps.db,
+      )
+    }
+  }
   // Find their LinkedIn first, so the card is whole when it shows up.
   const record = finderRecord(lead)
   const triedRecently =
@@ -448,9 +476,11 @@ export async function fillTodo(
 ): Promise<{ added: number; reason?: string }> {
   const settings = await getSettings(deps.db)
   if (settings.sequences_on) return { added: 0, reason: 'timed sequences are on' }
-  // Cards made before printouts get theirs, a few each round, whatever the day.
+  // Cards made before printouts get theirs, and people on the list are checked again for sales,
+  // a few each round, whatever the day.
   try {
     await upgradeOpenCards(deps, settings)
+    await recheckOpenCards(deps, settings)
   } catch (error) {
     await logActivity(
       'warn',
@@ -798,4 +828,58 @@ export async function upgradeOpenCards(
     changed++
   }
   return changed
+}
+
+/**
+ * People already on the list are checked again for sales every OWNERSHIP_RECHECK_DAYS, a few per
+ * round. Anyone who sold off leaves the list: their waiting steps are dropped. Returns how many.
+ */
+export async function recheckOpenCards(
+  deps: OutreachDeps,
+  settings: Settings,
+  limit = 10,
+): Promise<number> {
+  const open = await deps.db
+    .selectDistinct({ lead_id: messages.lead_id })
+    .from(messages)
+    .innerJoin(leads, eq(leads.id, messages.lead_id))
+    .where(
+      and(
+        eq(messages.status, 'ready_for_human'),
+        like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`),
+        notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+      ),
+    )
+  if (open.length === 0) return 0
+  const people = await deps.db
+    .select()
+    .from(leads)
+    .where(
+      inArray(
+        leads.id,
+        open.map((o) => o.lead_id),
+      ),
+    )
+  const now = deps.now()
+  let checked = 0
+  let removed = 0
+  for (const lead of people) {
+    if (checked >= limit) break
+    if (!needsOwnershipCheck(lead, now)) continue
+    checked++
+    const own = await checkOwnership(deps, settings, lead)
+    if (own.status !== 'sold_off') continue
+    await deps.db
+      .update(messages)
+      .set({ status: 'skipped', error: 'stopped: sold their properties' })
+      .where(
+        and(
+          eq(messages.lead_id, lead.id),
+          eq(messages.status, 'ready_for_human'),
+          like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`),
+        ),
+      )
+    removed++
+  }
+  return removed
 }
