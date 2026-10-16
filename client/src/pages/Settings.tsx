@@ -389,7 +389,7 @@ function SettingsForm({
 
       <Section
         title="Channels"
-        intro="Turn a channel on and set how many per day. LinkedIn, Instagram and calls are always done by you."
+        intro="Turn a channel on and set how many per day. LinkedIn, Instagram, calls and postcards are done by you. With Email off the app sends no email and skips the email steps."
       >
         <div className="divide-y divide-stone-100">
           {CHANNELS.map((c) => (

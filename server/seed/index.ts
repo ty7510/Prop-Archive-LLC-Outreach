@@ -299,3 +299,27 @@ export async function ensureMainSequence(db: Db): Promise<{
   await markKey(db, MAIN_SETUP_KEY)
   return { id, created, switched: true, upgraded, copy_updated }
 }
+
+const EMAILS_OFF_KEY = '_emails_off_v1'
+/** What the main sequence does once the app sends no email. */
+export const MAIN_SEQUENCE_DESCRIPTION_NO_EMAIL =
+  'The app sends no email. You send the LinkedIn note and mail the postcard from the Go page; the email steps are skipped. Steps a lead cannot get are skipped.'
+
+/**
+ * Theo, 2026-10-16: "kill the emails". Once per database: the email channel goes off (email steps
+ * are then skipped, see send.ts) and the main sequence says so. Switching email back on in
+ * Settings later stays his choice.
+ */
+export async function switchEmailsOffOnce(db: Db): Promise<boolean> {
+  if (await hasKey(db, EMAILS_OFF_KEY)) return false
+  await updateSettings({ channels: { email: false } }, db)
+  const settings = await loadSettings(db)
+  if (settings.main_sequence_id) {
+    await db
+      .update(sequences)
+      .set({ description: MAIN_SEQUENCE_DESCRIPTION_NO_EMAIL, updated_at: nowIso() })
+      .where(eq(sequences.id, settings.main_sequence_id))
+  }
+  await markKey(db, EMAILS_OFF_KEY)
+  return true
+}

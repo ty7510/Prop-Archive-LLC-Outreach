@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   X,
   ExternalLink,
+  Mail,
   Phone,
   Play,
   Ban,
@@ -20,6 +21,8 @@ import type { LeadDetail, LeadEvent, Message, Sequence } from '../types.ts'
 import { enrollLead, getLead, leadOutcome, patchLead, stopLead } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import CopyButton from './CopyButton.tsx'
+import LinkedInPaste from './LinkedInPaste.tsx'
+import ReplyForm from './ReplyForm.tsx'
 import { Badge } from './Field.tsx'
 import ChannelIcons from './ChannelIcons.tsx'
 import NotBuilt from './NotBuilt.tsx'
@@ -201,6 +204,9 @@ function LeadBody({
                 ? humanise(lead.email_status)
                 : proofNote(lead, 'email', lead.email)
             }
+            link={
+              lead.email ? { href: `mailto:${lead.email}`, label: 'Write', icon: Mail } : undefined
+            }
           />
           <ContactRow
             label="Phone"
@@ -224,6 +230,16 @@ function LeadBody({
                 : undefined
             }
           />
+          {!lead.linkedin_url ? (
+            <div className="px-3 py-2">
+              <LinkedInPaste
+                leadId={lead.id}
+                person={leadName(lead)}
+                city={lead.mailing_city}
+                onSaved={() => void refresh()}
+              />
+            </div>
+          ) : null}
           <ContactRow
             label="Instagram"
             value={lead.instagram_url}
@@ -438,6 +454,16 @@ function LeadBody({
           >
             <ThumbsDown className="h-4 w-4" aria-hidden /> Not interested
           </button>
+          <div className="col-span-2 flex sm:col-span-3">
+            {lead.status === 'replied' ? (
+              <p className="text-stone-600">
+                Replied{lead.last_replied_at ? ` ${shortDateTime(lead.last_replied_at)}` : ''}.
+                Nothing more goes to them.
+              </p>
+            ) : (
+              <ReplyForm leadId={lead.id} person={leadName(lead)} onSaved={() => void refresh()} />
+            )}
+          </div>
         </div>
         {notBuilt ? <NotBuilt what="Lead actions." /> : null}
       </section>

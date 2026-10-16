@@ -1,7 +1,14 @@
 // The human queue: ready_for_human messages, done / skip / bring back, and the print page for letters.
-import { and, asc, eq, gte, inArray, isNull, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, notInArray, sql, type SQL } from 'drizzle-orm'
 import type { Settings } from '../../shared/settings.ts'
-import { CHANNELS, type Queue, type QueueActionResult, type QueueItem } from '../../shared/types.ts'
+import {
+  CHANNELS,
+  type LinkedInProfileResult,
+  type LinkedInWanted,
+  type Queue,
+  type QueueActionResult,
+  type QueueItem,
+} from '../../shared/types.ts'
 import {
   enrollments,
   events,
@@ -17,7 +24,8 @@ import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import { startOfDayInTz } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
-import { contactBlocker } from './enroll.ts'
+import { computeChannels } from '../enrich/channels.ts'
+import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { buildVars, renderTemplate } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
@@ -67,12 +75,14 @@ function personOf(lead: { full_name: string | null; company: string | null }): s
 }
 
 /** Queue messages matching `where`, oldest first, with the person and the step they belong to. */
-async function queueRows(deps: OutreachDeps, where: SQL | undefined) {
+async function queueRows(deps: OutreachDeps, where: SQL | undefined, limit = 500) {
   return deps.db
     .select({
       message: messages,
       lead_name: leads.full_name,
       lead_company: leads.company,
+      lead_phone: leads.phone,
+      lead_email: leads.email,
       sequence_name: sequences.name,
       step_index: sequenceSteps.step_index,
     })
@@ -82,7 +92,7 @@ async function queueRows(deps: OutreachDeps, where: SQL | undefined) {
     .leftJoin(sequences, eq(sequences.id, sequenceSteps.sequence_id))
     .where(and(eq(messages.direction, 'out'), where))
     .orderBy(asc(messages.created_at))
-    .limit(500)
+    .limit(limit)
 }
 
 function toItem(r: Awaited<ReturnType<typeof queueRows>>[number], body: string): QueueItem {
@@ -99,6 +109,9 @@ function toItem(r: Awaited<ReturnType<typeof queueRows>>[number], body: string):
     step_index: r.step_index ?? null,
     scheduled_at: r.message.scheduled_at,
     created_at: r.message.created_at,
+    sent_at: r.message.sent_at,
+    phone: r.lead_phone,
+    email: r.lead_email,
   }
 }
 
@@ -209,6 +222,73 @@ async function doneToday(
   return today
 }
 
+/** How far back "did they write back?" looks. */
+const CONTACTED_DAYS = 30
+
+/**
+ * People Theo reached by hand (LinkedIn note, postcard, call) in the last month who have not
+ * answered, newest first, each person once: where he logs a reply when one comes in.
+ */
+async function contactedRecently(deps: OutreachDeps): Promise<QueueItem[]> {
+  const since = new Date(deps.now().getTime() - CONTACTED_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const rows = await queueRows(
+    deps,
+    and(
+      eq(messages.status, 'sent'),
+      eq(messages.provider, 'human'),
+      gte(messages.sent_at, since),
+      notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+    ),
+    1000,
+  )
+  const seen = new Set<string>()
+  const items: QueueItem[] = []
+  for (const r of [...rows].sort((a, b) =>
+    (b.message.sent_at ?? '').localeCompare(a.message.sent_at ?? ''),
+  )) {
+    if (seen.has(r.message.lead_id)) continue
+    seen.add(r.message.lead_id)
+    items.push(toItem(r, r.message.body))
+  }
+  return items.slice(0, 100)
+}
+
+/**
+ * People in a running sequence with no LinkedIn profile and no note yet, best fit first. Theo can
+ * look them up himself and paste the profile; the note then comes up (send.ts catch-up).
+ */
+async function linkedInWanted(deps: OutreachDeps, limit = 15): Promise<LinkedInWanted[]> {
+  const rows = await deps.db
+    .selectDistinct({
+      lead_id: leads.id,
+      full_name: leads.full_name,
+      company: leads.company,
+      city: leads.mailing_city,
+      icp_score: leads.icp_score,
+    })
+    .from(leads)
+    .innerJoin(enrollments, eq(enrollments.lead_id, leads.id))
+    .innerJoin(sequences, eq(sequences.id, enrollments.sequence_id))
+    .where(
+      and(
+        eq(enrollments.status, 'active'),
+        eq(sequences.active, true),
+        eq(leads.do_not_contact, false),
+        notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+        sql`trim(coalesce(${leads.linkedin_url}, '')) = ''`,
+        sql`not exists (select 1 from ${messages} m where m.lead_id = ${leads.id} and m.channel = 'linkedin' and m.direction = 'out' and m.status in ('ready_for_human', 'sent'))`,
+      ),
+    )
+    .orderBy(desc(leads.icp_score))
+    .limit(limit)
+  return rows.map((r) => ({
+    lead_id: r.lead_id,
+    person: personOf({ full_name: r.full_name, company: r.company }),
+    company: r.company,
+    city: r.city,
+  }))
+}
+
 /** Every ready_for_human message, oldest first, grouped by channel; recent skips; today's goals. */
 export async function listQueue(deps: OutreachDeps): Promise<Queue> {
   const rows = await queueRows(deps, eq(messages.status, 'ready_for_human'))
@@ -222,6 +302,8 @@ export async function listQueue(deps: OutreachDeps): Promise<Queue> {
     groups,
     total: rows.length,
     skipped_recently: await skippedRecently(deps),
+    contacted_recently: await contactedRecently(deps),
+    linkedin_wanted: settings.channels.linkedin ? await linkedInWanted(deps) : [],
     today: await doneToday(deps, settings, dayStart),
   }
 }
@@ -340,6 +422,82 @@ export async function restoreQueueItem(
   })
   await logActivity('info', 'queue_restore', { channel: msg.channel }, msg.lead_id, db)
   return { message_id: messageId, status: 'ready_for_human' }
+}
+
+/** A LinkedIn person page however it was pasted, as https://www.linkedin.com/in/<slug>/, or null. */
+export function normaliseLinkedInProfile(raw: string): string | null {
+  const text = raw.trim()
+  let u: URL
+  try {
+    u = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`)
+  } catch {
+    return null
+  }
+  if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return null
+  const slug = u.pathname.match(/^\/in\/([^/]+)/i)?.[1]
+  return slug ? `https://www.linkedin.com/in/${slug}/` : null
+}
+
+/**
+ * Theo found someone on LinkedIn himself: save the profile, and if he is under today's goal their
+ * connection note comes up on the Go page right away (send.ts catch-up, one note per person).
+ */
+export async function saveLinkedInProfile(
+  deps: OutreachDeps,
+  leadId: string,
+  raw: string,
+): Promise<LinkedInProfileResult> {
+  const { db } = deps
+  const url = normaliseLinkedInProfile(raw)
+  if (!url) {
+    throw badRequest(
+      'Paste the link to their LinkedIn profile, like linkedin.com/in/their-name',
+      'NOT_A_PROFILE',
+    )
+  }
+  const lead = (await db.select().from(leads).where(eq(leads.id, leadId)).limit(1))[0]
+  if (!lead) throw notFound('Lead not found', 'LEAD_NOT_FOUND')
+  const now = deps.now().toISOString()
+  await db
+    .update(leads)
+    .set({
+      linkedin_url: url,
+      channels: computeChannels({ ...lead, linkedin_url: url }),
+      updated_at: now,
+    })
+    .where(eq(leads.id, leadId))
+  await db.insert(events).values({
+    id: newId(),
+    lead_id: leadId,
+    kind: 'note',
+    detail: { linkedin_url: url, by: 'hand' },
+    at: now,
+  })
+  await logActivity('info', 'linkedin_profile_saved', { by: 'hand' }, leadId, db)
+  try {
+    await sendDue(deps, { onlyLinkedIn: true })
+  } catch (error) {
+    // The profile is saved; the next round queues the note.
+    await logActivity(
+      'error',
+      'queue_refill_failed',
+      { channel: 'linkedin', error: error instanceof Error ? error.message : String(error) },
+      leadId,
+      db,
+    )
+  }
+  const waiting = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.lead_id, leadId),
+        eq(messages.channel, 'linkedin'),
+        eq(messages.status, 'ready_for_human'),
+      ),
+    )
+    .limit(1)
+  return { linkedin_url: url, queued: waiting.length > 0 }
 }
 
 function esc(s: string | null | undefined): string {

@@ -10,7 +10,7 @@ import { env, isProduction, presentProviders } from './env.ts'
 import { logActivity } from './lib/activity.ts'
 import { ensureWebhookSecret } from './lib/settings.ts'
 import { nowIso } from './lib/time.ts'
-import { ensureMainSequence, seed } from './seed/index.ts'
+import { ensureMainSequence, seed, switchEmailsOffOnce } from './seed/index.ts'
 // Builders register their modules by importing these. Stubs register nothing.
 import './sources/index.ts'
 import './enrich/index.ts'
@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     const main = await ensureMainSequence(db)
     if (main.created || main.switched || main.upgraded || main.copy_updated > 0)
       await logActivity('info', 'main_sequence', main)
+    if (await switchEmailsOffOnce(db)) await logActivity('info', 'emails_off', {})
   } catch (err) {
     // Never block boot; the old per-channel sequences keep working without it.
     console.warn('[boot] main sequence setup failed:', err instanceof Error ? err.message : err)
