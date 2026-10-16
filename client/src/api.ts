@@ -16,6 +16,7 @@ import type {
   LoginBody,
   Me,
   OutcomeBody,
+  LinkedInProfileResult,
   Paged,
   ProvidersResponse,
   Queue,
@@ -141,6 +142,8 @@ export const stopLead = (id: string, reason?: string) =>
   api<{ ok: true }>(`/api/leads/${encodeURIComponent(id)}/stop`, 'POST', { reason })
 export const leadOutcome = (id: string, body: OutcomeBody) =>
   api<Lead>(`/api/leads/${encodeURIComponent(id)}/outcome`, 'POST', body)
+export const saveLinkedInProfile = (id: string, url: string) =>
+  api<LinkedInProfileResult>(`/api/leads/${encodeURIComponent(id)}/linkedin`, 'POST', { url })
 
 // sequences
 export const listSequences = () => api<Sequence[]>('/api/sequences')

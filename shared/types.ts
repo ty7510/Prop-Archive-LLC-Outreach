@@ -148,7 +148,8 @@ export const ACTIVITY_LEVELS = ['info', 'warn', 'error'] as const
 export const ActivityLevelSchema = z.enum(ACTIVITY_LEVELS)
 export type ActivityLevel = z.infer<typeof ActivityLevelSchema>
 
-export const OUTCOME_KINDS = ['demo_booked', 'beta_joined', 'not_interested'] as const
+/** 'replied': Theo logs by hand that someone wrote back (LinkedIn, a call, a letter, his own email). */
+export const OUTCOME_KINDS = ['demo_booked', 'beta_joined', 'not_interested', 'replied'] as const
 export const OutcomeKindSchema = z.enum(OUTCOME_KINDS)
 export type OutcomeKind = z.infer<typeof OutcomeKindSchema>
 
@@ -308,6 +309,9 @@ export type StopBody = z.infer<typeof StopBodySchema>
 
 export const OutcomeBodySchema = z.object({
   kind: OutcomeKindSchema,
+  /** For 'replied': where they wrote back, and what they said. */
+  channel: ChannelSchema.optional(),
+  note: z.string().trim().max(2000).optional(),
 })
 export type OutcomeBody = z.infer<typeof OutcomeBodySchema>
 
@@ -398,14 +402,44 @@ export const QueueItemSchema = z.object({
   step_index: z.number().int().nullable(),
   scheduled_at: z.string().nullable(),
   created_at: z.string(),
+  /** When Theo marked it done (contacted_recently only). */
+  sent_at: z.string().nullable(),
+  /** To call or write to them himself. */
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
 })
 export type QueueItem = z.infer<typeof QueueItemSchema>
+
+/** Someone in the sequence with no LinkedIn profile yet: Theo can look them up and paste it. */
+export const LinkedInWantedSchema = z.object({
+  lead_id: z.string(),
+  person: z.string(),
+  company: z.string().nullable(),
+  city: z.string().nullable(),
+})
+export type LinkedInWanted = z.infer<typeof LinkedInWantedSchema>
+
+export const LinkedInProfileBodySchema = z.object({
+  url: z.string().trim().min(1).max(500),
+})
+export type LinkedInProfileBody = z.infer<typeof LinkedInProfileBodySchema>
+
+export const LinkedInProfileResultSchema = z.object({
+  linkedin_url: z.string(),
+  /** A note for them is waiting on the Go page now. */
+  queued: z.boolean(),
+})
+export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
 
 export const QueueSchema = z.object({
   groups: z.record(ChannelSchema, z.array(QueueItemSchema)),
   total: z.number().int().min(0),
   /** Tasks Theo skipped in the last 7 days, so one skipped by mistake can come back. */
   skipped_recently: z.array(QueueItemSchema),
+  /** People Theo reached by hand in the last 30 days who have not answered yet: log a reply here. */
+  contacted_recently: z.array(QueueItemSchema),
+  /** Top people in the sequence with no LinkedIn profile, to look up while under today's goal. */
+  linkedin_wanted: z.array(LinkedInWantedSchema),
   /** Per channel: tasks done today and the daily goal (the channel's daily cap). */
   today: z.record(
     ChannelSchema,

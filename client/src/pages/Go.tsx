@@ -4,6 +4,7 @@ import { Link } from 'wouter'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ExternalLink,
+  Mail,
   Phone,
   Printer,
   Play,
@@ -17,6 +18,7 @@ import type {
   ActivityEntry,
   AutopilotStatus,
   Channel,
+  LinkedInWanted,
   Queue,
   QueueItem,
   TodayCounts,
@@ -37,6 +39,8 @@ import {
 import { useAction } from '../hooks/useAction.ts'
 import { Toggle, Badge } from '../components/Field.tsx'
 import CopyButton from '../components/CopyButton.tsx'
+import LinkedInPaste from '../components/LinkedInPaste.tsx'
+import ReplyForm from '../components/ReplyForm.tsx'
 import NotBuilt from '../components/NotBuilt.tsx'
 import { Empty, ErrorNote, Loading, QueryView } from '../components/QueryState.tsx'
 import { ChannelIcon } from '../components/ChannelIcons.tsx'
@@ -67,6 +71,8 @@ export default function Go() {
   const auto = useQuery({ queryKey: ['autopilot'], queryFn: getAutopilot, refetchInterval: 15_000 })
   const liveMode = auto.data?.liveMode ?? false
   const on = auto.data?.on ?? false
+  const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings })
+  const emailOn = settings.data?.channels.email ?? false
 
   const applyStatus = (s: AutopilotStatus) => {
     void qc.invalidateQueries({ queryKey: ['readiness'] })
@@ -94,9 +100,11 @@ export default function Go() {
           label="Autopilot"
         />
         <p className="text-lg text-stone-700">
-          {liveMode
-            ? 'Live: email and mail go out in the send window'
-            : 'Dry run: nothing is sent, everything is queued'}
+          {!liveMode
+            ? 'Dry run: nothing is sent, everything is queued'
+            : emailOn
+              ? 'Live: email and mail go out in the send window'
+              : "Live: each weekday, today's LinkedIn notes and postcards show up below"}
         </p>
         {auto.data ? (
           <p className="text-sm text-stone-500">
@@ -145,6 +153,8 @@ export default function Go() {
       </section>
 
       <WaitingForYou />
+
+      <WroteBack />
 
       <LiveFeed />
     </div>
@@ -197,7 +207,9 @@ function WaitingForYou() {
       <QueryView
         q={q}
         loading="Loading your queue"
-        isEmpty={(d) => d.total === 0 && d.skipped_recently.length === 0}
+        isEmpty={(d) =>
+          d.total === 0 && d.skipped_recently.length === 0 && d.linkedin_wanted.length === 0
+        }
         empty={
           <Empty
             title="Nothing waiting for you"
@@ -207,6 +219,12 @@ function WaitingForYou() {
       >
         {(data) => (
           <div className="space-y-6">
+            {data.total === 0 ? (
+              <p className="card text-stone-700">
+                Nothing to send right now. New LinkedIn notes and postcards show up here on weekdays
+                during the send window.
+              </p>
+            ) : null}
             {QUEUE_ORDER.filter((ch) => (data.groups[ch]?.length ?? 0) > 0).map((ch) => (
               <QueueGroup
                 key={ch}
@@ -215,6 +233,11 @@ function WaitingForYou() {
                 today={data.today[ch]}
               />
             ))}
+            {data.linkedin_wanted.length > 0 &&
+            (data.groups.linkedin?.length ?? 0) + (data.today.linkedin?.done ?? 0) <
+              (data.today.linkedin?.goal ?? 0) ? (
+              <FindOnLinkedIn people={data.linkedin_wanted} today={data.today.linkedin} />
+            ) : null}
             {data.skipped_recently.length > 0 ? (
               <SkippedRecently items={data.skipped_recently} />
             ) : null}
@@ -396,6 +419,7 @@ function QueueCard({ item }: { item: QueueItem }) {
       {fromAccount ? (
         <p className="break-words text-sm text-stone-600">Send from: {fromAccount}</p>
       ) : null}
+      <ContactLine item={item} />
       {item.subject ? <p className="break-words font-medium">{item.subject}</p> : null}
       <p className="whitespace-pre-wrap break-words text-stone-800">{item.body}</p>
       <div className="flex flex-wrap gap-2">
@@ -429,6 +453,126 @@ function QueueCard({ item }: { item: QueueItem }) {
       </div>
       {notBuilt ? <NotBuilt what="Marking queue items done or skipped." /> : null}
     </article>
+  )
+}
+
+/** Their phone and email, to call or write to them yourself. */
+function ContactLine({ item }: { item: QueueItem }) {
+  if (!item.phone && !item.email) return null
+  return (
+    <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-stone-700">
+      {item.phone ? (
+        <a href={telHref(item.phone)} className="inline-flex items-center gap-1 underline">
+          <Phone className="h-4 w-4" aria-hidden /> {item.phone}
+        </a>
+      ) : null}
+      {item.email ? (
+        <a
+          href={`mailto:${item.email}`}
+          className="inline-flex items-center gap-1 break-all underline"
+        >
+          <Mail className="h-4 w-4" aria-hidden /> {item.email}
+        </a>
+      ) : null}
+    </p>
+  )
+}
+
+/**
+ * Under today's LinkedIn goal and nobody left with a profile: the best-fit people research found
+ * no profile for. Theo looks them up and pastes the link; their note then comes up above.
+ */
+function FindOnLinkedIn({
+  people,
+  today,
+}: {
+  people: LinkedInWanted[]
+  today?: Queue['today'][Channel]
+}) {
+  return (
+    <details className="card" open>
+      <summary className="min-h-tap cursor-pointer py-2 text-lg font-medium">
+        Find more people on LinkedIn ({people.length})
+      </summary>
+      <p className="mt-1 text-stone-700">
+        {today && today.goal > 0
+          ? `${today.done} of ${today.goal} LinkedIn notes done today. `
+          : ''}
+        Research found no profile for these people. Search, open the right person, copy the link
+        from the address bar and paste it here. Their note then shows up above.
+      </p>
+      <ul className="mt-3 divide-y divide-stone-200">
+        {people.map((p) => (
+          <li key={p.lead_id} className="space-y-2 py-3">
+            <Link
+              href={`/leads?id=${encodeURIComponent(p.lead_id)}`}
+              className="font-medium hover:underline"
+            >
+              {p.person}
+            </Link>
+            {p.company && p.company !== p.person ? (
+              <span className="text-stone-600">, {p.company}</span>
+            ) : null}
+            {p.city ? <span className="text-stone-600"> ({p.city})</span> : null}
+            <LinkedInPaste leadId={p.lead_id} person={p.person} city={p.city} />
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+const SENT_WORD: Partial<Record<Channel, string>> = {
+  linkedin: 'LinkedIn note',
+  mail: 'Postcard',
+  call: 'Call',
+  instagram: 'Instagram message',
+}
+
+/** Everyone reached in the last month who has not answered: log a reply the day it comes in. */
+function WroteBack() {
+  const q = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 15_000 })
+  const items = q.data?.contacted_recently ?? []
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+  const shown = items.filter((i) => !hidden.has(i.lead_id))
+  if (shown.length === 0) return null
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2>Did anyone write back?</h2>
+        <span className="text-stone-600">{shown.length} reached in the last 30 days</span>
+      </div>
+      <p className="mb-3 text-stone-700">
+        When someone answers your LinkedIn note, a postcard or a call, press They replied. Nothing
+        more goes to them, and they move to Replied on the Leads page.
+      </p>
+      <ul className="card divide-y divide-stone-200">
+        {shown.map((item) => (
+          <li key={item.lead_id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+            <ChannelIcon channel={item.channel} className="shrink-0 text-stone-500" />
+            <span className="min-w-0 flex-1">
+              <Link
+                href={`/leads?id=${encodeURIComponent(item.lead_id)}`}
+                className="font-medium hover:underline"
+              >
+                {item.person}
+              </Link>
+              <span className="block text-sm text-stone-600">
+                {SENT_WORD[item.channel] ?? CHANNEL_LABEL[item.channel]}{' '}
+                {item.channel === 'call' ? 'made' : 'sent'} {relativeTime(item.sent_at)}
+              </span>
+              <ContactLine item={item} />
+            </span>
+            <ReplyForm
+              leadId={item.lead_id}
+              person={item.person}
+              channel={item.channel === 'instagram' ? 'linkedin' : item.channel}
+              onSaved={() => setHidden((h) => new Set(h).add(item.lead_id))}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

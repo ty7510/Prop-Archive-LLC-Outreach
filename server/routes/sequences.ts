@@ -5,6 +5,7 @@
 import { Router } from 'express'
 import {
   EnrollBodySchema,
+  LinkedInProfileBodySchema,
   OutcomeBodySchema,
   SequenceCreateSchema,
   SequencePreviewBodySchema,
@@ -15,6 +16,7 @@ import { asyncHandler, parseOr400 } from '../lib/http.ts'
 import { enrollLead, stopLead } from '../outreach/enroll.ts'
 import { outreachDeps } from '../outreach/index.ts'
 import { recordOutcome } from '../outreach/outcomes.ts'
+import { saveLinkedInProfile } from '../outreach/queue.ts'
 import {
   createSequence,
   deleteSequence,
@@ -101,12 +103,26 @@ leadOutreachRouter.post(
   }),
 )
 
-// POST /api/leads/:id/outcome { kind } -> Lead
+// POST /api/leads/:id/outcome { kind, channel?, note? } -> Lead
 leadOutreachRouter.post(
   '/:id/outcome',
   asyncHandler(async (req, res) => {
     const body = parseOr400(OutcomeBodySchema, req.body)
-    res.json(await recordOutcome(outreachDeps(), String(req.params.id), body.kind, 'manual'))
+    res.json(
+      await recordOutcome(outreachDeps(), String(req.params.id), body.kind, 'manual', {
+        channel: body.channel,
+        note: body.note,
+      }),
+    )
+  }),
+)
+
+// POST /api/leads/:id/linkedin { url } -> { linkedin_url, queued }
+leadOutreachRouter.post(
+  '/:id/linkedin',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(LinkedInProfileBodySchema, req.body)
+    res.json(await saveLinkedInProfile(outreachDeps(), String(req.params.id), body.url))
   }),
 )
 

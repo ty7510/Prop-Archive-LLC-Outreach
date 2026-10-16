@@ -201,6 +201,8 @@ async function loadLinkedInTaken(deps: OutreachDeps): Promise<LinkedInTaken> {
 }
 
 export const DUPLICATE_LINKEDIN_ERROR = 'this person already has a LinkedIn note'
+/** An email step passed by while the email channel is off. */
+export const EMAILS_OFF_ERROR = 'emails are off'
 
 /**
  * One waiting LinkedIn task per person (by lead and by profile link): an old task brought back
@@ -806,6 +808,25 @@ async function sendDueUnlocked(
       // Each step carries its own channel, so one sequence can email, then LinkedIn, then mail.
       channel = step.channel
       if (await hasItemWaiting(deps, row.enrollment.id, channel)) continue // his last one is open
+      if (channel === 'email' && !settings.channels.email) {
+        // The app sends no email (Theo writes to people himself): the step is skipped, not held,
+        // so the LinkedIn note and the postcard after it still come up.
+        await db
+          .update(messages)
+          .set({ status: 'skipped', error: EMAILS_OFF_ERROR })
+          .where(
+            and(
+              eq(
+                messages.idempotency_key,
+                idempotencyKey(row.enrollment.id, step.step_index, row.enrollment.run),
+              ),
+              inArray(messages.status, ['queued', 'failed']),
+            ),
+          )
+        await advance(deps, settings, row, steps, 'unreachable')
+        result.skipped++
+        continue
+      }
       if (!settings.channels[channel]) {
         result.skipped++ // the channel is switched off: the step waits until it is back on
         continue

@@ -2,6 +2,7 @@
 // Backs GET /api/settings/readiness and the checklist on the Settings and Sequences pages.
 import { appPasswordProblem, isGoogleMailHost, type SendingInbox } from '../../shared/settings.ts'
 import type { ReadinessItem } from '../../shared/types.ts'
+import { usageReport } from '../enrich/usage.ts'
 import { getSettings } from '../lib/settings.ts'
 import type { OutreachDeps } from './deps.ts'
 import { pickEmailProvider } from './email.ts'
@@ -138,8 +139,16 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
   const main = await mainSequence(deps.db, settings)
   const publicLinks = await linksArePublic(deps)
   const envSender = pickEmailProvider(deps, settings) !== null
-  const channelsOn = (['email', 'linkedin', 'mail'] as const).filter((c) => !settings.channels[c])
+  // With email off (Theo writes to people himself) the app only needs LinkedIn and postcards.
+  const emailOn = settings.channels.email
+  const channelsOn = (
+    emailOn ? (['email', 'linkedin', 'mail'] as const) : (['linkedin', 'mail'] as const)
+  ).filter((c) => !settings.channels[c])
   const claude = await claudeKeyCheck(deps)
+  const research = (await usageReport(settings, deps.now(), deps.db)).providers.find(
+    (p) => p.provider === 'claude_research',
+  )
+  const researchFull = !!research && research.cap !== null && research.used >= research.cap
   const refused = senders.find((i) => loginProblem(i) !== null)
   // A Gmail inbox not signed in with Google whose saved password can never be an app password:
   // Gmail will refuse it, so it is not a way to send even before the first refusal is seen.
@@ -151,7 +160,7 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
   )
   const unread = replySyncFailures()[0]
 
-  return [
+  const emailItems: ReadinessItem[] = [
     {
       key: 'inbox',
       ok: (senders.length > 0 || envSender) && !refused && !doomed,
@@ -179,17 +188,25 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
         ? `Reading replies in ${unread.label} failed (${unread.error}). Follow-up emails wait until it works, so nobody who answered gets another email. ${isGoogleMailHost(settings.sending_inboxes.find((i) => i.email === unread.label)?.smtp_host ?? '') ? ` ${loginFix({ email: unread.label, smtp_host: 'smtp.gmail.com' })}` : ' A refused login needs a new app password under Sending inboxes.'}`
         : 'Fill in the IMAP server on each inbox (Gmail: imap.gmail.com, Outlook: outlook.office365.com).',
     },
+  ]
+
+  return [
+    ...(emailOn ? emailItems : []),
     {
       key: 'address',
       ok: settings.physical_address.trim() !== '',
       required: true,
-      label: 'Your business mailing address, printed in every email and on the postcards',
-      fix: 'Add it under You in Settings. The law requires it in cold email.',
+      label: emailOn
+        ? 'Your business mailing address, printed in every email and on the postcards'
+        : 'Your business mailing address, printed on the postcards',
+      fix: emailOn
+        ? 'Add it under You in Settings. The law requires it in cold email.'
+        : 'Add it under You in Settings, so a postcard has a return address.',
     },
     {
       key: 'links',
       ok: publicLinks !== false,
-      required: true,
+      required: emailOn,
       label:
         publicLinks === null
           ? 'Unsubscribe and booking links (checked on the published app)'
@@ -201,13 +218,15 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       ok: main !== null,
       required: true,
       label: 'The sequence is on and new leads go into it',
-      fix: 'Turn on "Three emails, LinkedIn and a postcard" on the Sequences page.',
+      fix: 'Turn on the main sequence on the Sequences page.',
     },
     {
       key: 'channels',
       ok: channelsOn.length === 0,
       required: true,
-      label: 'Email, LinkedIn and Postcards are switched on',
+      label: emailOn
+        ? 'Email, LinkedIn and Postcards are switched on'
+        : 'LinkedIn and Postcards are switched on (the app sends no email)',
       fix: `Switch on ${channelsOn.join(', ') || 'them'} under Channels in Settings.`,
     },
     {
@@ -225,6 +244,15 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       fix: claude.fix,
     },
     {
+      key: 'research_cap',
+      ok: !researchFull,
+      required: false,
+      label: research
+        ? `Research this month: ${research.used}${research.cap !== null ? ` of ${research.cap}` : ''} people looked up`
+        : 'Research this month',
+      fix: "This month's research is used up, so nobody new gets a LinkedIn profile found and the LinkedIn list stops growing. Raise Claude research under Enrichment in Settings (about a dollar or two of Anthropic credit per person), wait for next month, or look people up yourself under Find more people on LinkedIn on the Go page.",
+    },
+    {
       key: 'autopilot',
       ok: settings.autopilot_on,
       required: true,
@@ -235,7 +263,9 @@ export async function sequenceReadiness(deps: OutreachDeps): Promise<ReadinessIt
       key: 'live',
       ok: settings.live_mode,
       required: true,
-      label: 'Live mode is on, so emails really go out',
+      label: emailOn
+        ? 'Live mode is on, so emails really go out'
+        : 'Live mode is on, so your LinkedIn notes and postcards come up each day',
       fix: 'Turn on Live mode at the bottom of Settings once everything above is green.',
     },
   ]
