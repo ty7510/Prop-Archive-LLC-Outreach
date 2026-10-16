@@ -1,5 +1,5 @@
 // Go: the big Autopilot switch, today's numbers, the "Waiting for you" queue, the live feed.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -40,6 +40,7 @@ import { useAction } from '../hooks/useAction.ts'
 import { Toggle, Badge } from '../components/Field.tsx'
 import CopyButton from '../components/CopyButton.tsx'
 import LinkedInPaste from '../components/LinkedInPaste.tsx'
+import LinkedInRun from '../components/LinkedInRun.tsx'
 import ReplyForm from '../components/ReplyForm.tsx'
 import NotBuilt from '../components/NotBuilt.tsx'
 import { Empty, ErrorNote, Loading, QueryView } from '../components/QueryState.tsx'
@@ -196,8 +197,35 @@ function JobsLine({ jobs }: { jobs: AutopilotStatus['jobs'] }) {
   )
 }
 
+/** The pop-up opens by itself once per browser session when LinkedIn notes are waiting. */
+const RUN_SHOWN_KEY = 'linkedin-run-shown'
+
+function runShown(): boolean {
+  try {
+    return sessionStorage.getItem(RUN_SHOWN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function markRunShown(): void {
+  try {
+    sessionStorage.setItem(RUN_SHOWN_KEY, '1')
+  } catch {
+    // Private windows can refuse storage; the pop-up then opens on each visit.
+  }
+}
+
 function WaitingForYou() {
   const q = useQuery({ queryKey: ['queue'], queryFn: getQueue, refetchInterval: 15_000 })
+  const [runOpen, setRunOpen] = useState(false)
+  const linkedInWaiting = q.data?.groups.linkedin?.length ?? 0
+  useEffect(() => {
+    if (linkedInWaiting > 0 && !runShown()) {
+      markRunShown()
+      setRunOpen(true)
+    }
+  }, [linkedInWaiting])
   return (
     <section>
       <div className="mb-3 flex items-baseline justify-between gap-3">
@@ -219,6 +247,18 @@ function WaitingForYou() {
       >
         {(data) => (
           <div className="space-y-6">
+            <LinkedInRun
+              open={runOpen}
+              onClose={() => setRunOpen(false)}
+              items={data.groups.linkedin ?? []}
+              wanted={data.linkedin_wanted}
+              today={data.today.linkedin}
+            />
+            {(data.groups.linkedin?.length ?? 0) > 0 || data.linkedin_wanted.length > 0 ? (
+              <button type="button" className="btn-primary" onClick={() => setRunOpen(true)}>
+                <ChannelIcon channel="linkedin" /> Send LinkedIn notes one by one
+              </button>
+            ) : null}
             {data.total === 0 ? (
               <p className="card text-stone-700">
                 Nothing to send right now. New LinkedIn notes and postcards show up here on weekdays

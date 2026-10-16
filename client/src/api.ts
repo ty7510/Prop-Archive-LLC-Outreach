@@ -16,6 +16,7 @@ import type {
   LoginBody,
   Me,
   OutcomeBody,
+  LinkedInNote,
   LinkedInProfileResult,
   Paged,
   ProvidersResponse,
@@ -166,6 +167,8 @@ export const queueDone = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/done`, 'POST', { note })
 export const queueSkip = (messageId: string, note?: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/skip`, 'POST', { note })
+export const queueNote = (messageId: string) =>
+  api<LinkedInNote>(`/api/queue/${encodeURIComponent(messageId)}/note`, 'POST')
 export const queueRestore = (messageId: string) =>
   api<QueueActionResult>(`/api/queue/${encodeURIComponent(messageId)}/restore`, 'POST')
 export const printQueueUrl = (ids: string[]) =>
