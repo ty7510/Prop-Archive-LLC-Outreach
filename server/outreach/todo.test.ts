@@ -7,6 +7,7 @@ import { leads, messages } from '../db/schema.ts'
 import { enrollEligible } from './enroll.ts'
 import { judge, rejectLinkedInProfile, type LinkedInSearch } from './linkedinFinder.ts'
 import { recordOutcome } from './outcomes.ts'
+import { addSuppression } from './suppression.ts'
 import { actOnQueueItem, saveLinkedInProfile } from './queue.ts'
 import { fillTodo, listTodo } from './todo.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
@@ -182,6 +183,14 @@ describe('to-do list', () => {
     expect(r.queued).toBe(true)
     card = (await listTodo(deps)).people[0]!
     expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'call'])
+  })
+
+  it('never puts someone on the suppression list on it', async () => {
+    const { db, deps } = await todoSetup()
+    const lead = await insertLead(db)
+    await addSuppression(db, 'email', lead.email, 'unsubscribed')
+    expect((await fillTodo(deps)).added).toBe(0)
+    expect((await listTodo(deps)).people).toHaveLength(0)
   })
 
   it('timed sequences off: nothing is enrolled; on: the to-do list stays empty', async () => {

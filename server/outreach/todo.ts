@@ -21,7 +21,7 @@ import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
 import { startOfDayInTz, zonedParts } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
-import { BLOCKED_LEAD_STATUSES } from './enroll.ts'
+import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { FINDER_RETRY_DAYS, finderRecord, findLinkedInFor, personFor } from './linkedinFinder.ts'
 import { writePersonalNote } from './linkedinNote.ts'
 import { postalAddressFor } from './mail.ts'
@@ -252,6 +252,30 @@ async function insertSteps(
   return added
 }
 
+/** A round with no steps, so the person is not picked again every minute until it recycles. */
+async function markEmptyRound(
+  deps: OutreachDeps,
+  leadId: string,
+  round: number,
+  why: string,
+): Promise<void> {
+  try {
+    await deps.db.insert(messages).values({
+      id: newId(),
+      lead_id: leadId,
+      channel: 'mail',
+      direction: 'out',
+      status: 'skipped',
+      idempotency_key: todoKey(leadId, round, 'none'),
+      error: why,
+      provider: 'human',
+      created_at: deps.now().toISOString(),
+    })
+  } catch {
+    // Already marked.
+  }
+}
+
 /** Put one person on the list with every step they can get. Returns the steps added. */
 export async function addPerson(
   deps: OutreachDeps,
@@ -260,6 +284,12 @@ export async function addPerson(
 ): Promise<number> {
   const now = deps.now()
   const round = (await lastRound(deps, input.id)) + 1
+  // Opted out (suppression list, do not contact, a reply): never on the list.
+  const blocked = await contactBlocker(deps.db, input)
+  if (blocked) {
+    await markEmptyRound(deps, input.id, round, `not contacted: ${blocked}`)
+    return 0
+  }
   let lead = input
   // Find their LinkedIn first, so the card is whole when it shows up.
   const record = finderRecord(lead)
@@ -317,23 +347,8 @@ export async function addPerson(
   }
 
   if (steps.length === 0) {
-    // Nothing to do this round (postcard sent lately, no phone, no profile): mark the round so they
-    // are not picked again every minute; they come back after recycle_after_days.
-    try {
-      await deps.db.insert(messages).values({
-        id: newId(),
-        lead_id: lead.id,
-        channel: 'mail',
-        direction: 'out',
-        status: 'skipped',
-        idempotency_key: todoKey(lead.id, round, 'none'),
-        error: 'nothing to do this round',
-        provider: 'human',
-        created_at: now.toISOString(),
-      })
-    } catch {
-      // Already marked.
-    }
+    // Nothing to do this round (postcard sent lately, no phone, no profile).
+    await markEmptyRound(deps, lead.id, round, 'nothing to do this round')
     return 0
   }
   const added = await insertSteps(deps, lead, round, steps)
