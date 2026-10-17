@@ -4,6 +4,8 @@
 // and edits it (client), so what he reads is what prints. The fit script shrinks the text until it
 // fits the one page and flags the page when even the smallest size does not.
 
+import { PRINTOUT_LOGO } from './printoutLogo.ts'
+
 export const DEFAULT_PRINTOUT_OVERVIEW = [
   'Prop Archive is one place to run your rentals. Leases and documents, repair requests and rent live together instead of across texts, email and spreadsheets. Tenants, owners and contractors each get their own portal, so the questions that used to land on your phone have somewhere to go.',
   "It's built for owners with a handful of doors up to small management teams, so you can run as tight as the big portfolios without their software bill. It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign.",
@@ -38,6 +40,10 @@ export interface PrintoutParts {
   email: string
   /** The site without https://, e.g. proparchive.app. */
   site: string
+  /** "Philadelphia, PA", for the footer. */
+  city?: string
+  /** Theo's photo for the About section, a data: image from Settings. None: the text runs full width. */
+  photo?: string
   /** Screen only: a link to proof and edit this page. Never printed. */
   editHref?: string
 }
@@ -61,31 +67,62 @@ export function paragraphsHtml(text: string): string {
     .join('')
 }
 
-const HOUSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.2 12 4l9 7.2" fill="none" stroke="#047857" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10v9.5h13V10" fill="none" stroke="#047857" stroke-width="2.2" stroke-linejoin="round"/><rect x="10" y="13.5" width="4" height="6" fill="#047857"/></svg>`
+/** Roboto, the face of Theo's Company Overview & Founder Bio page. Goes in each page's <head>. */
+export const PRINTOUT_FONT_LINK =
+  '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap">'
 
-/** The page's styles. 10.98in tall, not 11: a hair under the sheet so no blank page follows. */
+/** The four facts in light-blue boxes under "What Prop Archive is", as on the overview page. */
+export const PRINTOUT_STATS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '3–20 properties', label: "who it's for" },
+  { value: '3 portals', label: 'owner, tenant, contractor' },
+  { value: 'Free in beta', label: 'then 6 months free at launch' },
+  { value: 'Beta live', label: 'since August 2026' },
+]
+
+/** Theo's title under his name in the About section and in the footer. */
+export const PRINTOUT_ROLE = 'Founder & CEO'
+
+/**
+ * The page's styles, matched to Theo's Company Overview & Founder Bio page (Canva, Sept 2026):
+ * a navy band with the logo tile and PROP ARCHIVE, a light-blue rule, navy headings with a short
+ * bar under them, four light-blue fact boxes, the about section with his photo, a navy footer.
+ * Everything inside .op-flow is sized in em so the fit script can shrink it as one.
+ * 10.98in tall, not 11: a hair under the sheet so no blank page follows.
+ */
 export const PRINTOUT_CSS = `
 @page printout { size: 8.5in 11in; margin: 0; }
-.onepager { page: printout; box-sizing: border-box; width: 8.5in; height: 10.98in; margin: 16px auto; padding: 0.6in 0.7in 0.5in; background: #fff; color: #1c1917; display: flex; flex-direction: column; position: relative; overflow: hidden; font-family: Georgia, 'Times New Roman', serif; box-shadow: 0 1px 6px rgba(0,0,0,0.18); break-after: page; page-break-after: always; }
+.onepager { --op-navy: #0f2044; --op-tile: #1b2950; --op-ink: #0c2d57; --op-sky: #92d0f8; --op-sky-text: #8fc7f1; --op-sky-soft: #c5e6fb; --op-card: #f5f6f9; page: printout; box-sizing: border-box; width: 8.5in; height: 10.98in; margin: 16px auto; background: #fff; color: var(--op-ink); display: flex; flex-direction: column; position: relative; overflow: hidden; font-family: Roboto, Arial, Helvetica, sans-serif; box-shadow: 0 1px 6px rgba(0,0,0,0.18); break-after: page; page-break-after: always; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .onepager:last-of-type { break-after: auto; page-break-after: auto; }
 .onepager * { box-sizing: border-box; }
-.op-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.3in; padding-bottom: 0.14in; border-bottom: 2px solid #047857; font-family: Arial, Helvetica, sans-serif; }
-.op-brand { display: flex; align-items: center; gap: 0.1in; font-size: 18pt; font-weight: 700; color: #064e3b; }
-.op-brand svg { width: 0.36in; height: 0.36in; }
-.op-meta { text-align: right; font-size: 9pt; line-height: 1.45; color: #44403c; }
-.op-for { margin: 0.22in 0 0; font: 9.5pt/1.4 Arial, Helvetica, sans-serif; color: #57534e; letter-spacing: 0.04em; text-transform: uppercase; }
-.op-title { margin: 0.06in 0 0; font: 700 20pt/1.15 Arial, Helvetica, sans-serif; color: #064e3b; }
-.op-flow { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.85em; margin-top: 0.16in; font-size: 12pt; line-height: 1.5; }
-.op-flow p { margin: 0 0 0.6em; }
+.op-band { flex: 0 0 auto; background: var(--op-navy); color: #fff; }
+.op-head { display: flex; align-items: center; gap: 0.28in; height: 1.62in; padding: 0 0.45in; }
+.op-logo { flex: 0 0 1.12in; width: 1.12in; height: 1.12in; display: block; }
+.op-brand { min-width: 0; flex: 1 1 auto; }
+.op-word { font: 700 40pt/1 Roboto, Arial, Helvetica, sans-serif; letter-spacing: 0.01em; color: #fff; white-space: nowrap; }
+.op-sub { margin-top: 0.1in; font: 700 14pt/1.25 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); }
+.op-date { margin-top: 0.05in; font: 500 10pt/1.3 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); opacity: 0.85; }
+.op-rule { flex: 0 0 auto; height: 0.13in; background: linear-gradient(var(--op-sky) 0 62%, #dff1fd 80%, #fff 100%); }
+.op-flow { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.95em; padding: 0.2in 0.47in 0.16in; font-size: 11.5pt; line-height: 1.42; color: var(--op-ink); }
+.op-flow p { margin: 0 0 0.55em; }
 .op-flow p:last-child { margin-bottom: 0; }
-.op-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25in; }
-.op-box { border: 1px solid #d6d3d1; border-top: 3px solid #047857; border-radius: 4px; padding: 0.75em 0.9em; font-size: 0.86em; line-height: 1.45; }
-.op-box h2 { margin: 0 0 0.45em; font: 700 1.05em Arial, Helvetica, sans-serif; color: #064e3b; }
+.op-h { margin: 0 0 0.75em; padding-bottom: 0.32em; position: relative; font: 700 1.55em/1.18 Roboto, Arial, Helvetica, sans-serif; color: var(--op-ink); }
+.op-h::after { content: ''; position: absolute; left: 0; bottom: 0; width: 2.6em; height: 0.16em; background: var(--op-ink); }
+.op-h.op-h-sky::after { background: var(--op-sky); }
+.op-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6em; margin-top: 0.9em; }
+.op-stat { background: var(--op-card); border: 1px solid #a9d8f5; box-shadow: 0 1px 3px rgba(12,45,87,0.12); padding: 0.85em 0.4em 0.75em; text-align: center; }
+.op-stat b { display: block; font-weight: 700; font-size: 1.08em; line-height: 1.2; color: var(--op-ink); }
+.op-stat i { display: block; width: 5em; height: 2px; margin: 0.6em auto; background: var(--op-sky-soft); }
+.op-stat span { display: block; font-size: 0.78em; line-height: 1.3; color: var(--op-ink); }
+.op-divider { height: 0; margin: 0; border: 0; border-top: 2px solid var(--op-sky-soft); }
+.op-bio { display: flex; gap: 1.6em; align-items: flex-start; }
+.op-photo { flex: 0 0 11em; width: 11em; height: 12.3em; object-fit: cover; object-position: center top; display: block; }
+.op-bio-text { flex: 1 1 auto; min-width: 0; }
+.op-bio-name { margin: 0 0 0.5em; font: 700 1.15em/1.25 Roboto, Arial, Helvetica, sans-serif; color: var(--op-ink); }
 .op-sign { display: flex; align-items: flex-end; gap: 0.15in; }
-.op-line { width: 2.4in; height: 0.42in; border-bottom: 1px solid #1c1917; }
-.op-name { font: 10pt/1.35 Arial, Helvetica, sans-serif; }
-.op-foot { margin-top: 0.12in; padding-top: 0.1in; border-top: 1px solid #d6d3d1; font: 9pt Arial, Helvetica, sans-serif; color: #57534e; text-align: center; }
-.op-edit { position: absolute; top: 0.12in; right: 0.12in; font: 13px Arial, Helvetica, sans-serif; background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; border-radius: 6px; padding: 4px 10px; text-decoration: none; }
+.op-line { width: 2.4in; height: 0.4in; border-bottom: 1.5px solid var(--op-ink); }
+.op-name { font-size: 0.9em; line-height: 1.35; font-weight: 500; }
+.op-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.2in; height: 0.66in; padding: 0 0.45in; font: 700 10.5pt/1.2 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); white-space: nowrap; }
+.op-edit { position: absolute; top: 0.12in; right: 0.12in; z-index: 1; font: 13px Arial, Helvetica, sans-serif; background: #eaf5fe; color: #0c2d57; border: 1px solid #92d0f8; border-radius: 6px; padding: 4px 10px; text-decoration: none; }
 .onepager.too-long { outline: 4px solid #dc2626; outline-offset: -4px; }
 .onepager.too-long::after { content: 'Too long for one page: cut some words'; position: absolute; left: 0; right: 0; bottom: 0; padding: 6px; background: #dc2626; color: #fff; font: 700 14px Arial, Helvetica, sans-serif; text-align: center; }
 @media print {
@@ -97,8 +134,9 @@ export const PRINTOUT_CSS = `
 `
 
 /**
- * Shrinks the text of each page (12pt down to 9pt) until it fits, marks pages that still do not,
- * and tells a parent window (the editor's preview) whether everything fits.
+ * Shrinks the text of each page (11.5pt down to 8.5pt) until it fits, marks pages that still do
+ * not, and tells a parent window (the editor's preview) whether everything fits. Runs again once
+ * Roboto has loaded, since it measures wider than the fallback.
  */
 export const PRINTOUT_FIT_SCRIPT = `(function () {
   function fit() {
@@ -106,9 +144,9 @@ export const PRINTOUT_FIT_SCRIPT = `(function () {
     document.querySelectorAll('.onepager').forEach(function (page) {
       var flow = page.querySelector('.op-flow');
       if (!flow) return;
-      var size = 12;
+      var size = 11.5;
       flow.style.fontSize = size + 'pt';
-      while (flow.scrollHeight > flow.clientHeight + 1 && size > 9) {
+      while (flow.scrollHeight > flow.clientHeight + 1 && size > 8.5) {
         size -= 0.25;
         flow.style.fontSize = size + 'pt';
       }
@@ -122,31 +160,61 @@ export const PRINTOUT_FIT_SCRIPT = `(function () {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();
   window.addEventListener('load', fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
 })();`
+
+/** Longest the saved photo may be, as a data: URL. The browser shrinks it to about 60 KB first. */
+export const PRINTOUT_PHOTO_MAX = 400_000
+
+/** Only a data: image may go in the page as the photo. */
+export function isPhotoDataUrl(s: string): boolean {
+  return /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(s)
+}
 
 /** One page. */
 export function printoutSection(p: PrintoutParts): string {
   const aboutOwner = p.ownerName.trim().split(/\s+/)[0] || 'me'
-  const meta = [p.date, p.site, p.email].filter(Boolean).map(esc).join('<br>')
   const prepared = p.preparedFor.filter(Boolean)
+  const sub = prepared.length ? `Prepared for ${prepared.map(esc).join(', ')}` : ''
+  const photo = p.photo && isPhotoDataUrl(p.photo) ? p.photo : ''
+  const named = p.ownerName.trim() ? `${esc(p.ownerName.trim())}, ${esc(PRINTOUT_ROLE)}` : ''
+  const foot = [named, esc(p.email), esc(p.site), esc(p.city ?? '')].filter(Boolean)
   return `<section class="onepager">
   ${p.editHref ? `<a class="op-edit" href="${esc(p.editHref)}" target="_blank" rel="noreferrer">Proof and edit</a>` : ''}
-  <div class="op-head">
-    <div class="op-brand">${HOUSE}<span>Prop Archive</span></div>
-    <div class="op-meta">${meta}</div>
-  </div>
-  ${prepared.length ? `<p class="op-for">Prepared for ${prepared.map(esc).join(', ')}</p>` : ''}
-  <h1 class="op-title">${esc(p.heading)}</h1>
+  <header class="op-band op-head">
+    <img class="op-logo" src="${PRINTOUT_LOGO}" alt="Prop Archive logo">
+    <div class="op-brand">
+      <div class="op-word">PROP ARCHIVE</div>
+      ${sub ? `<div class="op-sub">${sub}</div>` : ''}
+      ${p.date ? `<div class="op-date">${esc(p.date)}</div>` : ''}
+    </div>
+  </header>
+  <div class="op-rule"></div>
   <div class="op-flow">
-    <div class="op-them">${paragraphsHtml(p.body)}</div>
-    <div class="op-cols">
-      <div class="op-box"><h2>What Prop Archive is</h2>${paragraphsHtml(p.overview)}</div>
-      <div class="op-box"><h2>About ${esc(aboutOwner)}</h2>${paragraphsHtml(p.bio)}</div>
+    <div class="op-them">
+      <h1 class="op-h">${esc(p.heading)}</h1>
+      ${paragraphsHtml(p.body)}
+    </div>
+    <div class="op-what">
+      <h2 class="op-h">What Prop Archive is</h2>
+      ${paragraphsHtml(p.overview)}
+      <div class="op-stats">${PRINTOUT_STATS.map((s) => `<div class="op-stat"><b>${esc(s.value)}</b><i></i><span>${esc(s.label)}</span></div>`).join('')}</div>
+    </div>
+    <hr class="op-divider">
+    <div class="op-about">
+      <h2 class="op-h op-h-sky">About ${esc(aboutOwner)}</h2>
+      <div class="op-bio">
+        ${photo ? `<img class="op-photo" src="${photo}" alt="${esc(p.ownerName)}">` : ''}
+        <div class="op-bio-text">
+          ${named ? `<h3 class="op-bio-name">${named}</h3>` : ''}
+          ${paragraphsHtml(p.bio)}
+        </div>
+      </div>
     </div>
     <div class="op-close">${paragraphsHtml(p.closing)}</div>
     <div class="op-sign"><span class="op-line"></span><span class="op-name">${esc(p.ownerName)}<br>Prop Archive</span></div>
   </div>
-  <div class="op-foot">${[p.ownerName, p.email, p.site].filter(Boolean).map(esc).join(' &middot; ')}</div>
+  <footer class="op-band op-foot">${foot.map((f) => `<span>${f}</span>`).join('')}</footer>
 </section>`
 }
 
@@ -157,6 +225,7 @@ export function printoutPreviewDocument(p: PrintoutParts): string {
 <head>
 <meta charset="utf-8">
 <title>${esc(p.heading)}</title>
+${PRINTOUT_FONT_LINK}
 <style>${PRINTOUT_CSS}
 html, body { margin: 0; background: #fff; }
 .onepager { margin: 0; box-shadow: none; }
