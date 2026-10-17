@@ -154,6 +154,18 @@ export function letterDate(settings: Pick<Settings, 'send_window'>, now: Date): 
   }).format(now)
 }
 
+/** "Philadelphia, PA" from "1500 Market St, Philadelphia, PA 19102", for the printout's footer. */
+export function cityLine(address: string): string {
+  const parts = address
+    .split(/,|\n/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const state = parts.length >= 2 ? /^([A-Za-z]{2})\b/.exec(parts[parts.length - 1]!) : null
+  const city = parts.length >= 3 ? parts[parts.length - 2]! : ''
+  if (state && city && !/\d/.test(city)) return `${city}, ${state[1]!.toUpperCase()}`
+  return 'Philadelphia, PA'
+}
+
 /** Everything one page needs: this person's part from the message, the rest from Settings. */
 export function printoutParts(
   settings: Settings,
@@ -183,6 +195,8 @@ export function printoutParts(
     ownerName: settings.owner_name,
     email: settings.reply_to || settings.owner_email,
     site: plainLinks(settings).site_link,
+    city: cityLine(settings.physical_address),
+    photo: settings.printout_photo || undefined,
     editHref: `/printout/${encodeURIComponent(message.id)}`,
   }
 }

@@ -7,7 +7,10 @@ import {
   DEFAULT_PRINTOUT_CLOSING,
   DEFAULT_PRINTOUT_OVERVIEW,
   PRINTOUT_LIMITS,
+  printoutSection,
+  type PrintoutParts,
 } from '../../shared/printout.ts'
+import { SettingsSchema } from '../../shared/settings.ts'
 import { messages } from '../db/schema.ts'
 import { hasEmDash } from '../lib/text.ts'
 import { copyProblems, ruleProblems } from './copyRules.ts'
@@ -21,6 +24,7 @@ import {
   type HandEmail,
 } from './handEmail.ts'
 import {
+  cityLine,
   companyName,
   FALLBACK_PRINTOUT,
   personFirstName,
@@ -38,6 +42,19 @@ import {
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 import { clearStepProfile, fillTodo, listTodo, todoKey, upgradeOpenCards } from './todo.ts'
 import { getSettings } from '../lib/settings.ts'
+
+const PARTS: PrintoutParts = {
+  heading: 'How Prop Archive can help',
+  body: 'Hello.',
+  overview: DEFAULT_PRINTOUT_OVERVIEW,
+  bio: DEFAULT_PRINTOUT_BIO,
+  closing: DEFAULT_PRINTOUT_CLOSING,
+  preparedFor: ['Dana Smith'],
+  date: 'October 17, 2026',
+  ownerName: 'Theo Young',
+  email: 'theo@proparchive.biz',
+  site: 'proparchive.app',
+}
 
 const TUESDAY_10AM = new Date('2026-10-13T14:00:00.000Z')
 
@@ -361,6 +378,47 @@ describe('the print page', () => {
     expect(labels.indexOf('Sam Ortiz')).toBeLessThan(labels.indexOf('Dana Smith'))
     expect(labels).toContain('Philadelphia, PA 19146')
     expect(labels).toContain('1500 Market St')
+  })
+  it('looks like the overview page: logo band, four fact boxes, footer, photo once one is saved', async () => {
+    const { db, deps } = await todoSetup()
+    await insertLead(db, { full_name: 'Dana Smith', first_name: 'Dana', last_name: 'Smith' })
+    await fillTodo(deps)
+    const id = (await listTodo(deps)).people[0]!.steps.find(
+      (s) => s.kind === 'postcard',
+    )!.message_id
+    const plain = await printPage(deps, [id])
+    expect(plain).toContain('fonts.googleapis.com/css2?family=Roboto')
+    expect(plain).toContain('class="op-logo" src="data:image/png;base64,')
+    expect(plain).toContain('PROP ARCHIVE')
+    expect(plain.match(/class="op-stat"/g)).toHaveLength(4)
+    expect(plain).toContain('<span>Philadelphia, PA</span>')
+    expect(plain).not.toContain('class="op-photo"')
+
+    const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD'
+    await setSettings(db, { printout_photo: photo })
+    expect(await printPage(deps, [id])).toContain(`class="op-photo" src="${photo}"`)
+  })
+})
+
+describe('the printout photo setting', () => {
+  it('takes only a data: image', () => {
+    const ok = 'data:image/png;base64,iVBORw0KGgo='
+    expect(SettingsSchema.shape.printout_photo.parse(ok)).toBe(ok)
+    expect(SettingsSchema.shape.printout_photo.parse('')).toBe('')
+    for (const bad of [
+      'https://example.com/me.jpg',
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      'data:image/png;base64,abc" onerror="alert(1)',
+    ]) {
+      expect(() => SettingsSchema.shape.printout_photo.parse(bad)).toThrow()
+    }
+    expect(printoutSection({ ...PARTS, photo: 'javascript:alert(1)' })).not.toContain('op-photo')
+  })
+
+  it('the footer city comes from the mailing address', () => {
+    expect(cityLine('1500 Market St, Philadelphia, PA 19102')).toBe('Philadelphia, PA')
+    expect(cityLine('12 Main St, Cherry Hill, NJ 08002')).toBe('Cherry Hill, NJ')
+    expect(cityLine('')).toBe('Philadelphia, PA')
   })
 })
 

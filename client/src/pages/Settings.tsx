@@ -26,6 +26,72 @@ import Readiness from '../components/Readiness.tsx'
 import { ErrorNote, Loading } from '../components/QueryState.tsx'
 import { CHANNEL_LABEL, PERSONA_LABEL, humanise } from '../lib/format.ts'
 
+/** Longest side of the saved photo. It prints about 1.7 in wide, so this is plenty. */
+const PHOTO_MAX_PX = 520
+
+/** A picked image, shrunk in the browser to a small JPEG data URL for the printout. */
+async function shrinkPhoto(file: File): Promise<string> {
+  const url = URL.createObjectURL(file)
+  try {
+    const img = new Image()
+    img.src = url
+    await img.decode()
+    const scale = Math.min(1, PHOTO_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.naturalWidth * scale)
+    canvas.height = Math.round(img.naturalHeight * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('This browser cannot read that picture.')
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.86)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+function PhotoPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [problem, setProblem] = useState('')
+  return (
+    <div className="flex flex-wrap items-center gap-4">
+      {value ? (
+        <img src={value} alt="Your printout photo" className="h-28 w-24 rounded object-cover" />
+      ) : (
+        <div className="flex h-28 w-24 items-center justify-center rounded border border-dashed border-stone-300 text-center text-sm text-stone-500">
+          No photo
+        </div>
+      )}
+      <div className="space-y-2">
+        <label className="btn-secondary cursor-pointer focus-within:ring-2 focus-within:ring-emerald-500">
+          {value ? 'Change photo' : 'Choose a photo'}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (!file) return
+              try {
+                setProblem('')
+                onChange(await shrinkPhoto(file))
+              } catch {
+                setProblem('That picture could not be read. Try a JPEG or PNG.')
+              }
+            }}
+          />
+        </label>
+        {value && (
+          <button type="button" className="btn-secondary ml-2" onClick={() => onChange('')}>
+            Remove
+          </button>
+        )}
+        {problem && <p className="text-sm text-red-700">{problem}</p>}
+        <p className="text-sm text-stone-500">Save at the bottom of the page to use it.</p>
+      </div>
+    </div>
+  )
+}
+
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 const PROVIDER_INFO: Record<
@@ -436,7 +502,10 @@ function SettingsForm({
             Every printout has a part written for that person, then these three parts, the same on
             every page. Changing them here changes every printout.
           </p>
-          <Field label="What Prop Archive is" hint="The box on the left of each printout">
+          <Field
+            label="What Prop Archive is"
+            hint="The section under your part, above the four fact boxes"
+          >
             <textarea
               className="input min-h-[140px] py-2"
               maxLength={PRINTOUT_LIMITS.overview}
@@ -444,7 +513,7 @@ function SettingsForm({
               onChange={(e) => set('printout_overview', e.target.value)}
             />
           </Field>
-          <Field label="About you" hint="The box on the right of each printout">
+          <Field label="About you" hint="The About section, beside your photo">
             <textarea
               className="input min-h-[120px] py-2"
               maxLength={PRINTOUT_LIMITS.bio}
@@ -459,6 +528,12 @@ function SettingsForm({
               value={draft.printout_closing}
               onChange={(e) => set('printout_closing', e.target.value)}
             />
+          </Field>
+          <Field
+            label="Your photo"
+            hint="Beside About you, like your overview page. Stays in the app's settings, never in the code."
+          >
+            <PhotoPicker value={draft.printout_photo} onChange={(v) => set('printout_photo', v)} />
           </Field>
         </div>
         <Toggle

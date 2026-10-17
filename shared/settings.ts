@@ -5,7 +5,9 @@ import {
   DEFAULT_PRINTOUT_BIO,
   DEFAULT_PRINTOUT_CLOSING,
   DEFAULT_PRINTOUT_OVERVIEW,
+  isPhotoDataUrl,
   PRINTOUT_LIMITS,
+  PRINTOUT_PHOTO_MAX,
 } from './printout.ts'
 import { ChannelSchema, PersonaSchema } from './types.ts'
 
@@ -280,6 +282,15 @@ export const SettingsSchema = z.object({
   printout_bio: z.string().max(PRINTOUT_LIMITS.bio).default(DEFAULT_PRINTOUT_BIO),
   /** The printout: the lines above his signature. */
   printout_closing: z.string().max(PRINTOUT_LIMITS.closing).default(DEFAULT_PRINTOUT_CLOSING),
+  /**
+   * The printout: Theo's photo beside his bio, as on his overview page. A small data: image he
+   * picks in Settings (the browser shrinks it first), kept here so it never goes in the repo.
+   */
+  printout_photo: z
+    .string()
+    .max(PRINTOUT_PHOTO_MAX)
+    .refine((v) => v === '' || isPhotoDataUrl(v), 'The photo must be a JPEG, PNG or WebP image')
+    .default(''),
 
   email_provider: z.enum(['smtp', 'resend']).default('smtp'),
   mail_provider: z.enum(['lob', 'print']).default('print'),

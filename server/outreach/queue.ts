@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, notInArray, sql, type SQL } f
 import {
   PRINTOUT_CSS,
   PRINTOUT_FIT_SCRIPT,
+  PRINTOUT_FONT_LINK,
   PRINTOUT_LIMITS,
   printoutSection,
 } from '../../shared/printout.ts'
@@ -751,6 +752,7 @@ function printDocument(title: string, help: string, body: string, extra = ''): s
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
+${PRINTOUT_FONT_LINK}
 <style>
   @page { margin: 0; }
   @page card { size: 6in 4in; margin: 0; }

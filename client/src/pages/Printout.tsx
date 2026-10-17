@@ -390,21 +390,21 @@ function PrintoutEditor({ doc, queryId }: { doc: PrintoutDoc; queryId: string })
             <div className="mt-4 space-y-4">
               <PartField
                 label={LABEL.overview}
-                hint="The box called What Prop Archive is."
+                hint="The section called What Prop Archive is."
                 value={drafts.overview}
                 max={PRINTOUT_LIMITS.overview}
                 onChange={(v) => setPart('overview', v)}
                 rows={8}
-                emptyNote="Empty: this box prints blank on every printout."
+                emptyNote="Empty: this section prints blank on every printout."
               />
               <PartField
                 label={LABEL.bio}
-                hint={`The box called About ${aboutName}.`}
+                hint={`The section called About ${aboutName}.`}
                 value={drafts.bio}
                 max={PRINTOUT_LIMITS.bio}
                 onChange={(v) => setPart('bio', v)}
                 rows={7}
-                emptyNote="Empty: this box prints blank on every printout."
+                emptyNote="Empty: this section prints blank on every printout."
               />
               <PartField
                 label={LABEL.closing}
