@@ -20,7 +20,6 @@ import type {
   EditStepBody,
   EditStepResult,
   PrintoutDoc,
-  LinkedInFindResult,
   Paged,
   ProvidersResponse,
   Queue,
@@ -147,8 +146,6 @@ export const stopLead = (id: string, reason?: string) =>
   api<{ ok: true }>(`/api/leads/${encodeURIComponent(id)}/stop`, 'POST', { reason })
 export const leadOutcome = (id: string, body: OutcomeBody) =>
   api<Lead>(`/api/leads/${encodeURIComponent(id)}/outcome`, 'POST', body)
-export const findLinkedIn = (id: string) =>
-  api<LinkedInFindResult>(`/api/leads/${encodeURIComponent(id)}/linkedin/find`, 'POST', {})
 
 // sequences
 export const listSequences = () => api<Sequence[]>('/api/sequences')

@@ -22,7 +22,6 @@ import { editStepText, linkedInWrongPerson, printQueueUrl, queueDone, queueSkip 
 import { useAction } from '../hooks/useAction.ts'
 import { ensureHttp, telHref } from '../lib/format.ts'
 import CopyButton from './CopyButton.tsx'
-import FindLinkedIn from './FindLinkedIn.tsx'
 import ReplyForm from './ReplyForm.tsx'
 
 /** A free LinkedIn account allows 200 characters in a connection note. */
@@ -209,10 +208,8 @@ export default function TodoCard({
       {person.linkedin_missing === 'not_found' && !hasLinkedInStep ? (
         <div className="space-y-2 rounded-xl border border-dashed border-stone-300 p-3">
           <p className="text-sm text-stone-700">
-            The app could not find {person.person} on LinkedIn. It can look again; when it finds
-            them, their note shows up above.
+            Enrich has not found {person.person} on LinkedIn, so there is no LinkedIn note for them.
           </p>
-          <FindLinkedIn leadId={person.lead_id} person={person.person} />
         </div>
       ) : null}
 
@@ -533,10 +530,8 @@ function LinkedInStep({
       {!profile ? (
         <div className="space-y-2 rounded-xl border border-dashed border-stone-300 p-3">
           <p className="text-sm text-stone-700">
-            The app has no LinkedIn profile for {person.person} yet. Have it look; when it finds
-            them, Open their LinkedIn shows up here.
+            Enrich has not found a LinkedIn profile for {person.person}. Skip this note.
           </p>
-          <FindLinkedIn leadId={person.lead_id} person={person.person} />
         </div>
       ) : null}
     </>

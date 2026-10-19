@@ -454,16 +454,6 @@ export const LinkedInProfileResultSchema = z.object({
 })
 export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
 
-/** "Find their LinkedIn": the app looked them up. `queued` says their note is on their card now. */
-export const LinkedInFindResultSchema = z.object({
-  status: z.enum(['found', 'not_found', 'skipped']),
-  linkedin_url: z.string().nullable(),
-  queued: z.boolean(),
-  /** Why it found nobody or did not look, in plain words. */
-  reason: z.string().nullable(),
-})
-export type LinkedInFindResult = z.infer<typeof LinkedInFindResultSchema>
-
 /**
  * One step on a person's to-do card. `postcard` is the printout (one US Letter page mailed in a
  * folder with Theo's card since 2026-10-16; older cards may still hold a 4x6 postcard), `email` is

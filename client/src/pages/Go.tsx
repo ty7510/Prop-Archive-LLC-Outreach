@@ -39,7 +39,6 @@ import {
 import { useAction } from '../hooks/useAction.ts'
 import { Toggle, Badge } from '../components/Field.tsx'
 import CopyButton from '../components/CopyButton.tsx'
-import FindLinkedIn from '../components/FindLinkedIn.tsx'
 import LinkedInRun from '../components/LinkedInRun.tsx'
 import ReplyForm from '../components/ReplyForm.tsx'
 import NotBuilt from '../components/NotBuilt.tsx'
@@ -568,7 +567,6 @@ function FindOnLinkedIn({
               <span className="text-stone-600">, {p.company}</span>
             ) : null}
             {p.city ? <span className="text-stone-600"> ({p.city})</span> : null}
-            <FindLinkedIn leadId={p.lead_id} person={p.person} />
           </li>
         ))}
       </ul>

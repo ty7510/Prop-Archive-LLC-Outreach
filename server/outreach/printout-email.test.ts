@@ -306,7 +306,7 @@ describe('proofing and editing on the to-do list', () => {
     expect(card.linkedin_missing).toBe('not_found')
   })
 
-  it('a pasted profile replaces a wrong one on the waiting note', async () => {
+  it('a pasted profile never goes on the waiting note: only one Enrich found', async () => {
     const { db, deps } = await todoSetup()
     const lead = await insertLead(db, { full_name: 'Pat Lee', first_name: 'Pat', last_name: 'Lee' })
     await fillTodo(deps)
@@ -315,12 +315,12 @@ describe('proofing and editing on the to-do list', () => {
     const card = (await listTodo(deps)).people[0]!
     expect(card.steps[0]).toMatchObject({
       message_id: note.message_id,
-      to_address: 'https://www.linkedin.com/in/the-right-pat-lee/',
+      to_address: note.to_address,
     })
     expect(card.steps.filter((s) => s.channel === 'linkedin')).toHaveLength(1)
   })
 
-  it('someone with only an email address still goes on the list, with their email', async () => {
+  it('someone with only an email address does not go on the list', async () => {
     const { db, deps } = await todoSetup()
     await insertLead(db, {
       full_name: 'Fairmount Rentals LLC',
@@ -331,11 +331,8 @@ describe('proofing and editing on the to-do list', () => {
       linkedin_url: null,
       mailing_street: null,
     })
-    expect((await fillTodo(deps)).added).toBe(1)
-    const card = (await listTodo(deps)).people[0]!
-    expect(card.steps.map((s) => s.kind)).toEqual(['email'])
-    // No printout on its way, so the email does not say one is.
-    expect(card.steps[0]!.body).not.toContain('mailed you')
+    expect((await fillTodo(deps)).added).toBe(0)
+    expect((await listTodo(deps)).people).toHaveLength(0)
   })
 
   it('the app never sends the email: Sent it only writes it down', async () => {
