@@ -120,17 +120,94 @@ export function getOnce(
   })
 }
 
-/** Strip tags and entities well enough to search the words of a page. */
+/** Cloudflare's email protection: the first byte is the key, every later byte is XOR'd with it. */
+export function decodeCfEmail(hex: string): string | null {
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length < 4 || hex.length % 2) return null
+  const key = parseInt(hex.slice(0, 2), 16)
+  let out = ''
+  for (let i = 2; i < hex.length; i += 2) {
+    out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key)
+  }
+  return out.includes('@') ? out : null
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  commat: '@',
+  period: '.',
+  hyphen: '-',
+  dash: '-',
+  ndash: '-',
+  lpar: '(',
+  rpar: ')',
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_m, h: string) => safeChar(parseInt(h, 16)))
+    .replace(/&#(\d{1,7});/g, (_m, n: string) => safeChar(Number(n)))
+    .replace(/&([a-z]+);/gi, (m, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
+}
+
+function safeChar(code: number): string {
+  if (code === 160) return ' '
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ' '
+}
+
+/**
+ * Strip tags and entities well enough to search the words of a page. What a visitor can reach but
+ * the visible words leave out is kept too: mailto: and tel: links, emails hidden by Cloudflare,
+ * and the business details sites put in JSON-LD for search engines.
+ */
 export function pageText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;|&#160;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&#(\d+);/g, (_m, n: string) => String.fromCharCode(Number(n)))
-    .replace(/\s+/g, ' ')
-    .trim()
+  const extra: string[] = []
+  for (const m of html.matchAll(/href\s*=\s*["']?\s*(mailto|tel):([^"'\s>]+)/gi)) {
+    const value = m[2]!.split('?')[0]!
+    try {
+      extra.push(decodeEntities(decodeURIComponent(value)))
+    } catch {
+      extra.push(decodeEntities(value))
+    }
+  }
+  for (const m of html.matchAll(/data-cfemail\s*=\s*["']?([0-9a-f]+)/gi)) {
+    const email = decodeCfEmail(m[1]!)
+    if (email) extra.push(email)
+  }
+  for (const m of html.matchAll(/\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/gi)) {
+    const email = decodeCfEmail(m[1]!)
+    if (email) extra.push(email)
+  }
+  for (const m of html.matchAll(
+    /<script[^>]*type\s*=\s*["']?application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi,
+  )) {
+    extra.push(m[1]!.replace(/\\\//g, '/'))
+  }
+  const visible = decodeEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' '),
+  )
+  return [visible, ...extra].join(' ').replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * A bot check, an "access denied" page or an empty app shell instead of the real page. It says
+ * nothing about what the real page shows, so it counts as "could not open", never as a page
+ * that leaves the contact out.
+ */
+export function isBlockedPage(html: string, text = pageText(html)): boolean {
+  if (text.length < 200) return true
+  if (text.length > 6000) return false
+  // Not "challenge-platform": Cloudflare adds that script to ordinary pages too.
+  return /_cf_chl_opt|cf-chl-|<title>\s*(just a moment|attention required|access denied|security check|are you a robot|pardon our interruption)|px-captcha|_incapsula_resource|captcha-delivery\.com|enable javascript and cookies to continue|please verify you are a human/i.test(
+    html,
+  )
 }
 
 /** The real fetcher. Never throws. */
@@ -145,7 +222,8 @@ export const fetchPublicPage: PageFetcher = async (raw) => {
         continue
       }
       if (res.status !== 200 || !res.body) return null
-      return pageText(res.body)
+      const text = pageText(res.body)
+      return isBlockedPage(res.body, text) ? null : text
     } catch {
       return null
     }

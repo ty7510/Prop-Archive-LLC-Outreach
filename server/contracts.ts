@@ -16,6 +16,8 @@ export interface EnrichModule {
   enrichLeads(ids: string[]): Promise<{ enriched: number; failed: number; skipped: number }>
   /** Why Claude research is not running right now, or null when it is free to run. */
   researchPause?(): Promise<ResearchPaused | null>
+  /** Check stored research answers again with newer contact checks. No research call. */
+  recheckStored?(limit: number): Promise<{ checked: number; improved: number }>
 }
 
 export interface OutreachModule {
