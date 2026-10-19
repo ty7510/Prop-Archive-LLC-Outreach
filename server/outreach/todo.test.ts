@@ -123,6 +123,27 @@ describe('to-do list', () => {
     expect(followUp.problems).toEqual([])
   })
 
+  it('counts the LinkedIn notes, printouts and emails sent today', async () => {
+    const { db, deps, at } = await todoSetup()
+    await insertLead(db)
+    await insertLead(db)
+    await fillTodo(deps)
+    let list = await listTodo(deps)
+    expect(list.sent_today).toEqual({ linkedin: 0, mail: 0, email: 0 })
+
+    const [first, second] = list.people
+    for (const step of first!.steps) await actOnQueueItem(deps, step.message_id, 'done')
+    const step = (ch: string) => second!.steps.find((s) => s.channel === ch)!.message_id
+    await actOnQueueItem(deps, step('linkedin'), 'done')
+    await actOnQueueItem(deps, step('mail'), 'skip') // a skip is not a send
+    list = await listTodo(deps)
+    expect(list.sent_today).toEqual({ linkedin: 2, mail: 1, email: 1 })
+
+    // A new day starts at zero.
+    at.now = new Date(TUESDAY_10AM.getTime() + DAY)
+    expect((await listTodo(deps)).sent_today).toEqual({ linkedin: 0, mail: 0, email: 0 })
+  })
+
   it('a reply drops the waiting steps, never recycles them, and lists them under Replied', async () => {
     const { db, deps, at } = await todoSetup()
     const lead = await insertLead(db)

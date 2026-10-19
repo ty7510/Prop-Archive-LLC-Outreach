@@ -731,6 +731,24 @@ async function repliedPeople(deps: OutreachDeps): Promise<RepliedPerson[]> {
   })
 }
 
+/** Steps from the list marked sent since `since`, per channel, for the counts on each list. */
+async function sentSince(deps: OutreachDeps, since: string): Promise<TodoList['sent_today']> {
+  const rows = await deps.db
+    .select({ channel: messages.channel, n: sql<number>`count(*)` })
+    .from(messages)
+    .where(
+      and(
+        like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`),
+        eq(messages.status, 'sent'),
+        gte(messages.sent_at, since),
+      ),
+    )
+    .groupBy(messages.channel)
+  const count = (channel: Message['channel']) =>
+    Number(rows.find((r) => r.channel === channel)?.n ?? 0)
+  return { linkedin: count('linkedin'), mail: count('mail'), email: count('email') }
+}
+
 export async function listTodo(deps: OutreachDeps): Promise<TodoList> {
   const settings = await getSettings(deps.db)
   const day = today(settings, deps.now())
@@ -739,6 +757,7 @@ export async function listTodo(deps: OutreachDeps): Promise<TodoList> {
     complete: await completePeople(deps, settings),
     replied: await repliedPeople(deps),
     today: { added: await addedSince(deps, day.start), goal: settings.people_per_day },
+    sent_today: await sentSince(deps, day.start),
     recycle_after_days: settings.recycle_after_days,
     email_footer: emailFooter(settings),
     gmail_user: (settings.reply_to || settings.owner_email).trim(),
