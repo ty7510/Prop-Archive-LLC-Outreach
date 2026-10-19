@@ -10,7 +10,7 @@ import { usePinnedIndex } from '../hooks/usePinnedIndex.ts'
 import { Chip } from './Field.tsx'
 import { Modal } from './Confirm.tsx'
 import { Empty } from './QueryState.tsx'
-import LinkedInPaste from './LinkedInPaste.tsx'
+import FindLinkedIn from './FindLinkedIn.tsx'
 import { personFacts, StepWork } from './TodoCard.tsx'
 
 const TAB_KEY = 'todo-tab'
@@ -215,8 +215,8 @@ export function NoLinkedIn({ people }: { people: TodayLists['noLinkedIn'] }) {
         No LinkedIn found ({people.length})
       </summary>
       <p className="mt-1 text-stone-700">
-        The app could not find these people on LinkedIn. If you find them, paste the link and their
-        note shows up above.
+        The app could not find these people on LinkedIn. It can look again; when it finds someone,
+        their note shows up above.
       </p>
       <ul className="mt-3 divide-y divide-stone-200">
         {people.map((p) => (
@@ -230,7 +230,7 @@ export function NoLinkedIn({ people }: { people: TodayLists['noLinkedIn'] }) {
             {p.company && p.company !== p.person ? (
               <span className="text-stone-600">, {p.company}</span>
             ) : null}
-            <LinkedInPaste leadId={p.lead_id} person={p.person} city={p.city} />
+            <FindLinkedIn leadId={p.lead_id} person={p.person} />
           </li>
         ))}
       </ul>

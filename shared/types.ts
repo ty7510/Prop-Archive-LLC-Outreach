@@ -290,10 +290,20 @@ export const EnrichBodySchema = z.object({
 })
 export type EnrichBody = z.infer<typeof EnrichBodySchema>
 
+/** Why Claude web research is not running: its monthly limit is used up, or it failed and rests. */
+export const ResearchPausedSchema = z.object({
+  reason: z.enum(['cap', 'down']),
+  used: z.number().nullable(),
+  cap: z.number().nullable(),
+})
+export type ResearchPaused = z.infer<typeof ResearchPausedSchema>
+
 export const EnrichResultSchema = z.object({
   enriched: z.number().int().min(0),
   failed: z.number().int().min(0),
   skipped: z.number().int().min(0),
+  /** Set when research is paused, so the Enrich button can say why nothing happened. */
+  research_paused: ResearchPausedSchema.optional(),
 })
 export type EnrichResult = z.infer<typeof EnrichResultSchema>
 
@@ -443,6 +453,16 @@ export const LinkedInProfileResultSchema = z.object({
   queued: z.boolean(),
 })
 export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
+
+/** "Find their LinkedIn": the app looked them up. `queued` says their note is on their card now. */
+export const LinkedInFindResultSchema = z.object({
+  status: z.enum(['found', 'not_found', 'skipped']),
+  linkedin_url: z.string().nullable(),
+  queued: z.boolean(),
+  /** Why it found nobody or did not look, in plain words. */
+  reason: z.string().nullable(),
+})
+export type LinkedInFindResult = z.infer<typeof LinkedInFindResultSchema>
 
 /**
  * One step on a person's to-do card. `postcard` is the printout (one US Letter page mailed in a

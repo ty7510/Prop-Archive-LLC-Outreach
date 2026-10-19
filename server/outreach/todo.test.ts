@@ -8,8 +8,8 @@ import { enrollEligible } from './enroll.ts'
 import { judge, rejectLinkedInProfile, type LinkedInSearch } from './linkedinFinder.ts'
 import { recordOutcome } from './outcomes.ts'
 import { addSuppression } from './suppression.ts'
-import { actOnQueueItem, saveLinkedInProfile } from './queue.ts'
-import { fillTodo, listTodo } from './todo.ts'
+import { actOnQueueItem } from './queue.ts'
+import { clearStepProfile, fillTodo, findLinkedInNow, listTodo } from './todo.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 
 const TUESDAY_10AM = new Date('2026-10-13T14:00:00.000Z')
@@ -204,7 +204,7 @@ describe('to-do list', () => {
     expect(rest.linkedin_missing).toBe('not_found')
   })
 
-  it('no profile found: the card has the other steps, and a pasted profile joins it', async () => {
+  it('no profile found: no LinkedIn note; "Find their LinkedIn" looks again and adds it', async () => {
     const { db, deps } = await todoSetup({ linkedInSearch: fakeSearch([], 'NONE') })
     const lead = await insertLead(db, {
       full_name: 'Pat Lee',
@@ -214,24 +214,79 @@ describe('to-do list', () => {
     })
     await fillTodo(deps)
     let card = (await listTodo(deps)).people[0]!
-    // The note is on the card anyway (to copy), with no profile yet: the card offers a search.
-    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
-    expect(card.steps[0]!.to_address).toBeNull()
-    expect(card.steps[0]!.body).toContain('Hi Pat')
+    // Theo only sends a note he can open the exact profile for: no note without one.
+    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'email'])
     expect(card.linkedin_missing).toBe('not_found')
 
-    // The profile Theo pastes joins that same note.
-    const noteId = card.steps[0]!.message_id
-    const r = await saveLinkedInProfile(deps, lead.id, 'linkedin.com/in/lead-person')
-    expect(r.queued).toBe(true)
+    // Still nobody: nothing changes.
+    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({
+      status: 'not_found',
+      linkedin_url: null,
+      queued: false,
+    })
+    expect((await listTodo(deps)).people[0]!.steps).toHaveLength(2)
+
+    // The app finds them on the next look: their note joins the card with that exact profile.
+    deps.linkedInSearch = fakeSearch(
+      [
+        {
+          url: 'https://www.linkedin.com/in/pat-lee-9',
+          title: 'Pat Lee - Landlord - Philadelphia',
+        },
+      ],
+      'https://www.linkedin.com/in/pat-lee-9',
+    )
+    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({
+      status: 'found',
+      linkedin_url: 'https://www.linkedin.com/in/pat-lee-9/',
+      queued: true,
+    })
     card = (await listTodo(deps)).people[0]!
     expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
     expect(card.steps[0]).toMatchObject({
-      message_id: noteId,
-      to_address: 'https://www.linkedin.com/in/lead-person/',
-      found_by_app: false,
+      to_address: 'https://www.linkedin.com/in/pat-lee-9/',
+      found_by_app: true,
     })
+    expect(card.steps[0]!.body).toContain('Hi Pat')
     expect(card.linkedin_missing).toBeNull()
+  })
+
+  it('a wrong profile on a waiting note: "Find their LinkedIn" puts the right one on that note', async () => {
+    const { db, deps } = await todoSetup({
+      linkedInSearch: fakeSearch(
+        [
+          {
+            url: 'https://www.linkedin.com/in/sam-roe-1',
+            title: 'Sam Roe - Realtor - Philadelphia',
+          },
+        ],
+        'https://www.linkedin.com/in/sam-roe-1',
+      ),
+    })
+    const lead = await insertLead(db, {
+      full_name: 'Sam Roe',
+      first_name: 'Sam',
+      last_name: 'Roe',
+      linkedin_url: null,
+    })
+    await fillTodo(deps)
+    const noteId = (await listTodo(deps)).people[0]!.steps[0]!.message_id
+    await rejectLinkedInProfile(deps, lead.id)
+    await clearStepProfile(deps, noteId)
+    expect((await listTodo(deps)).people[0]!.steps[0]!.to_address).toBeNull()
+
+    deps.linkedInSearch = fakeSearch(
+      [{ url: 'https://www.linkedin.com/in/sam-roe-2', title: 'Sam Roe - Owner - Roe Rentals' }],
+      'https://www.linkedin.com/in/sam-roe-2',
+    )
+    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({ status: 'found', queued: true })
+    const card = (await listTodo(deps)).people[0]!
+    expect(card.steps.filter((s) => s.channel === 'linkedin')).toHaveLength(1)
+    expect(card.steps[0]).toMatchObject({
+      message_id: noteId,
+      to_address: 'https://www.linkedin.com/in/sam-roe-2/',
+      found_by_app: true,
+    })
   })
 
   it('no name and no profile: no LinkedIn step, the printout and email still come', async () => {

@@ -12,6 +12,7 @@ import { and, asc, desc, eq, gte, inArray, like, notInArray, sql } from 'drizzle
 import type { Settings } from '../../shared/settings.ts'
 import type {
   CompletePerson,
+  LinkedInFindResult,
   RepliedPerson,
   TodoList,
   TodoPerson,
@@ -27,7 +28,13 @@ import type { OutreachDeps } from './deps.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { ruleProblems } from './copyRules.ts'
 import { emailFooter, fallbackEmail, subjectProblems, writeHandEmail } from './handEmail.ts'
-import { FINDER_RETRY_DAYS, finderRecord, findLinkedInFor, personFor } from './linkedinFinder.ts'
+import {
+  FINDER_RETRY_DAYS,
+  finderRecord,
+  findLinkedInFor,
+  personFor,
+  type FindOutcome,
+} from './linkedinFinder.ts'
 import { LINKEDIN_NOTE_MAX, writePersonalNote } from './linkedinNote.ts'
 import { postalAddressFor, type PostalAddress } from './mail.ts'
 import { checkOwnership, needsOwnershipCheck } from './ownership.ts'
@@ -218,7 +225,9 @@ async function linkedInStep(
 ): Promise<NewStep | null> {
   const profile = (lead.linkedin_url ?? '').trim()
   if (!settings.channels.linkedin) return null
-  if (!profile && !personFor(lead)) return null
+  // Theo sends a note only where he can open their exact profile (2026-10-19): no searching and no
+  // pasting. Without one, "Find their LinkedIn" has the app look again.
+  if (!profile) return null
   const kind = (await sentBefore(deps, lead.id, 'linkedin'))
     ? 'linkedin_follow_up'
     : 'linkedin_connect'
@@ -539,9 +548,10 @@ export async function addLinkedInStepToOpenCard(
   const waiting = open.find((m) => m.channel === 'linkedin')
   if (waiting && profile) {
     const raw = (waiting.raw ?? {}) as Record<string, unknown>
+    const found = finderRecord(lead)?.url === profile
     const saved = await deps.db
       .update(messages)
-      .set({ to_address: profile, raw: { ...raw, found_by_app: false } })
+      .set({ to_address: profile, raw: { ...raw, found_by_app: found } })
       .where(and(eq(messages.id, waiting.id), eq(messages.status, 'ready_for_human')))
       .returning({ id: messages.id })
     return saved.length > 0
@@ -549,6 +559,39 @@ export async function addLinkedInStepToOpenCard(
   const step = await linkedInStep(deps, settings, lead)
   if (!step) return false
   return (await insertSteps(deps, lead, round, [step])) > 0
+}
+
+/**
+ * Theo pressed "Find their LinkedIn": the app looks them up now (one finder search) and, when it
+ * finds them, their note goes on their open card with that exact profile.
+ */
+export async function findLinkedInNow(
+  deps: OutreachDeps,
+  leadId: string,
+): Promise<LinkedInFindResult> {
+  let found: FindOutcome
+  try {
+    found = await findLinkedInFor(deps, leadId)
+  } catch (error) {
+    await logActivity(
+      'warn',
+      'linkedin_find_failed',
+      { error: error instanceof Error ? error.message : String(error), by: 'button' },
+      leadId,
+      deps.db,
+    )
+    return {
+      status: 'skipped',
+      linkedin_url: null,
+      queued: false,
+      reason: 'the LinkedIn lookup did not answer. Try again in a few minutes.',
+    }
+  }
+  if (found.status !== 'found') {
+    return { status: found.status, linkedin_url: null, queued: false, reason: found.reason }
+  }
+  const queued = await addLinkedInStepToOpenCard(deps, leadId)
+  return { status: 'found', linkedin_url: found.linkedin_url, queued, reason: null }
 }
 
 function stepStatus(status: Message['status']): TodoStep['status'] | null {
