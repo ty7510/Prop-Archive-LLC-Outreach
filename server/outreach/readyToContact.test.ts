@@ -36,7 +36,7 @@ describe('ready to contact', () => {
     ).toBe(false)
   })
 
-  it('needs an email that is not bad, a mailing address, and that LinkedIn', () => {
+  it('needs at least one of: that LinkedIn, an email that is not bad, a mailing address', () => {
     const lead = {
       email: 'jane@example.com',
       email_status: 'valid' as const,
@@ -45,9 +45,18 @@ describe('ready to contact', () => {
       enrichment: enriched({ linkedin_url: 'https://www.linkedin.com/in/jane-doe' }),
     }
     expect(readyToContact(lead)).toBe(true)
-    expect(readyToContact({ ...lead, email: ' ' })).toBe(false)
-    expect(readyToContact({ ...lead, email_status: 'invalid' })).toBe(false)
-    expect(readyToContact({ ...lead, mailing_street: null })).toBe(false)
-    expect(readyToContact({ ...lead, enrichment: {} })).toBe(false)
+    expect(readyToContact({ ...lead, email: ' ' })).toBe(true)
+    expect(readyToContact({ ...lead, email: null })).toBe(true)
+    expect(readyToContact({ ...lead, email_status: 'invalid' })).toBe(true)
+    expect(readyToContact({ ...lead, mailing_street: null })).toBe(true)
+    expect(readyToContact({ ...lead, enrichment: {} })).toBe(true)
+    const none = { ...lead, email: null, mailing_street: null, enrichment: {} }
+    expect(readyToContact(none)).toBe(false)
+    expect(readyToContact({ ...none, linkedin_url: null, email: 'jane@example.com' })).toBe(true)
+    expect(readyToContact({ ...none, email: 'jane@example.com', email_status: 'invalid' })).toBe(
+      false,
+    )
+    expect(readyToContact({ ...none, mailing_street: '1 Main St' })).toBe(true)
+    expect(readyToContact({ ...none, enrichment: lead.enrichment })).toBe(true)
   })
 })

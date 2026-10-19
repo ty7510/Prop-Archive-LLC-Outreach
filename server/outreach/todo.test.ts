@@ -227,7 +227,7 @@ describe('to-do list', () => {
     expect((await fillTodo(deps)).added).toBe(0)
   })
 
-  it('only people with an email, a mailing address and a LinkedIn Enrich found go on the list', async () => {
+  it('anyone with a LinkedIn Enrich found, an email or a mailing address goes on the list; LinkedIn first', async () => {
     const { db, deps } = await todoSetup()
     await setSettings(db, { people_per_day: 20 })
     const ready = await insertLead(db, { full_name: 'Ready Person' })
@@ -239,14 +239,16 @@ describe('to-do list', () => {
         pdl: { fetched_at: 'x', data: { linkedin_url: 'linkedin.com/in/pdl-person' } },
       },
     })
-    await insertLead(db, { full_name: 'No Email', email: null })
-    await insertLead(db, { full_name: 'Bad Email', email_status: 'invalid' })
-    await insertLead(db, { full_name: 'No Mailing', mailing_street: null })
-    await insertLead(db, { full_name: 'No LinkedIn', linkedin_url: null })
-    // From an imported list: Enrich never found it.
-    await insertLead(db, { full_name: 'Imported Link', enrichment: {} })
-    // Found by the separate LinkedIn lookup, not by Enrich.
-    await insertLead(db, {
+    // Only the LinkedIn: on the list with just the note.
+    const onlyLinkedIn = await insertLead(db, {
+      full_name: 'Only LinkedIn',
+      email: null,
+      mailing_street: null,
+    })
+    // From an imported list: Enrich never found the link, so no note, but the printout and email.
+    const imported = await insertLead(db, { full_name: 'Imported Link', enrichment: {} })
+    // Found by the separate LinkedIn lookup, not by Enrich: no note either.
+    const finder = await insertLead(db, {
       full_name: 'Finder Link',
       linkedin_url: 'https://www.linkedin.com/in/finder-link/',
       enrichment: {
@@ -256,25 +258,56 @@ describe('to-do list', () => {
         },
       },
     })
-    // Enrich ran but found a different profile (a longer name must not match either).
+    // Only an email.
+    const onlyEmail = await insertLead(db, {
+      full_name: 'Only Email',
+      linkedin_url: null,
+      mailing_street: null,
+    })
+    // Only a mailing address (a bad email does not count).
+    const onlyMail = await insertLead(db, {
+      full_name: 'Only Mail',
+      linkedin_url: null,
+      email_status: 'invalid',
+    })
+    // No way to reach them: never on the list.
     await insertLead(db, {
-      full_name: 'Other Link',
-      linkedin_url: 'https://www.linkedin.com/in/other',
-      enrichment: {
-        claude_research: {
-          fetched_at: 'x',
-          data: { linkedin_url: 'https://www.linkedin.com/in/other-person-2' },
-        },
-      },
+      full_name: 'Nothing',
+      linkedin_url: null,
+      email: null,
+      mailing_street: null,
     })
 
-    expect((await fillTodo(deps, { limit: 20 })).added).toBe(2)
-    const people = (await listTodo(deps)).people
-    expect(people.map((p) => p.lead_id).sort()).toEqual([ready.id, fromPdl.id].sort())
-    for (const p of people) {
-      expect(p.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
-      expect(p.steps[0]!.found_by_app).toBe(true)
-    }
+    // A small round takes the LinkedIn people first.
+    expect((await fillTodo(deps, { limit: 3 })).added).toBe(3)
+    let people = (await listTodo(deps)).people
+    expect(people.map((p) => p.lead_id).sort()).toEqual(
+      [ready.id, fromPdl.id, onlyLinkedIn.id].sort(),
+    )
+
+    const second = await fillTodo(deps, { limit: 20 })
+    people = (await listTodo(deps)).people
+    expect(second.added).toBe(4)
+    const kinds = new Map(people.map((p) => [p.lead_id, p.steps.map((s) => s.kind)]))
+    expect(kinds.size).toBe(7)
+    expect(kinds.get(ready.id)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    expect(kinds.get(fromPdl.id)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    expect(kinds.get(onlyLinkedIn.id)).toEqual(['linkedin_connect'])
+    expect(kinds.get(imported.id)).toEqual(['postcard', 'email'])
+    expect(kinds.get(finder.id)).toEqual(['postcard', 'email'])
+    expect(kinds.get(onlyEmail.id)).toEqual(['email'])
+    expect(kinds.get(onlyMail.id)).toEqual(['postcard'])
+    for (const p of people)
+      for (const s of p.steps) if (s.channel === 'linkedin') expect(s.found_by_app).toBe(true)
+  })
+
+  it('people with no LinkedIn are added at most the goal a day, however many notes are skipped', async () => {
+    const { db, deps } = await todoSetup()
+    for (let i = 0; i < 6; i++) await insertLead(db, { linkedin_url: null })
+    expect((await fillTodo(deps)).added).toBe(2)
+    for (const p of (await listTodo(deps)).people)
+      for (const s of p.steps) await actOnQueueItem(deps, s.message_id, 'skip')
+    expect((await fillTodo(deps)).added).toBe(0)
   })
 
   it('never looks people up on LinkedIn itself while it fills the list', async () => {
@@ -291,7 +324,8 @@ describe('to-do list', () => {
       linkedin_url: null,
     })
     await insertLead(db)
-    expect((await fillTodo(deps)).added).toBe(1)
+    // Pat has an email and a mailing address, so Pat comes on too, just with no LinkedIn note.
+    expect((await fillTodo(deps)).added).toBe(2)
     expect(searched).toBe(0)
   })
 

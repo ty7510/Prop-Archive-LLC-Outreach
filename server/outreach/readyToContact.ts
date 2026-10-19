@@ -26,35 +26,48 @@ export function linkedInFoundByEnrich(lead: Pick<Lead, 'linkedin_url' | 'enrichm
   })
 }
 
-/** Email, mailing address, and a LinkedIn that Enrich found. */
+/** An email on file that is not known to bounce. */
+export function hasUsableEmail(lead: Pick<Lead, 'email' | 'email_status'>): boolean {
+  return Boolean((lead.email ?? '').trim()) && lead.email_status !== 'invalid'
+}
+
+/**
+ * At least one way to reach them (Theo, 2026-10-19): a LinkedIn that Enrich found, an email, or a
+ * mailing address. They get only the steps they have.
+ */
 export function readyToContact(
   lead: Pick<Lead, 'email' | 'email_status' | 'mailing_street' | 'linkedin_url' | 'enrichment'>,
 ): boolean {
   return (
-    Boolean((lead.email ?? '').trim()) &&
-    lead.email_status !== 'invalid' &&
-    Boolean((lead.mailing_street ?? '').trim()) &&
-    linkedInFoundByEnrich(lead)
+    linkedInFoundByEnrich(lead) ||
+    hasUsableEmail(lead) ||
+    Boolean((lead.mailing_street ?? '').trim())
   )
 }
 
-/** readyToContact as a SQL condition on leads, so people who are not ready are never picked. */
-export function readyToContactSql(): SQL {
+/** linkedInFoundByEnrich as a SQL condition on leads. */
+export function linkedInFoundByEnrichSql(): SQL {
   const providers = sql.join(
     ENRICH_PROVIDER_IDS.map((id) => sql`${id}`),
     sql`, `,
   )
   const slug = sql`lower(substring(${leads.linkedin_url} from 'linkedin\\.com/((?:in|company)/[^/?#[:space:]"''\\\\]+)'))`
   return sql`(
-    trim(coalesce(${leads.email}, '')) <> ''
-    and ${leads.email_status} <> 'invalid'
-    and trim(coalesce(${leads.mailing_street}, '')) <> ''
-    and ${slug} is not null
+    ${slug} is not null
     and exists (
       select 1
       from jsonb_each(coalesce(${leads.enrichment}, '{}'::jsonb)) e,
         regexp_matches(e.value::text, 'linkedin\\.com/((?:in|company)/[^/?#[:space:]"''\\\\]+)', 'gi') m
       where e.key in (${providers}) and lower(m[1]) = ${slug}
     )
+  )`
+}
+
+/** readyToContact as a SQL condition on leads, so people who are not ready are never picked. */
+export function readyToContactSql(): SQL {
+  return sql`(
+    ${linkedInFoundByEnrichSql()}
+    or (trim(coalesce(${leads.email}, '')) <> '' and ${leads.email_status} <> 'invalid')
+    or trim(coalesce(${leads.mailing_street}, '')) <> ''
   )`
 }

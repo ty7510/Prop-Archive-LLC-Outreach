@@ -96,6 +96,21 @@ describe('pickBatch', () => {
   })
 })
 
+describe('pickBatch past many done leads', () => {
+  it('finds a waiting lead behind more done leads than one look covers', async () => {
+    await updateSettings({ min_icp_score: 50, personas: ['maya', 'ray'] }, db)
+    // pickBatch(1) looks at 20 rows at a time: 25 older, already enriched leads come first.
+    for (let i = 0; i < 25; i++)
+      await insertLead(db, {
+        created_at: '2026-09-01T00:00:00Z',
+        icp_score: 80,
+        status: 'enriched',
+      })
+    const waiting = await insertLead(db, { created_at: '2026-10-05T00:00:00Z', icp_score: 80 })
+    expect(await pickBatch(1, { db })).toEqual([waiting.id])
+  })
+})
+
 describe('pickBatch after a cut-off run', () => {
   it('picks a lead left enriching for over half an hour, never one still running', async () => {
     const stale = await insertLead(db, {
