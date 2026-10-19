@@ -576,7 +576,9 @@ function PostcardStep({
   return (
     <>
       <p className="text-sm text-stone-700">
-        {how ? 'Print it, put a stamp on it and mail it to: ' : 'A postcard. Mail to: '}
+        {how
+          ? 'Print it, put a stamp on it and mail it to: '
+          : 'A postcard: print it, put a stamp on it and mail it to: '}
         {postalLines(step.to_address)}
       </p>
       <div className="flex flex-wrap gap-2">
