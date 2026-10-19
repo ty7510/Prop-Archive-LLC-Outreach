@@ -55,11 +55,15 @@ describe('when Claude research is down', () => {
       hint: expect.stringMatching(/console\.anthropic\.com/),
     })
 
-    // During the pause nothing asks Claude again, and the batch leaves waiting leads alone.
-    expect(await pickBatch(10, deps)).toEqual([])
+    // During the pause nothing asks Claude again. A waiting lead is picked only while a lookup API
+    // (Apollo here) has not looked them up yet, and each lookup runs once per lead.
+    expect(await pickBatch(10, deps)).toEqual([b.id])
     expect(await enrichLeads([b.id], deps)).toEqual({ enriched: 0, failed: 1, skipped: 0 })
     expect(research.calls).toHaveLength(1)
+    expect(apollo.calls.map((l) => l.id)).toEqual([a.id, b.id])
     expect((await getLead(b.id)).status).toBe('new')
+    expect((await getLead(b.id)).linkedin_url).toBe('https://linkedin.com/in/ab')
+    expect(await pickBatch(10, deps)).toEqual([])
 
     // After the pause both are picked, and research gets its turn.
     const later = () => new Date(now().getTime() + 16 * 60_000)
@@ -459,5 +463,45 @@ describe('enrichLeads when the database goes away', () => {
     expect(log.find((e) => e.event === 'enrich.batch_aborted')?.detail).toMatchObject({
       left: expect.any(Number),
     })
+  })
+})
+
+describe('when Claude research is out of searches for the month', () => {
+  it('still looks people up with the lookup APIs, once each', async () => {
+    await updateSettings(
+      {
+        min_icp_score: 0,
+        personas: ['maya', 'ray', 'denise'],
+        enrichment: {
+          providers: ['claude_research', 'pdl'],
+          monthly_credit_cap: { claude_research: 1, pdl: 50 },
+        },
+      },
+      db,
+    )
+    const env = testEnv({ ANTHROPIC_API_KEY: 'k', PDL_API_KEY: 'p' })
+    const research = fakeProvider('claude_research', {})
+    const pdl = fakeProvider('pdl', {
+      email: 'y@x.co',
+      linkedin_url: 'https://www.linkedin.com/in/y-z',
+    })
+    const deps = { db, env, providers: { claude_research: research, pdl }, now }
+    const x = await insertLead(db, { full_name: 'X Y' })
+    // Research uses this month's one search on x.
+    await enrichLeads([x.id], deps)
+    expect(research.calls).toHaveLength(1)
+
+    const y = await insertLead(db, { full_name: 'Y Z' })
+    expect(await pickBatch(10, deps)).toEqual([y.id])
+    expect(await enrichLeads([y.id], deps)).toEqual({ enriched: 1, failed: 0, skipped: 0 })
+    expect(research.calls).toHaveLength(1)
+    const saved = await getLead(y.id)
+    expect(saved.email).toBe('y@x.co')
+    expect(saved.linkedin_url).toBe('https://www.linkedin.com/in/y-z')
+
+    // People Data Labs already answered for y: never asked again while research waits.
+    expect(await pickBatch(10, deps)).toEqual([])
+    await enrichLeads([y.id], deps)
+    expect(pdl.calls.map((l) => l.id)).toEqual([x.id, y.id])
   })
 })
