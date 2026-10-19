@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { resetModules } from '../contracts.ts'
+import { registerModule, resetModules } from '../contracts.ts'
 import { createTestDb, type Db } from '../db/client.ts'
 import { activityLog, jobRuns } from '../db/schema.ts'
 import { invalidateSettingsCache } from '../lib/settings.ts'
@@ -229,6 +229,43 @@ describe('runTick', () => {
     expect(calls).not.toContain('send')
     const rows = await db.select().from(jobRuns).where(eq(jobRuns.job, 'send'))
     expect(rows).toHaveLength(0)
+  })
+
+  it('in the background, a slow enrich batch never holds up the to-do list', async () => {
+    registerFakes(calls)
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    registerModule('enrich', {
+      pickBatch: async () => ['lead-a'],
+      enrichLeads: async (ids) => {
+        calls.push('enrichLeads')
+        await gate
+        return { enriched: ids.length, failed: 0, skipped: 0 }
+      },
+    })
+    const tick = () =>
+      runTick({ db, now: () => INSIDE_WINDOW, warned: new Set(), enrichInBackground: true })
+
+    const first = await tick()
+    expect(statuses(first)).toMatchObject({ enrich: 'started', todo: 'ok' })
+    // A minute later the batch is still going: no second batch, the list is filled again.
+    const second = await tick()
+    expect(statuses(second)).toMatchObject({ enrich: 'skipped', todo: 'ok' })
+    expect(calls.filter((c) => c === 'enrichLeads')).toHaveLength(1)
+    expect(calls.filter((c) => c === 'todo')).toHaveLength(2)
+
+    release()
+    await vi.waitFor(async () => {
+      const rows = await db.select().from(jobRuns).where(eq(jobRuns.job, 'enrich'))
+      expect(rows.map((r) => r.status)).toEqual(['ok'])
+    })
+    expect(statuses(await tick())).toMatchObject({ enrich: 'started' })
+    await vi.waitFor(async () => {
+      const rows = await db.select().from(jobRuns).where(eq(jobRuns.job, 'enrich'))
+      expect(rows.every((r) => r.status === 'ok')).toBe(true)
+    })
   })
 
   it('does not call enrichLeads when the batch is empty', async () => {

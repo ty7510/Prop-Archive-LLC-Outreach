@@ -493,6 +493,90 @@ export async function addPerson(
 }
 
 /**
+ * People with steps waiting on the list, no LinkedIn note in this recycle window, and a LinkedIn
+ * that Enrich has found since they came on.
+ */
+async function lateLinkedIn(
+  deps: OutreachDeps,
+  settings: Settings,
+  limit: number,
+): Promise<string[]> {
+  const since = new Date(deps.now().getTime() - settings.recycle_after_days * DAY_MS).toISOString()
+  const rows = await deps.db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(
+      and(
+        eq(leads.do_not_contact, false),
+        notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+        linkedInFoundByEnrichSql(),
+        sql`exists (select 1 from ${messages} w where w.lead_id = ${leads.id} and w.direction = 'out'
+          and w.status = 'ready_for_human' and w.idempotency_key like ${`${TODO_KEY_PREFIX}%`})`,
+        sql`not exists (select 1 from ${messages} l where l.lead_id = ${leads.id} and l.direction = 'out'
+          and l.channel = 'linkedin' and l.idempotency_key like ${`${TODO_KEY_PREFIX}%`}
+          and l.created_at > ${since})`,
+      ),
+    )
+    .orderBy(desc(leads.icp_score), leads.created_at)
+    .limit(limit)
+  return rows.map((r) => r.id)
+}
+
+/**
+ * People with steps waiting on the list, no email in this recycle window, and an email Enrich found
+ * since they came on: the email joins their card, so they show under Emails. Newest finds first.
+ */
+async function addLateEmails(
+  deps: OutreachDeps,
+  settings: Settings,
+  limit: number,
+): Promise<number> {
+  const since = new Date(deps.now().getTime() - settings.recycle_after_days * DAY_MS).toISOString()
+  const rows = await deps.db
+    .select()
+    .from(leads)
+    .where(
+      and(
+        eq(leads.do_not_contact, false),
+        notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
+        sql`trim(coalesce(${leads.email}, '')) <> '' and ${leads.email_status} <> 'invalid'`,
+        sql`exists (select 1 from ${messages} w where w.lead_id = ${leads.id} and w.direction = 'out'
+          and w.status = 'ready_for_human' and w.idempotency_key like ${`${TODO_KEY_PREFIX}%`})`,
+        sql`not exists (select 1 from ${messages} e where e.lead_id = ${leads.id} and e.direction = 'out'
+          and e.channel = 'email' and e.idempotency_key like ${`${TODO_KEY_PREFIX}%`}
+          and e.created_at > ${since})`,
+      ),
+    )
+    .orderBy(desc(leads.updated_at))
+    .limit(limit)
+  let added = 0
+  for (const lead of rows) {
+    if (await contactBlocker(deps.db, lead)) continue
+    const open = await deps.db
+      .select({ key: messages.idempotency_key, channel: messages.channel })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.lead_id, lead.id),
+          inArray(messages.status, ['ready_for_human', 'sent']),
+          like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`),
+        ),
+      )
+    const round = Math.max(0, ...open.map((m) => parseTodoKey(m.key)?.round ?? 0))
+    if (round === 0) continue
+    const mailed = open.some((m) => m.channel === 'mail' && parseTodoKey(m.key)?.round === round)
+    const vars = buildVars(lead, settings, {
+      baseUrl: deps.baseUrl,
+      channel: 'mail',
+      sequenceName: 'To do',
+    })
+    const step = await emailStep(deps, settings, lead, vars, mailed)
+    if (step && (await insertSteps(deps, lead, round, [step])) > 0) added++
+  }
+  return added
+}
+
+/**
  * The autopilot's round: on a send day, put people on the list until today's number is reached.
  * At most `limit` people per round, so one round stays short (each may need a LinkedIn search).
  */
@@ -526,9 +610,34 @@ export async function fillTodo(
   const progress = await goalProgress(deps, day.start)
   const goal = settings.people_per_day
   let perRound = options.limit ?? 5
-  const linkedInRoom = settings.channels.linkedin ? goal - progress.sent - progress.waiting : 0
+  let linkedInRoom = settings.channels.linkedin ? goal - progress.sent - progress.waiting : 0
   const otherRoom = goal - progress.withoutLinkedIn
   let added = 0
+  // Enrich found an email for someone already on the list: it joins their card (Emails tab).
+  if (!options.quick) {
+    try {
+      await addLateEmails(deps, settings, 5)
+    } catch (error) {
+      await logActivity(
+        'warn',
+        'todo_late_email_failed',
+        { error: error instanceof Error ? error.message : String(error) },
+        null,
+        deps.db,
+      )
+    }
+  }
+  // People already on the list whose LinkedIn Enrich found after they came on get their note first.
+  const late = Math.min(linkedInRoom, perRound)
+  if (late > 0) {
+    for (const leadId of await lateLinkedIn(deps, settings, late)) {
+      if (await addLinkedInStepToOpenCard(deps, leadId)) {
+        added++
+        perRound--
+        linkedInRoom--
+      }
+    }
+  }
   for (const [linkedIn, room] of [
     [true, linkedInRoom],
     [false, otherRoom],
