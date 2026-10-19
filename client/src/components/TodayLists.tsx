@@ -6,6 +6,7 @@ import { Link } from 'wouter'
 import { ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import type { TodoList } from '@shared/types'
 import { isTodayTab, type TodayItem, type TodayLists, type TodayTab } from '../lib/todayLists.ts'
+import { usePinnedIndex } from '../hooks/usePinnedIndex.ts'
 import { Chip } from './Field.tsx'
 import { Modal } from './Confirm.tsx'
 import { Empty } from './QueryState.tsx'
@@ -151,9 +152,7 @@ export function StepRun({
   items: TodayItem[]
   data: TodoList
 }) {
-  const [index, setIndex] = useState(0)
-  const at = Math.min(index, Math.max(0, items.length - 1))
-  const item = items[at]
+  const { at, current: item, go } = usePinnedIndex(items, (i) => i.step.message_id, open)
   return (
     <Modal open={open} onClose={onClose} title={title} wide>
       {item ? (
@@ -167,7 +166,7 @@ export function StepRun({
                 type="button"
                 className="btn-secondary"
                 disabled={at === 0}
-                onClick={() => setIndex(at - 1)}
+                onClick={() => go(at - 1)}
               >
                 <ChevronLeft className="h-4 w-4" aria-hidden /> Back
               </button>
@@ -175,7 +174,7 @@ export function StepRun({
                 type="button"
                 className="btn-secondary"
                 disabled={at >= items.length - 1}
-                onClick={() => setIndex(at + 1)}
+                onClick={() => go(at + 1)}
               >
                 Next <ChevronRight className="h-4 w-4" aria-hidden />
               </button>

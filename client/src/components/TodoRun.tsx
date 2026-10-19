@@ -1,8 +1,8 @@
 // The to-do list as a pop-up, one person at a time: their card with every step. When the last step
 // is done they move to Complete and the next person comes up by themselves.
-import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { TodoPerson } from '@shared/types'
+import { usePinnedIndex } from '../hooks/usePinnedIndex.ts'
 import { Modal } from './Confirm.tsx'
 import TodoCard from './TodoCard.tsx'
 
@@ -21,9 +21,7 @@ export default function TodoRun({
   footer: string
   gmailUser: string
 }) {
-  const [index, setIndex] = useState(0)
-  const at = Math.min(index, Math.max(0, people.length - 1))
-  const person = people[at]
+  const { at, current: person, go } = usePinnedIndex(people, (p) => p.lead_id, open)
 
   return (
     <Modal open={open} onClose={onClose} title="Your to-do list" wide>
@@ -38,7 +36,7 @@ export default function TodoRun({
                 type="button"
                 className="btn-secondary"
                 disabled={at === 0}
-                onClick={() => setIndex(at - 1)}
+                onClick={() => go(at - 1)}
               >
                 <ChevronLeft className="h-4 w-4" aria-hidden /> Back
               </button>
@@ -46,7 +44,7 @@ export default function TodoRun({
                 type="button"
                 className="btn-secondary"
                 disabled={at >= people.length - 1}
-                onClick={() => setIndex(at + 1)}
+                onClick={() => go(at + 1)}
               >
                 Next person <ChevronRight className="h-4 w-4" aria-hidden />
               </button>
