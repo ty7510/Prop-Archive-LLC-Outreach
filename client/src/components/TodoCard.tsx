@@ -103,6 +103,9 @@ function useStepDraft(step: TodoStep) {
   const dirty = norm(draft.subject) !== norm(saved.subject) || norm(draft.body) !== norm(saved.body)
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const pending = useRef<{ key: string; done: Promise<boolean> } | null>(null)
 
   useEffect(() => {
     if (dirtyRef.current) return
@@ -139,7 +142,16 @@ function useStepDraft(step: TodoStep) {
     /** Saves when there are changes. False when the save failed (the toast says why). */
     async saveIfDirty(): Promise<boolean> {
       if (!dirtyRef.current) return true
-      return (await save.run()) !== undefined
+      // Leaving a box and pressing a button right after both save: the same words go once.
+      const key = JSON.stringify(draftRef.current)
+      if (pending.current?.key === key) return pending.current.done
+      const done = save.run().then((r) => r !== undefined)
+      pending.current = { key, done }
+      try {
+        return await done
+      } finally {
+        if (pending.current?.done === done) pending.current = null
+      }
     },
   }
 }
@@ -344,6 +356,9 @@ export function StepWork({
           footer={footer}
           gmailUser={gmailUser}
           printoutWaiting={printoutWaiting}
+          printoutSkipped={person.steps.some(
+            (s) => s.kind === 'postcard' && s.status === 'skipped',
+          )}
           how={how}
           onOpen={() => setOpened(true)}
         />
@@ -451,7 +466,13 @@ function LinkedInStep({
   const profile = step.to_address?.trim() ?? ''
   return (
     <>
-      {how ? (
+      {step.kind === 'linkedin_follow_up' ? (
+        // Someone who got a note before: a message, not a second connection request.
+        <p className={how ? 'text-sm text-stone-700' : 'text-sm text-amber-800'}>
+          This one is a message, not a connection request. Copy it, open their LinkedIn, press
+          Message, paste it and Send.
+        </p>
+      ) : how ? (
         <p className="text-sm text-stone-700">
           Copy the note, open their LinkedIn, press Connect, then Add a note, paste it and Send.
         </p>
@@ -469,6 +490,7 @@ function LinkedInStep({
             maxLength={300}
             aria-label={`LinkedIn note for ${person.person}`}
             onChange={(e) => draft.setBody(e.target.value)}
+            onBlur={() => void draft.saveIfDirty()}
           />
         ) : (
           <p className="whitespace-pre-wrap break-words text-stone-800">{note}</p>
@@ -607,6 +629,7 @@ function EmailStep({
   footer,
   gmailUser,
   printoutWaiting,
+  printoutSkipped,
   how,
   onOpen,
 }: {
@@ -615,6 +638,8 @@ function EmailStep({
   footer: string
   gmailUser: string
   printoutWaiting: boolean
+  /** Their printout was skipped, but the email may still say it was mailed. */
+  printoutSkipped: boolean
   how: boolean
   onOpen: () => void
 }) {
@@ -632,6 +657,11 @@ function EmailStep({
       {printoutWaiting ? (
         <p className="text-sm text-amber-800">
           Send it after you mail the printout: the email says it is on its way.
+        </p>
+      ) : null}
+      {printoutSkipped ? (
+        <p className="text-sm text-amber-800">
+          You skipped their printout. If the email says you mailed something, take that line out.
         </p>
       ) : null}
       <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-3">
@@ -661,6 +691,7 @@ function EmailStep({
             value={subject}
             maxLength={200}
             onChange={(e) => draft.setSubject(e.target.value)}
+            onBlur={() => void draft.saveIfDirty()}
           />
         </label>
         <label className="block text-sm font-medium text-stone-800">
@@ -669,6 +700,7 @@ function EmailStep({
             className="input mt-1 min-h-[220px] py-2 font-normal"
             value={body}
             onChange={(e) => draft.setBody(e.target.value)}
+            onBlur={() => void draft.saveIfDirty()}
           />
         </label>
         {footer.trim() ? (
