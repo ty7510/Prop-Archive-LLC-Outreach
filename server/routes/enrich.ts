@@ -41,7 +41,9 @@ enrichRouter.post(
         'RUNNING',
       )
     }
-    res.json(run.result)
+    // Nothing done because research is paused: say so, or the button only shows "Enriched 0".
+    const paused = await enrich.researchPause?.()
+    res.json(paused ? { ...run.result, research_paused: paused } : run.result)
   }),
 )
 

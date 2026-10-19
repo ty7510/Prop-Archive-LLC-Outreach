@@ -1,6 +1,6 @@
 // Leads: filter chips, search, table (cards on phones), bulk buttons, side panel.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useSearch } from 'wouter'
+import { Link, useLocation, useSearch } from 'wouter'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import {
   Search,
@@ -14,7 +14,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import clsx from 'clsx'
-import type { LeadStatus, Paged } from '@shared/types'
+import type { LeadStatus, Paged, ResearchPaused } from '@shared/types'
 import type { Lead } from '../types.ts'
 import {
   discoverLeads,
@@ -161,10 +161,14 @@ export default function Leads() {
     success: (r) => `Found ${r.created} new, merged ${r.merged}, skipped ${r.skipped}`,
     invalidate: [['leads'], ['activity']],
   })
+  const [researchPaused, setResearchPaused] = useState<ResearchPaused | null>(null)
   const enrich = useAction(enrichLeads, {
     success: (r) => `Enriched ${r.enriched}, failed ${r.failed}, skipped ${r.skipped}`,
     invalidate: [['leads'], ['activity']],
-    onSuccess: () => setSelected(new Set()),
+    onSuccess: (r) => {
+      setSelected(new Set())
+      setResearchPaused(r.research_paused ?? null)
+    },
   })
   const [importResult, setImportResult] = useState<string | null>(null)
   const doImport = useAction(importCsv, {
@@ -356,6 +360,25 @@ export default function Leads() {
       {discover.notBuilt ? <NotBuilt what="Finding new leads from the city records." /> : null}
       {doImport.notBuilt ? <NotBuilt what="CSV import." /> : null}
       {enrich.notBuilt ? <NotBuilt what="Enrichment." /> : null}
+      {researchPaused ? (
+        <p className="rounded-xl bg-amber-50 px-4 py-3 text-amber-900" role="alert">
+          {researchPaused.reason === 'cap' ? (
+            <>
+              Claude web research has used all {researchPaused.cap} lookups for this month, so
+              Enrich cannot find new emails or LinkedIn profiles. Raise the{' '}
+              <Link href="/settings" className="font-medium underline">
+                Claude web research &ldquo;Per month&rdquo; number in Settings
+              </Link>{' '}
+              (each lookup is one person), then press Enrich again.
+            </>
+          ) : (
+            <>
+              Claude web research hit an error and is resting for 15 minutes. Press Enrich again
+              after that. The Activity page has the error.
+            </>
+          )}
+        </p>
+      ) : null}
       {enrollNotBuilt ? <NotBuilt what="Starting sequences." /> : null}
       {importResult ? (
         <p className="rounded-xl bg-emerald-50 px-4 py-3 text-emerald-900" role="status">

@@ -39,7 +39,7 @@ import {
 import { useAction } from '../hooks/useAction.ts'
 import { Toggle, Badge } from '../components/Field.tsx'
 import CopyButton from '../components/CopyButton.tsx'
-import LinkedInPaste from '../components/LinkedInPaste.tsx'
+import FindLinkedIn from '../components/FindLinkedIn.tsx'
 import LinkedInRun from '../components/LinkedInRun.tsx'
 import ReplyForm from '../components/ReplyForm.tsx'
 import NotBuilt from '../components/NotBuilt.tsx'
@@ -552,8 +552,8 @@ function FindOnLinkedIn({
         {today && today.goal > 0
           ? `${today.done} of ${today.goal} LinkedIn notes done today. `
           : ''}
-        Research found no profile for these people. Search, open the right person, copy the link
-        from the address bar and paste it here. Their note then shows up above.
+        Research found no profile for these people. The app can look again; when it finds someone,
+        their note shows up above.
       </p>
       <ul className="mt-3 divide-y divide-stone-200">
         {people.map((p) => (
@@ -568,7 +568,7 @@ function FindOnLinkedIn({
               <span className="text-stone-600">, {p.company}</span>
             ) : null}
             {p.city ? <span className="text-stone-600"> ({p.city})</span> : null}
-            <LinkedInPaste leadId={p.lead_id} person={p.person} city={p.city} />
+            <FindLinkedIn leadId={p.lead_id} person={p.person} />
           </li>
         ))}
       </ul>

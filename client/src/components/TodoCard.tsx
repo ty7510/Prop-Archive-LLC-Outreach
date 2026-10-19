@@ -22,7 +22,7 @@ import { editStepText, linkedInWrongPerson, printQueueUrl, queueDone, queueSkip 
 import { useAction } from '../hooks/useAction.ts'
 import { ensureHttp, telHref } from '../lib/format.ts'
 import CopyButton from './CopyButton.tsx'
-import LinkedInPaste from './LinkedInPaste.tsx'
+import FindLinkedIn from './FindLinkedIn.tsx'
 import ReplyForm from './ReplyForm.tsx'
 
 /** A free LinkedIn account allows 200 characters in a connection note. */
@@ -209,10 +209,10 @@ export default function TodoCard({
       {person.linkedin_missing === 'not_found' && !hasLinkedInStep ? (
         <div className="space-y-2 rounded-xl border border-dashed border-stone-300 p-3">
           <p className="text-sm text-stone-700">
-            The app could not find {person.person} on LinkedIn. If you find them, paste the link and
-            their note shows up above.
+            The app could not find {person.person} on LinkedIn. It can look again; when it finds
+            them, their note shows up above.
           </p>
-          <LinkedInPaste leadId={person.lead_id} person={person.person} city={person.city} />
+          <FindLinkedIn leadId={person.lead_id} person={person.person} />
         </div>
       ) : null}
 
@@ -533,10 +533,10 @@ function LinkedInStep({
       {!profile ? (
         <div className="space-y-2 rounded-xl border border-dashed border-stone-300 p-3">
           <p className="text-sm text-stone-700">
-            The app has not found {person.person} on LinkedIn. Search for them, send the note, and
-            paste their profile link here to keep it.
+            The app has no LinkedIn profile for {person.person} yet. Have it look; when it finds
+            them, Open their LinkedIn shows up here.
           </p>
-          <LinkedInPaste leadId={person.lead_id} person={person.person} city={person.city} />
+          <FindLinkedIn leadId={person.lead_id} person={person.person} />
         </div>
       ) : null}
     </>

@@ -3,7 +3,7 @@
 // and moves status new -> enriching -> enriched. One provider failing never fails the batch.
 import { and, asc, eq, gte, inArray } from 'drizzle-orm'
 import type { EnrichProviderId, Settings } from '../../shared/settings.ts'
-import type { EnrichResult, LeadEnrichment } from '../../shared/types.ts'
+import type { EnrichResult, LeadEnrichment, ResearchPaused } from '../../shared/types.ts'
 import { getDb, type Db } from '../db/client.ts'
 import { leads, properties, type Lead, type Property } from '../db/schema.ts'
 import { env as processEnv, type Env } from '../env.ts'
@@ -95,6 +95,25 @@ async function researchPaused(
   if (cap === null) return false
   const { used } = await creditsUsed(provider.id, monthRange(now, settings.send_window.tz), db)
   return wouldExceedCap(used, provider.costPerCall, cap)
+}
+
+/**
+ * Why Claude web research is not running right now, or null when it can run (or is not in use).
+ * The Enrich button shows this, so "Enriched 0" never comes with no reason.
+ */
+export async function researchPause(deps: OrchestratorDeps = {}): Promise<ResearchPaused | null> {
+  const db = deps.db ?? getDb()
+  const env = deps.env ?? processEnv
+  const settings = await getSettings(db)
+  const provider = { ...createProviders(), ...deps.providers }.claude_research
+  if (!provider || !settings.enrichment.providers.includes('claude_research')) return null
+  if (!provider.isConfigured(env)) return null
+  const now = (deps.now ?? (() => new Date()))()
+  if (isDown(provider.id, now)) return { reason: 'down', used: null, cap: null }
+  const cap = capFor(settings.enrichment.monthly_credit_cap, provider.id)
+  if (cap === null) return null
+  const { used } = await creditsUsed(provider.id, monthRange(now, settings.send_window.tz), db)
+  return wouldExceedCap(used, provider.costPerCall, cap) ? { reason: 'cap', used, cap } : null
 }
 
 export interface OrchestratorDeps {

@@ -5,7 +5,13 @@ import { createApp } from '../app.ts'
 import { registerModule, resetModules } from '../contracts.ts'
 import { createTestDb, type Db } from '../db/client.ts'
 import { jobRuns, leads, providerUsage } from '../db/schema.ts'
-import { enrichLeads, pickBatch, type OrchestratorDeps } from '../enrich/orchestrator.ts'
+import {
+  enrichLeads,
+  pickBatch,
+  researchPause,
+  type OrchestratorDeps,
+} from '../enrich/orchestrator.ts'
+import { recordUsage } from '../enrich/usage.ts'
 import { fakeProvider, insertLead } from '../enrich/testing.ts'
 import { updateSettings } from '../lib/settings.ts'
 
@@ -28,6 +34,7 @@ function registerReal(providers: OrchestratorDeps['providers'] = {}) {
   registerModule('enrich', {
     pickBatch: (limit) => pickBatch(limit, { db }),
     enrichLeads: (ids) => enrichLeads(ids, { db, providers }),
+    researchPause: () => researchPause({ db, providers }),
   })
 }
 
@@ -102,6 +109,28 @@ describe('POST /api/leads/enrich', () => {
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ enriched: 1, failed: 0, skipped: 0 })
     expect(await db.select().from(providerUsage)).toHaveLength(0)
+  })
+})
+
+describe('POST /api/leads/enrich when research is out of lookups', () => {
+  it('says the monthly research limit is used up, instead of a bare "Enriched 0"', async () => {
+    await updateSettings(
+      {
+        enrichment: {
+          providers: ['li_license', 'claude_research'],
+          monthly_credit_cap: { hunter: 50, apollo: 100, pdl: 50, claude_research: 2 },
+        },
+      },
+      db,
+    )
+    const research = fakeProvider('claude_research', { email: 'x@example.com' })
+    registerReal({ li_license: fakeProvider('li_license', {}), claude_research: research })
+    await insertLead(db, {})
+    await recordUsage('claude_research', 2, null, new Date(), db)
+    const res = await agent.post('/api/leads/enrich').send({ all: true })
+    expect(res.status).toBe(200)
+    expect(res.body.research_paused).toEqual({ reason: 'cap', used: 2, cap: 2 })
+    expect(research.calls).toHaveLength(0)
   })
 })
 

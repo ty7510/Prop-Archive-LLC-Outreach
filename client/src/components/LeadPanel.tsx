@@ -21,7 +21,7 @@ import type { LeadDetail, LeadEvent, Message, Sequence } from '../types.ts'
 import { enrollLead, getLead, leadOutcome, patchLead, stopLead } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import CopyButton from './CopyButton.tsx'
-import LinkedInPaste from './LinkedInPaste.tsx'
+import FindLinkedIn from './FindLinkedIn.tsx'
 import ReplyForm from './ReplyForm.tsx'
 import { Badge } from './Field.tsx'
 import ChannelIcons from './ChannelIcons.tsx'
@@ -232,11 +232,10 @@ function LeadBody({
           />
           {!lead.linkedin_url ? (
             <div className="px-3 py-2">
-              <LinkedInPaste
+              <FindLinkedIn
                 leadId={lead.id}
                 person={leadName(lead)}
-                city={lead.mailing_city}
-                onSaved={() => void refresh()}
+                onFound={() => void refresh()}
               />
             </div>
           ) : null}

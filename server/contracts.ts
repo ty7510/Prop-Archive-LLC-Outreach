@@ -1,7 +1,7 @@
 // Module registry: the contract between the scaffold and the parallel builders. Owned by the scaffold.
 // Each builder calls registerModule('<name>', impl) from its server/<name>/index.ts.
 // Routes call requireModule('<name>') and get a clear error when a module is not built yet.
-import type { AutopilotStatus, ImportResult } from '../shared/types.ts'
+import type { AutopilotStatus, ImportResult, ResearchPaused } from '../shared/types.ts'
 
 export interface SourcesModule {
   discover(opts: {
@@ -14,6 +14,8 @@ export interface SourcesModule {
 export interface EnrichModule {
   pickBatch(limit: number): Promise<string[]>
   enrichLeads(ids: string[]): Promise<{ enriched: number; failed: number; skipped: number }>
+  /** Why Claude research is not running right now, or null when it is free to run. */
+  researchPause?(): Promise<ResearchPaused | null>
 }
 
 export interface OutreachModule {
