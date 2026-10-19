@@ -541,7 +541,7 @@ export const TodoListSchema = z.object({
   complete: z.array(CompletePersonSchema),
   replied: z.array(RepliedPersonSchema),
   /** New people put on the list today, and the daily number. */
-  /** People Theo sent to today (marked a step sent), and the daily goal. */
+  /** People whose LinkedIn note Theo marked sent today, and the daily goal. */
   today: z.object({ sent: z.number().int(), goal: z.number().int() }),
   /** Steps marked sent today, per list: LinkedIn notes, printouts (mail) and emails. */
   sent_today: z.object({

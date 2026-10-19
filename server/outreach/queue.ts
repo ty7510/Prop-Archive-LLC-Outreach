@@ -44,7 +44,13 @@ import { writePersonalNote } from './linkedinNote.ts'
 import { printoutParts } from './printout.ts'
 import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
-import { addLinkedInStepToOpenCard, parseTodoKey, stepProblems, TODO_KEY_PREFIX } from './todo.ts'
+import {
+  addLinkedInStepToOpenCard,
+  fillTodo,
+  parseTodoKey,
+  stepProblems,
+  TODO_KEY_PREFIX,
+} from './todo.ts'
 
 /**
  * A waiting LinkedIn note's lead and the step's text rendered for them (Theo's own note), or null
@@ -448,6 +454,25 @@ export async function actOnQueueItem(
     at: now,
   })
   await logActivity('info', `queue_${action}`, { channel: msg.channel }, msg.lead_id, db)
+  if (
+    action === 'skip' &&
+    msg.channel === 'linkedin' &&
+    (msg.idempotency_key ?? '').startsWith(TODO_KEY_PREFIX)
+  ) {
+    // A skipped LinkedIn note frees a spot in today's goal: the next person comes now, not on the
+    // next round a minute later (Theo, 2026-10-19).
+    try {
+      await fillTodo(deps, { limit: 1, quick: true })
+    } catch (error) {
+      await logActivity(
+        'error',
+        'todo_refill_failed',
+        { error: error instanceof Error ? error.message : String(error) },
+        msg.lead_id,
+        db,
+      )
+    }
+  }
   if (action === 'skip' && msg.channel === 'linkedin') {
     // Refill this human channel only. Never send email as a side effect of a skip.
     try {
