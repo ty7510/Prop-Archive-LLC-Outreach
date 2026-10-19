@@ -107,14 +107,25 @@ function today(settings: Settings, now: Date): { start: string; sendDay: boolean
   }
 }
 
-async function addedSince(deps: OutreachDeps, since: string): Promise<number> {
-  const rows = await deps.db
-    .select({ n: sql<number>`count(distinct ${messages.lead_id})` })
-    .from(messages)
-    .where(
-      and(like(messages.idempotency_key, `${TODO_KEY_PREFIX}%`), gte(messages.created_at, since)),
-    )
-  return Number(rows[0]?.n ?? 0)
+/**
+ * Today's goal is people Theo sent to (Theo, 2026-10-19: "keep refreshing with new people until I
+ * sent 20"). `sent`: people with a step he marked sent today. `waiting`: everyone else still on the
+ * list with a step to do. Someone he skipped is in neither, so a new person takes their place.
+ */
+async function goalProgress(
+  deps: OutreachDeps,
+  since: string,
+): Promise<{ sent: number; waiting: number }> {
+  const todo = sql`m.idempotency_key like ${`${TODO_KEY_PREFIX}%`} and m.direction = 'out'`
+  const sentToday = sql`select m.lead_id from ${messages} m where ${todo} and m.status = 'sent' and m.sent_at >= ${since}`
+  const rows = await deps.db.execute<{ sent: number; waiting: number }>(sql`
+    select
+      (select count(distinct x.lead_id) from (${sentToday}) x) as sent,
+      (select count(distinct m.lead_id) from ${messages} m
+        where ${todo} and m.status = 'ready_for_human' and m.lead_id not in (${sentToday})) as waiting
+  `)
+  const row = rows.rows[0]
+  return { sent: Number(row?.sent ?? 0), waiting: Number(row?.waiting ?? 0) }
 }
 
 /**
@@ -485,8 +496,10 @@ export async function fillTodo(
   }
   const day = today(settings, deps.now())
   if (!day.sendDay) return { added: 0, reason: 'not a send day' }
+  // Room for new people: the goal less people sent to today and people still waiting on the list.
+  const progress = await goalProgress(deps, day.start)
   const room = Math.min(
-    settings.people_per_day - (await addedSince(deps, day.start)),
+    settings.people_per_day - progress.sent - progress.waiting,
     options.limit ?? 5,
   )
   if (room <= 0) return { added: 0 }
@@ -750,7 +763,7 @@ export async function listTodo(deps: OutreachDeps): Promise<TodoList> {
     people: await openCards(deps),
     complete: await completePeople(deps, settings),
     replied: await repliedPeople(deps),
-    today: { added: await addedSince(deps, day.start), goal: settings.people_per_day },
+    today: { sent: (await goalProgress(deps, day.start)).sent, goal: settings.people_per_day },
     sent_today: await sentSince(deps, day.start),
     recycle_after_days: settings.recycle_after_days,
     email_footer: emailFooter(settings),

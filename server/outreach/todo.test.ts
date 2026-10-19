@@ -64,7 +64,7 @@ describe('to-do list', () => {
     expect((await fillTodo(deps)).added).toBe(0) // today's 2 are on the list
 
     const list = await listTodo(deps)
-    expect(list.today).toEqual({ added: 2, goal: 2 })
+    expect(list.today).toEqual({ sent: 0, goal: 2 })
     expect(list.people).toHaveLength(2)
     // LinkedIn note, then the printout, then the email (2026-10-16). No call on new cards.
     expect(list.people[0]!.steps.map((s) => s.kind)).toEqual([
@@ -88,6 +88,36 @@ describe('to-do list', () => {
     expect(email!.body).toContain('I mailed you a one-page overview')
     expect(list.email_footer).toContain('Reply "stop"')
     expect(list.email_footer).toContain('1500 Market St')
+  })
+
+  it('a skipped person is replaced until the goal is people sent to today', async () => {
+    const { db, deps } = await todoSetup()
+    for (let i = 0; i < 5; i++) await insertLead(db)
+    expect((await fillTodo(deps)).added).toBe(2)
+    let people = (await listTodo(deps)).people
+    const [kept, skipped] = people
+
+    // Theo skips every step for one person: a new person takes their place.
+    for (const step of skipped!.steps) await actOnQueueItem(deps, step.message_id, 'skip')
+    expect((await fillTodo(deps)).added).toBe(1)
+    people = (await listTodo(deps)).people
+    expect(people).toHaveLength(2)
+    expect(people.map((p) => p.lead_id)).not.toContain(skipped!.lead_id)
+
+    // Sent counts once he clicks Sent on a step, one per person.
+    const kept2 = people.find((p) => p.lead_id === kept!.lead_id)!
+    await actOnQueueItem(deps, kept2.steps[0]!.message_id, 'done')
+    expect((await listTodo(deps)).today).toEqual({ sent: 1, goal: 2 })
+    expect((await fillTodo(deps)).added).toBe(0) // one sent + one still waiting = 2
+
+    // Both people sent to: today's goal is met, nobody new comes.
+    const other = people.find((p) => p.lead_id !== kept!.lead_id)!
+    await actOnQueueItem(deps, other.steps[0]!.message_id, 'done')
+    for (const p of (await listTodo(deps)).people)
+      for (const step of p.steps)
+        if (step.status === 'waiting') await actOnQueueItem(deps, step.message_id, 'skip')
+    expect((await listTodo(deps)).today).toEqual({ sent: 2, goal: 2 })
+    expect((await fillTodo(deps)).added).toBe(0)
   })
 
   it('moves a person to Complete when every step is done, and back after 30 days', async () => {
