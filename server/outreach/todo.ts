@@ -108,15 +108,16 @@ function today(settings: Settings, now: Date): { start: string; sendDay: boolean
 }
 
 /**
- * Today's goal is people Theo sent to (Theo, 2026-10-19: "keep refreshing with new people until I
- * sent 20"). `sent`: people with a step he marked sent today. `waiting`: everyone else still on the
- * list with a step to do. Someone he skipped is in neither, so a new person takes their place.
+ * Today's goal is LinkedIn notes Theo sent (Theo, 2026-10-19: "refresh with people who I have their
+ * LinkedIn available until I sent 20 that day"). `sent`: people whose LinkedIn note he marked sent
+ * today. `waiting`: everyone else with a LinkedIn note still to do. Someone whose note he skipped is
+ * in neither, so a new person takes their place even while their printout and email stay listed.
  */
 async function goalProgress(
   deps: OutreachDeps,
   since: string,
 ): Promise<{ sent: number; waiting: number }> {
-  const todo = sql`m.idempotency_key like ${`${TODO_KEY_PREFIX}%`} and m.direction = 'out'`
+  const todo = sql`m.idempotency_key like ${`${TODO_KEY_PREFIX}%`} and m.direction = 'out' and m.channel = 'linkedin'`
   const sentToday = sql`select m.lead_id from ${messages} m where ${todo} and m.status = 'sent' and m.sent_at >= ${since}`
   const rows = await deps.db.execute<{ sent: number; waiting: number }>(sql`
     select
@@ -476,23 +477,25 @@ export async function addPerson(
  */
 export async function fillTodo(
   deps: OutreachDeps,
-  options: { limit?: number } = {},
+  options: { limit?: number; quick?: boolean } = {},
 ): Promise<{ added: number; reason?: string }> {
   const settings = await getSettings(deps.db)
   if (settings.sequences_on) return { added: 0, reason: 'timed sequences are on' }
   // Cards made before printouts get theirs, and people on the list are checked again for sales,
-  // a few each round, whatever the day.
-  try {
-    await upgradeOpenCards(deps, settings)
-    await recheckOpenCards(deps, settings)
-  } catch (error) {
-    await logActivity(
-      'warn',
-      'todo_upgrade_failed',
-      { error: error instanceof Error ? error.message : String(error) },
-      null,
-      deps.db,
-    )
+  // a few each round, whatever the day. Skipped on a quick refill so a skip answers fast.
+  if (!options.quick) {
+    try {
+      await upgradeOpenCards(deps, settings)
+      await recheckOpenCards(deps, settings)
+    } catch (error) {
+      await logActivity(
+        'warn',
+        'todo_upgrade_failed',
+        { error: error instanceof Error ? error.message : String(error) },
+        null,
+        deps.db,
+      )
+    }
   }
   const day = today(settings, deps.now())
   if (!day.sendDay) return { added: 0, reason: 'not a send day' }

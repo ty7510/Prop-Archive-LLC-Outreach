@@ -99,7 +99,7 @@ describe('to-do list', () => {
 
     // Theo skips every step for one person: a new person takes their place.
     for (const step of skipped!.steps) await actOnQueueItem(deps, step.message_id, 'skip')
-    expect((await fillTodo(deps)).added).toBe(1)
+    expect((await fillTodo(deps)).added).toBe(0) // the skip already brought them in
     people = (await listTodo(deps)).people
     expect(people).toHaveLength(2)
     expect(people.map((p) => p.lead_id)).not.toContain(skipped!.lead_id)
@@ -116,6 +116,38 @@ describe('to-do list', () => {
     for (const p of (await listTodo(deps)).people)
       for (const step of p.steps)
         if (step.status === 'waiting') await actOnQueueItem(deps, step.message_id, 'skip')
+    expect((await listTodo(deps)).today).toEqual({ sent: 2, goal: 2 })
+    expect((await fillTodo(deps)).added).toBe(0)
+  })
+
+  it('skipping only the LinkedIn note brings a new person; the goal is LinkedIn notes sent', async () => {
+    const { db, deps } = await todoSetup()
+    for (let i = 0; i < 5; i++) await insertLead(db)
+    expect((await fillTodo(deps)).added).toBe(2)
+    const [first, second] = (await listTodo(deps)).people
+    const note = (p: typeof first) => p!.steps.find((s) => s.channel === 'linkedin')!
+
+    // Theo skips one LinkedIn note. Their printout and email stay, and a new person comes.
+    await actOnQueueItem(deps, note(first).message_id, 'skip')
+    expect((await fillTodo(deps)).added).toBe(0) // the skip already brought them in
+    const people = (await listTodo(deps)).people
+    expect(people).toHaveLength(3)
+    expect(
+      people.find((p) => p.lead_id === first!.lead_id)!.steps.some((s) => s.status === 'waiting'),
+    ).toBe(true)
+
+    // Mailing a printout is not a LinkedIn note sent: the goal does not move.
+    const printout = people
+      .find((p) => p.lead_id === first!.lead_id)!
+      .steps.find((s) => s.channel === 'mail' && s.status === 'waiting')!
+    await actOnQueueItem(deps, printout.message_id, 'done')
+    expect((await listTodo(deps)).today).toEqual({ sent: 0, goal: 2 })
+    expect((await fillTodo(deps)).added).toBe(0) // two LinkedIn notes still waiting
+
+    // Two LinkedIn notes sent: today's goal is met, nobody new comes.
+    await actOnQueueItem(deps, note(second).message_id, 'done')
+    const third = people.find((p) => p.lead_id !== first!.lead_id && p.lead_id !== second!.lead_id)!
+    await actOnQueueItem(deps, note(third).message_id, 'done')
     expect((await listTodo(deps)).today).toEqual({ sent: 2, goal: 2 })
     expect((await fillTodo(deps)).added).toBe(0)
   })
