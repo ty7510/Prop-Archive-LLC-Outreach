@@ -320,7 +320,7 @@ describe('proofing and editing on the to-do list', () => {
     expect(card.steps.filter((s) => s.channel === 'linkedin')).toHaveLength(1)
   })
 
-  it('someone with only an email address does not go on the list', async () => {
+  it('someone with only an email address goes on the list with just the email (Theo, 2026-10-19)', async () => {
     const { db, deps } = await todoSetup()
     await insertLead(db, {
       full_name: 'Fairmount Rentals LLC',
@@ -331,8 +331,9 @@ describe('proofing and editing on the to-do list', () => {
       linkedin_url: null,
       mailing_street: null,
     })
-    expect((await fillTodo(deps)).added).toBe(0)
-    expect((await listTodo(deps)).people).toHaveLength(0)
+    expect((await fillTodo(deps)).added).toBe(1)
+    const people = (await listTodo(deps)).people
+    expect(people.map((p) => p.steps.map((s) => s.kind))).toEqual([['email']])
   })
 
   it('the app never sends the email: Sent it only writes it down', async () => {

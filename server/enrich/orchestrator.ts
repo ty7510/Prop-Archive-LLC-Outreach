@@ -215,32 +215,39 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
   const ctx: EnrichContext = { env, settings, properties: [], now, log: async () => {} }
   const lookupOwed = (r: Lead) =>
     lookups.some((p) => !(r.enrichment ?? {})[p.id] && p.applies(r, ctx))
-  const rows = await db
-    .select()
-    .from(leads)
-    .where(
-      and(
-        inArray(leads.status, ['new', 'enriching', 'enriched', 'enrolled']),
-        eq(leads.do_not_contact, false),
-        inArray(leads.persona, settings.personas),
-        gte(leads.icp_score, settings.min_icp_score),
-      ),
-    )
-    .orderBy(asc(leads.created_at), asc(leads.id))
-    .limit(Math.min(limit * 20, 2000))
   const staleBefore = new Date(now.getTime() - STALE_ENRICHING_MS)
-  return rows
-    .filter((r) => {
-      const owed = research && researchOwed(r)
-      if (owed && paused) return lookupOwed(r)
-      return (
-        r.status === 'new' ||
-        (r.status === 'enriching' && new Date(r.updated_at) < staleBefore) ||
-        owed
+  const wanted = (r: Lead) => {
+    const owed = research && researchOwed(r)
+    if (owed && paused) return lookupOwed(r)
+    return (
+      r.status === 'new' ||
+      (r.status === 'enriching' && new Date(r.updated_at) < staleBefore) ||
+      owed
+    )
+  }
+  // Read a page at a time until there are enough. Done leads are dropped after reading, so one
+  // page of the oldest leads can be all done while newer leads wait behind it.
+  const page = Math.min(limit * 20, 2000)
+  const picked: string[] = []
+  for (let offset = 0; picked.length < limit; offset += page) {
+    const rows = await db
+      .select()
+      .from(leads)
+      .where(
+        and(
+          inArray(leads.status, ['new', 'enriching', 'enriched', 'enrolled']),
+          eq(leads.do_not_contact, false),
+          inArray(leads.persona, settings.personas),
+          gte(leads.icp_score, settings.min_icp_score),
+        ),
       )
-    })
-    .slice(0, limit)
-    .map((r) => r.id)
+      .orderBy(asc(leads.created_at), asc(leads.id))
+      .limit(page)
+      .offset(offset)
+    for (const r of rows) if (picked.length < limit && wanted(r)) picked.push(r.id)
+    if (rows.length < page) break
+  }
+  return picked
 }
 
 async function applyPropertyUpdates(

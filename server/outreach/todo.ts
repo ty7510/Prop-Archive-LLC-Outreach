@@ -30,7 +30,12 @@ import { emailFooter, fallbackEmail, subjectProblems, writeHandEmail } from './h
 import { personFor } from './linkedinFinder.ts'
 import { LINKEDIN_NOTE_MAX, writePersonalNote } from './linkedinNote.ts'
 import { postalAddressFor, type PostalAddress } from './mail.ts'
-import { linkedInFoundByEnrich, readyToContact, readyToContactSql } from './readyToContact.ts'
+import {
+  linkedInFoundByEnrich,
+  linkedInFoundByEnrichSql,
+  readyToContact,
+  readyToContactSql,
+} from './readyToContact.ts'
 import { checkOwnership, needsOwnershipCheck } from './ownership.ts'
 import { fallbackPrintout, printoutHeading, writePrintout } from './printout.ts'
 import { recipientBlocker } from './recipients.ts'
@@ -116,17 +121,30 @@ function today(settings: Settings, now: Date): { start: string; sendDay: boolean
 async function goalProgress(
   deps: OutreachDeps,
   since: string,
-): Promise<{ sent: number; waiting: number }> {
+): Promise<{ sent: number; waiting: number; withoutLinkedIn: number }> {
   const todo = sql`m.idempotency_key like ${`${TODO_KEY_PREFIX}%`} and m.direction = 'out' and m.channel = 'linkedin'`
   const sentToday = sql`select m.lead_id from ${messages} m where ${todo} and m.status = 'sent' and m.sent_at >= ${since}`
-  const rows = await deps.db.execute<{ sent: number; waiting: number }>(sql`
+  const rows = await deps.db.execute<{
+    sent: number
+    waiting: number
+    without_linkedin: number
+  }>(sql`
     select
       (select count(distinct x.lead_id) from (${sentToday}) x) as sent,
       (select count(distinct m.lead_id) from ${messages} m
-        where ${todo} and m.status = 'ready_for_human' and m.lead_id not in (${sentToday})) as waiting
+        where ${todo} and m.status = 'ready_for_human' and m.lead_id not in (${sentToday})) as waiting,
+      (select count(distinct o.lead_id) from ${messages} o
+        where o.idempotency_key like ${`${TODO_KEY_PREFIX}%`} and o.idempotency_key not like '%:none'
+          and o.direction = 'out' and o.created_at >= ${since}
+          and not exists (select 1 from ${messages} m where ${todo} and m.lead_id = o.lead_id
+            and m.created_at >= ${since})) as without_linkedin
   `)
   const row = rows.rows[0]
-  return { sent: Number(row?.sent ?? 0), waiting: Number(row?.waiting ?? 0) }
+  return {
+    sent: Number(row?.sent ?? 0),
+    waiting: Number(row?.waiting ?? 0),
+    withoutLinkedIn: Number(row?.without_linkedin ?? 0),
+  }
 }
 
 /**
@@ -137,6 +155,7 @@ export async function todoCandidates(
   deps: OutreachDeps,
   settings: Settings,
   limit: number,
+  linkedIn: boolean,
 ): Promise<Lead[]> {
   const since = new Date(deps.now().getTime() - settings.recycle_after_days * DAY_MS).toISOString()
   const reachedBefore = sql<boolean>`exists (select 1 from ${messages} r where r.lead_id = ${leads.id} and r.direction = 'out' and r.provider = 'human' and r.status = 'sent')`
@@ -147,8 +166,10 @@ export async function todoCandidates(
       and(
         eq(leads.do_not_contact, false),
         notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
-        // Only people with an email, a mailing address and a LinkedIn that Enrich found.
-        readyToContactSql(),
+        // At least one way to reach them; people with a LinkedIn Enrich found are asked for apart.
+        linkedIn
+          ? linkedInFoundByEnrichSql()
+          : and(readyToContactSql(), sql`not ${linkedInFoundByEnrichSql()}`),
         sql`not exists (select 1 from ${messages} m where m.lead_id = ${leads.id} and m.direction = 'out' and (
           m.status = 'ready_for_human'
           or (m.status = 'sent' and m.provider = 'human' and m.sent_at > ${since})
@@ -431,7 +452,7 @@ export async function addPerson(
       deps,
       input.id,
       round,
-      'not contacted: needs email, mailing address and a LinkedIn Enrich found',
+      'not contacted: needs a LinkedIn Enrich found, an email or a mailing address',
     )
     return 0
   }
@@ -499,17 +520,28 @@ export async function fillTodo(
   }
   const day = today(settings, deps.now())
   if (!day.sendDay) return { added: 0, reason: 'not a send day' }
-  // Room for new people: the goal less people sent to today and people still waiting on the list.
+  // People with a LinkedIn Enrich found come first. Their room: the goal less LinkedIn notes sent
+  // today and notes still waiting, so a skipped note brings the next person. People with only an
+  // email or a mailing address fill in after, at most the goal of them a day.
   const progress = await goalProgress(deps, day.start)
-  const room = Math.min(
-    settings.people_per_day - progress.sent - progress.waiting,
-    options.limit ?? 5,
-  )
-  if (room <= 0) return { added: 0 }
+  const goal = settings.people_per_day
+  let perRound = options.limit ?? 5
+  const linkedInRoom = settings.channels.linkedin ? goal - progress.sent - progress.waiting : 0
+  const otherRoom = goal - progress.withoutLinkedIn
   let added = 0
-  for (const lead of await todoCandidates(deps, settings, room * 2)) {
-    if (added >= room) break
-    if ((await addPerson(deps, settings, lead)) > 0) added++
+  for (const [linkedIn, room] of [
+    [true, linkedInRoom],
+    [false, otherRoom],
+  ] as const) {
+    const want = Math.min(room, perRound)
+    if (want <= 0) continue
+    let got = 0
+    for (const lead of await todoCandidates(deps, settings, want * 2, linkedIn)) {
+      if (got >= want) break
+      if ((await addPerson(deps, settings, lead)) > 0) got++
+    }
+    added += got
+    perRound -= got
   }
   return { added }
 }
