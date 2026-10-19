@@ -51,7 +51,7 @@ export function TodoSection() {
         {q.data ? (
           <span className="text-stone-600">
             {q.data.people.length} {q.data.people.length === 1 ? 'person' : 'people'} ·{' '}
-            {q.data.today.added} of {q.data.today.goal} new today
+            {q.data.today.sent} of {q.data.today.goal} sent today
           </span>
         ) : null}
       </div>
@@ -59,7 +59,7 @@ export function TodoSection() {
         {(data) => {
           const lists = todayLists(data.people)
           const addPeople =
-            data.today.added < data.today.goal ? (
+            data.today.sent + data.people.length < data.today.goal ? (
               <button
                 type="button"
                 className="btn-secondary"
@@ -71,7 +71,7 @@ export function TodoSection() {
                 ) : (
                   <UserPlus className="h-4 w-4" aria-hidden />
                 )}
-                {fill.busy ? 'Finding them on LinkedIn' : "Add today's people now"}
+                {fill.busy ? 'Adding people' : "Add today's people now"}
               </button>
             ) : null
           return (
@@ -168,7 +168,7 @@ export function TodoSection() {
                 {data.people.length === 0 ? (
                   <Empty
                     title="Nothing to do right now"
-                    hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
+                    hint={`Each weekday new people show up here until you have sent to ${data.today.goal}. Skip someone and a new person takes their place. Each has every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
                   />
                 ) : (
                   <div className="grid min-w-0 gap-4 lg:grid-cols-2">
