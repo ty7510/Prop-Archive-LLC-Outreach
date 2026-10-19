@@ -1,6 +1,7 @@
-// The Go page when timed sequences are off: To do (every step per person), Complete (waiting for a
-// reply until they come back), Replied (everyone who answered).
-import { useEffect, useState } from 'react'
+// The Go page when timed sequences are off: To do (a switch between today's LinkedIn notes,
+// printouts, emails and every step per person), Complete (waiting for a reply until they come
+// back), Replied (everyone who answered).
+import { useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks, Loader2, Printer, Tag, UserPlus } from 'lucide-react'
@@ -8,29 +9,20 @@ import type { TodoList } from '@shared/types'
 import { fillTodoNow, getTodo, printLabelsUrl, printQueueUrl } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { CHANNEL_LABEL, relativeTime, shortDateTime } from '../lib/format.ts'
+import { todayLists } from '../lib/todayLists.ts'
 import { Empty, QueryView } from './QueryState.tsx'
 import ReplyForm from './ReplyForm.tsx'
 import TodoCard from './TodoCard.tsx'
 import TodoRun from './TodoRun.tsx'
-
-/** The pop-up opens by itself once per browser session when people are waiting. */
-const RUN_SHOWN_KEY = 'todo-run-shown'
-
-function runShown(): boolean {
-  try {
-    return sessionStorage.getItem(RUN_SHOWN_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
-function markRunShown(): void {
-  try {
-    sessionStorage.setItem(RUN_SHOWN_KEY, '1')
-  } catch {
-    // Private windows can refuse storage; the pop-up then opens on each visit.
-  }
-}
+import {
+  ListCount,
+  NoLinkedIn,
+  OneByOneButton,
+  StepList,
+  StepRun,
+  TodayTabs,
+  useTodayTab,
+} from './TodayLists.tsx'
 
 export function useTodo() {
   return useQuery({ queryKey: ['todo'], queryFn: getTodo, refetchInterval: 15_000 })
@@ -38,14 +30,10 @@ export function useTodo() {
 
 export function TodoSection() {
   const q = useTodo()
+  // Nothing opens by itself any more (2026-10-19): Theo picks a list with the switch.
   const [runOpen, setRunOpen] = useState(false)
-  const waiting = q.data?.people.length ?? 0
-  useEffect(() => {
-    if (waiting > 0 && !runShown()) {
-      markRunShown()
-      setRunOpen(true)
-    }
-  }, [waiting])
+  const [linkedInRunOpen, setLinkedInRunOpen] = useState(false)
+  const [tab, setTab] = useTodayTab()
   const fill = useAction(fillTodoNow, {
     success: (r) =>
       r.added > 0
@@ -68,57 +56,148 @@ export function TodoSection() {
         ) : null}
       </div>
       <QueryView q={q} loading="Loading your list">
-        {(data) => (
-          <div className="space-y-4">
-            <TodoRun
-              open={runOpen}
-              onClose={() => setRunOpen(false)}
-              people={data.people}
-              footer={data.email_footer}
-              gmailUser={data.gmail_user}
-            />
-            <div className="flex flex-wrap gap-2">
-              {data.people.length > 0 ? (
-                <button type="button" className="btn-primary" onClick={() => setRunOpen(true)}>
-                  <ListChecks className="h-4 w-4" aria-hidden /> Start: one person at a time
-                </button>
-              ) : null}
-              <PrintAll data={data} />
-              {data.today.added < data.today.goal ? (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={fill.busy}
-                  onClick={() => void fill.run()}
-                >
-                  {fill.busy ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <UserPlus className="h-4 w-4" aria-hidden />
-                  )}
-                  {fill.busy ? 'Finding them on LinkedIn' : "Add today's people now"}
-                </button>
-              ) : null}
-            </div>
-            {data.people.length === 0 ? (
-              <Empty
-                title="Nothing to do right now"
-                hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
+        {(data) => {
+          const lists = todayLists(data.people)
+          const addPeople =
+            data.today.added < data.today.goal ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={fill.busy}
+                onClick={() => void fill.run()}
+              >
+                {fill.busy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <UserPlus className="h-4 w-4" aria-hidden />
+                )}
+                {fill.busy ? 'Finding them on LinkedIn' : "Add today's people now"}
+              </button>
+            ) : null
+          return (
+            <div className="space-y-4">
+              <TodoRun
+                open={runOpen}
+                onClose={() => setRunOpen(false)}
+                people={data.people}
+                footer={data.email_footer}
+                gmailUser={data.gmail_user}
               />
-            ) : (
-              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-                {data.people.map((p) => (
-                  <TodoCard
-                    key={p.lead_id}
-                    person={p}
-                    footer={data.email_footer}
-                    gmailUser={data.gmail_user}
+              <StepRun
+                open={linkedInRunOpen}
+                onClose={() => setLinkedInRunOpen(false)}
+                title="Today's LinkedIn notes"
+                items={lists.linkedin}
+                data={data}
+              />
+              <TodayTabs tab={tab} onChange={setTab} lists={lists} people={data.people.length} />
+
+              {tab === 'linkedin' ? (
+                <div className="space-y-4">
+                  <ListCount
+                    waiting={lists.linkedin.length}
+                    sent={data.sent_today.linkedin}
+                    verb="send"
                   />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                  <div className="flex flex-wrap gap-2">
+                    {lists.linkedin.length > 0 ? (
+                      <OneByOneButton onClick={() => setLinkedInRunOpen(true)} />
+                    ) : null}
+                    {addPeople}
+                  </div>
+                  <StepList
+                    items={lists.linkedin}
+                    data={data}
+                    how="Copy each note, open their LinkedIn, press Connect, then Add a note, paste it and Send. Then press Sent it."
+                    empty={{
+                      title: 'No LinkedIn messages to send',
+                      hint: 'Each weekday new people show up with a note written for them.',
+                    }}
+                  />
+                  <NoLinkedIn people={lists.noLinkedIn} />
+                </div>
+              ) : tab === 'printouts' ? (
+                <div className="space-y-4">
+                  <ListCount
+                    waiting={lists.printouts.length}
+                    sent={data.sent_today.mail}
+                    verb="mail"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <PrintAll data={data} />
+                    {addPeople}
+                  </div>
+                  <StepList
+                    items={lists.printouts}
+                    data={data}
+                    how="Proof each one, print it, and mail it in a folder with your business card. Then press Mailed it."
+                    empty={{
+                      title: 'No printouts to mail',
+                      hint: 'Each weekday new people show up with a printout written for them.',
+                    }}
+                  />
+                </div>
+              ) : tab === 'emails' ? (
+                <div className="space-y-4">
+                  <ListCount
+                    waiting={lists.emails.length}
+                    sent={data.sent_today.email}
+                    verb="send"
+                  />
+                  {addPeople ? <div className="flex flex-wrap gap-2">{addPeople}</div> : null}
+                  <StepList
+                    items={lists.emails}
+                    data={data}
+                    how="Copy the email, then click their address. A new Gmail message to them opens with the subject filled in. Paste the email there, press Send, then press Sent it here."
+                    empty={{
+                      title: 'No emails to send',
+                      hint: 'Only people with an email address on file get an email.',
+                    }}
+                  />
+                  {lists.noEmail > 0 && data.people.length > 0 ? (
+                    <p className="text-sm text-stone-600">
+                      {lists.noEmail} of the {data.people.length} people on your list have no email
+                      to send. Only people with an email address on file get one.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap gap-2">
+                    {data.people.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => setRunOpen(true)}
+                      >
+                        <ListChecks className="h-4 w-4" aria-hidden /> Start: one person at a time
+                      </button>
+                    ) : null}
+                    <PrintAll data={data} />
+                    {addPeople}
+                  </div>
+                  {data.people.length === 0 ? (
+                    <Empty
+                      title="Nothing to do right now"
+                      hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
+                    />
+                  ) : (
+                    <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+                      {data.people.map((p) => (
+                        <TodoCard
+                          key={p.lead_id}
+                          person={p}
+                          footer={data.email_footer}
+                          gmailUser={data.gmail_user}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        }}
       </QueryView>
     </section>
   )

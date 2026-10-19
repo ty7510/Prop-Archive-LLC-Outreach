@@ -60,22 +60,34 @@ function fullEmail(body: string, footer: string): string {
   return footer.trim() ? `${body.trim()}\n\n${footer.trim()}` : body.trim()
 }
 
-/** A new Gmail message, already filled in, from Theo's account. He presses Send himself. */
-export function gmailComposeUrl(
-  gmailUser: string,
-  to: string,
-  subject: string,
-  body: string,
-): string {
+/**
+ * A new Gmail message to them from Theo's account. Without a body he pastes the email he copied
+ * (2026-10-19: "copy a email ... click there email and then send"). He presses Send himself.
+ */
+export function gmailComposeUrl(gmailUser: string, to: string, subject: string, body = ''): string {
   const params = [
     gmailUser.trim() ? `authuser=${encodeURIComponent(gmailUser.trim())}` : '',
     'view=cm',
     'fs=1',
     `to=${encodeURIComponent(to)}`,
     `su=${encodeURIComponent(subject)}`,
-    `body=${encodeURIComponent(body)}`,
+    body ? `body=${encodeURIComponent(body)}` : '',
   ].filter(Boolean)
   return `https://mail.google.com/mail/?${params.join('&')}`
+}
+
+/** The line under a person's name: company, how many properties, city, which round. */
+export function personFacts(person: TodoPerson): string {
+  return [
+    person.company && person.company !== person.person ? person.company : null,
+    person.property_count > 0
+      ? `${person.property_count} ${person.property_count === 1 ? 'property' : 'properties'}`
+      : null,
+    person.city,
+    person.round > 1 ? `back for round ${person.round}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 const norm = (s: string) => s.replace(/\r\n?/g, '\n').trim()
@@ -160,18 +172,7 @@ export default function TodoCard({
           >
             {person.person}
           </Link>
-          <p className="text-stone-600">
-            {[
-              person.company && person.company !== person.person ? person.company : null,
-              person.property_count > 0
-                ? `${person.property_count} ${person.property_count === 1 ? 'property' : 'properties'}`
-                : null,
-              person.city,
-              person.round > 1 ? `back for round ${person.round}` : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </p>
+          <p className="text-stone-600">{personFacts(person)}</p>
         </div>
         <span className="text-sm text-stone-600">
           {person.steps.length - waiting.length} of {person.steps.length} done
@@ -239,28 +240,7 @@ function StepRow({
   gmailUser: string
   printoutWaiting: boolean
 }) {
-  const draft = useStepDraft(step)
-  const done = useAction((note?: string) => queueDone(step.message_id, note), {
-    success: 'Done',
-    invalidate: INVALIDATE,
-  })
-  const skip = useAction(() => queueSkip(step.message_id), {
-    success: 'Skipped',
-    invalidate: INVALIDATE,
-  })
-  const wrong = useAction(() => linkedInWrongPerson(person.lead_id, step.message_id), {
-    success: 'Removed that profile. The note stays, so you can find them yourself.',
-    invalidate: INVALIDATE,
-  })
-  const [opened, setOpened] = useState(false)
-  const busy = done.busy || skip.busy || wrong.busy || draft.saving
   const finished = step.status !== 'waiting'
-
-  // What Theo sent is what gets recorded: unsaved edits are saved first.
-  const markDone = async (note?: string) => {
-    if (await draft.saveIfDirty()) await done.run(note)
-  }
-
   return (
     <li
       className={clsx(
@@ -289,79 +269,134 @@ function StepRow({
       </p>
 
       {finished ? null : (
-        <div className="mt-2 space-y-3">
-          {step.channel === 'linkedin' ? (
-            <LinkedInStep
-              step={step}
-              person={person}
-              draft={draft}
-              onOpen={() => setOpened(true)}
-            />
-          ) : step.channel === 'mail' && step.printout ? (
-            <PrintoutStep step={step} onPrint={() => setOpened(true)} />
-          ) : step.channel === 'mail' ? (
-            <PostcardStep step={step} onPrint={() => setOpened(true)} />
-          ) : step.channel === 'email' ? (
-            <EmailStep
-              step={step}
-              draft={draft}
-              footer={footer}
-              gmailUser={gmailUser}
-              printoutWaiting={printoutWaiting}
-              onOpen={() => setOpened(true)}
-            />
-          ) : step.channel === 'call' ? (
-            <CallStep step={step} onCall={() => setOpened(true)} />
-          ) : null}
-
-          <Problems problems={step.channel === 'mail' ? step.problems : draft.problems} />
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={opened ? 'btn-primary' : 'btn-secondary'}
-              disabled={busy}
-              onClick={() => void markDone()}
-            >
-              <Check className="h-4 w-4" aria-hidden />{' '}
-              {step.channel === 'mail'
-                ? 'Mailed it'
-                : step.channel === 'call'
-                  ? 'Talked to them'
-                  : 'Sent it'}
-            </button>
-            {step.channel === 'call' ? (
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={busy}
-                onClick={() => void markDone('no answer, left a message')}
-              >
-                No answer
-              </button>
-            ) : null}
-            {step.channel === 'linkedin' && step.found_by_app && step.to_address ? (
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={busy}
-                onClick={() => void wrong.run()}
-              >
-                <UserX className="h-4 w-4" aria-hidden /> Not them
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={busy}
-              onClick={() => void skip.run()}
-            >
-              <SkipForward className="h-4 w-4" aria-hidden /> Skip
-            </button>
-          </div>
+        <div className="mt-2">
+          <StepWork
+            step={step}
+            person={person}
+            footer={footer}
+            gmailUser={gmailUser}
+            printoutWaiting={printoutWaiting}
+          />
         </div>
       )}
     </li>
+  )
+}
+
+/**
+ * A waiting step's words and buttons: the same on a person's card and on today's LinkedIn,
+ * printout and email lists. `how` shows the how-to line; the lists say it once at the top.
+ */
+export function StepWork({
+  step,
+  person,
+  footer,
+  gmailUser,
+  printoutWaiting,
+  how = true,
+}: {
+  step: TodoStep
+  person: TodoPerson
+  footer: string
+  gmailUser: string
+  printoutWaiting: boolean
+  how?: boolean
+}) {
+  const draft = useStepDraft(step)
+  const done = useAction((note?: string) => queueDone(step.message_id, note), {
+    success: 'Done',
+    invalidate: INVALIDATE,
+  })
+  const skip = useAction(() => queueSkip(step.message_id), {
+    success: 'Skipped',
+    invalidate: INVALIDATE,
+  })
+  const wrong = useAction(() => linkedInWrongPerson(person.lead_id, step.message_id), {
+    success: 'Removed that profile. The note stays, so you can find them yourself.',
+    invalidate: INVALIDATE,
+  })
+  const [opened, setOpened] = useState(false)
+  const busy = done.busy || skip.busy || wrong.busy || draft.saving
+
+  // What Theo sent is what gets recorded: unsaved edits are saved first.
+  const markDone = async (note?: string) => {
+    if (await draft.saveIfDirty()) await done.run(note)
+  }
+
+  return (
+    <div className="space-y-3">
+      {step.channel === 'linkedin' ? (
+        <LinkedInStep
+          step={step}
+          person={person}
+          draft={draft}
+          how={how}
+          onOpen={() => setOpened(true)}
+        />
+      ) : step.channel === 'mail' && step.printout ? (
+        <PrintoutStep step={step} how={how} onPrint={() => setOpened(true)} />
+      ) : step.channel === 'mail' ? (
+        <PostcardStep step={step} how={how} onPrint={() => setOpened(true)} />
+      ) : step.channel === 'email' ? (
+        <EmailStep
+          step={step}
+          draft={draft}
+          footer={footer}
+          gmailUser={gmailUser}
+          printoutWaiting={printoutWaiting}
+          how={how}
+          onOpen={() => setOpened(true)}
+        />
+      ) : step.channel === 'call' ? (
+        <CallStep step={step} onCall={() => setOpened(true)} />
+      ) : null}
+
+      <Problems problems={step.channel === 'mail' ? step.problems : draft.problems} />
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={opened ? 'btn-primary' : 'btn-secondary'}
+          disabled={busy}
+          onClick={() => void markDone()}
+        >
+          <Check className="h-4 w-4" aria-hidden />{' '}
+          {step.channel === 'mail'
+            ? 'Mailed it'
+            : step.channel === 'call'
+              ? 'Talked to them'
+              : 'Sent it'}
+        </button>
+        {step.channel === 'call' ? (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => void markDone('no answer, left a message')}
+          >
+            No answer
+          </button>
+        ) : null}
+        {step.channel === 'linkedin' && step.found_by_app && step.to_address ? (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => void wrong.run()}
+          >
+            <UserX className="h-4 w-4" aria-hidden /> Not them
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={busy}
+          onClick={() => void skip.run()}
+        >
+          <SkipForward className="h-4 w-4" aria-hidden /> Skip
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -402,11 +437,13 @@ function LinkedInStep({
   step,
   person,
   draft,
+  how,
   onOpen,
 }: {
   step: TodoStep
   person: TodoPerson
   draft: Draft
+  how: boolean
   onOpen: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -414,9 +451,11 @@ function LinkedInStep({
   const profile = step.to_address?.trim() ?? ''
   return (
     <>
-      <p className="text-sm text-stone-700">
-        Copy the note, open their LinkedIn, press Connect, then Add a note, paste it and Send.
-      </p>
+      {how ? (
+        <p className="text-sm text-stone-700">
+          Copy the note, open their LinkedIn, press Connect, then Add a note, paste it and Send.
+        </p>
+      ) : null}
       {step.found_by_app && profile ? (
         <p className="text-sm text-amber-800">
           The app found this profile. Check it is them before you send.
@@ -483,11 +522,21 @@ function LinkedInStep({
 }
 
 /** The one-page printout: proof and edit it on its own page, then print it and mail it. */
-function PrintoutStep({ step, onPrint }: { step: TodoStep; onPrint: () => void }) {
+function PrintoutStep({
+  step,
+  how,
+  onPrint,
+}: {
+  step: TodoStep
+  how: boolean
+  onPrint: () => void
+}) {
   return (
     <>
       <p className="text-sm text-stone-700">
-        Proof it, print it, and mail it in a folder with your business card to:{' '}
+        {how
+          ? 'Proof it, print it, and mail it in a folder with your business card to: '
+          : 'Mail to: '}
         {postalLines(step.to_address)}
       </p>
       <div className="rounded-xl border border-stone-200 bg-white p-4">
@@ -515,11 +564,20 @@ function PrintoutStep({ step, onPrint }: { step: TodoStep; onPrint: () => void }
 }
 
 /** A 4x6 postcard on a card made before printouts. */
-function PostcardStep({ step, onPrint }: { step: TodoStep; onPrint: () => void }) {
+function PostcardStep({
+  step,
+  how,
+  onPrint,
+}: {
+  step: TodoStep
+  how: boolean
+  onPrint: () => void
+}) {
   return (
     <>
       <p className="text-sm text-stone-700">
-        Print it, put a stamp on it and mail it to: {postalLines(step.to_address)}
+        {how ? 'Print it, put a stamp on it and mail it to: ' : 'A postcard. Mail to: '}
+        {postalLines(step.to_address)}
       </p>
       <div className="flex flex-wrap gap-2">
         <a
@@ -536,13 +594,18 @@ function PostcardStep({ step, onPrint }: { step: TodoStep; onPrint: () => void }
   )
 }
 
-/** The email in full to proof and edit, then Open in Gmail fills a new message he sends himself. */
+/**
+ * The email in full to proof and edit. Theo copies it, clicks their address (a new Gmail message
+ * to them opens with the subject filled in), pastes it and presses Send there (2026-10-19: "copy a
+ * email to send to someone click there email and then send just like the linkedin").
+ */
 function EmailStep({
   step,
   draft,
   footer,
   gmailUser,
   printoutWaiting,
+  how,
   onOpen,
 }: {
   step: TodoStep
@@ -550,6 +613,7 @@ function EmailStep({
   footer: string
   gmailUser: string
   printoutWaiting: boolean
+  how: boolean
   onOpen: () => void
 }) {
   const to = step.to_address?.trim() ?? ''
@@ -557,17 +621,37 @@ function EmailStep({
   const email = fullEmail(body, footer)
   return (
     <>
-      <p className="text-sm text-stone-700">
-        Read it and change anything you like. Open in Gmail fills in a new email from your account;
-        you press Send there.
-      </p>
+      {how ? (
+        <p className="text-sm text-stone-700">
+          Copy the email, then click their address. A new Gmail message to them opens with the
+          subject filled in. Paste the email there and press Send.
+        </p>
+      ) : null}
       {printoutWaiting ? (
         <p className="text-sm text-amber-800">
           Send it after you mail the printout: the email says it is on its way.
         </p>
       ) : null}
       <div className="space-y-3 rounded-xl border border-stone-200 bg-white p-3">
-        <p className="break-all text-sm text-stone-600">To: {to}</p>
+        {to ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-stone-600">To:</span>
+            <a
+              href={gmailComposeUrl(gmailUser, to, subject)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex min-h-tap min-w-0 items-center gap-1 break-all font-medium text-emerald-700 underline"
+              title={`Write to ${to} in Gmail`}
+              onClick={() => {
+                void draft.saveIfDirty()
+                onOpen()
+              }}
+            >
+              <Mail className="h-4 w-4 shrink-0" aria-hidden /> {to}
+            </a>
+            <CopyButton text={to} label="Copy address" compact />
+          </div>
+        ) : null}
         <label className="block text-sm font-medium text-stone-800">
           Subject
           <input
@@ -593,20 +677,6 @@ function EmailStep({
         ) : null}
       </div>
       <div className="flex flex-wrap gap-2">
-        {to ? (
-          <a
-            href={gmailComposeUrl(gmailUser, to, subject, email)}
-            target="_blank"
-            rel="noreferrer"
-            className="btn-primary"
-            onClick={() => {
-              void draft.saveIfDirty()
-              onOpen()
-            }}
-          >
-            <Mail className="h-4 w-4" aria-hidden /> Open in Gmail
-          </a>
-        ) : null}
         <CopyButton text={email} label="Copy email" onCopy={() => void draft.saveIfDirty()} />
         <CopyButton text={subject} label="Copy subject" />
         <SaveButton draft={draft} />
