@@ -19,7 +19,7 @@ import { outreachDeps } from '../outreach/index.ts'
 import { recordOutcome } from '../outreach/outcomes.ts'
 import { actOnQueueItem, saveLinkedInProfile } from '../outreach/queue.ts'
 import { rejectLinkedInProfile } from '../outreach/linkedinFinder.ts'
-import { clearStepProfile, findLinkedInNow } from '../outreach/todo.ts'
+import { clearStepProfile } from '../outreach/todo.ts'
 import {
   createSequence,
   deleteSequence,
@@ -126,14 +126,6 @@ leadOutreachRouter.post(
   asyncHandler(async (req, res) => {
     const body = parseOr400(LinkedInProfileBodySchema, req.body)
     res.json(await saveLinkedInProfile(outreachDeps(), String(req.params.id), body.url))
-  }),
-)
-
-// POST /api/leads/:id/linkedin/find -> LinkedInFindResult : the app looks for their exact profile now
-leadOutreachRouter.post(
-  '/:id/linkedin/find',
-  asyncHandler(async (req, res) => {
-    res.json(await findLinkedInNow(outreachDeps(), String(req.params.id)))
   }),
 )
 

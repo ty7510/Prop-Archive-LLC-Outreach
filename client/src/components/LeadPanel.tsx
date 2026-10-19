@@ -21,7 +21,6 @@ import type { LeadDetail, LeadEvent, Message, Sequence } from '../types.ts'
 import { enrollLead, getLead, leadOutcome, patchLead, stopLead } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import CopyButton from './CopyButton.tsx'
-import FindLinkedIn from './FindLinkedIn.tsx'
 import ReplyForm from './ReplyForm.tsx'
 import { Badge } from './Field.tsx'
 import ChannelIcons from './ChannelIcons.tsx'
@@ -232,11 +231,9 @@ function LeadBody({
           />
           {!lead.linkedin_url ? (
             <div className="px-3 py-2">
-              <FindLinkedIn
-                leadId={lead.id}
-                person={leadName(lead)}
-                onFound={() => void refresh()}
-              />
+              <p className="text-sm text-stone-600">
+                No LinkedIn yet. Press Enrich to look for it.
+              </p>
             </div>
           ) : null}
           <ContactRow

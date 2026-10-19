@@ -77,6 +77,12 @@ export async function insertLead(db: Db, patch: Partial<NewLead> = {}): Promise<
     dedupe_key: `lead-${leadCounter}-${newId()}`,
     ...patch,
   }
+  // Enrich found their LinkedIn, unless the test says what Enrich found.
+  if (patch.enrichment === undefined && row.linkedin_url) {
+    row.enrichment = {
+      claude_research: { fetched_at: now, data: { linkedin_url: row.linkedin_url } },
+    }
+  }
   await db.insert(leads).values(row)
   const saved = await db.select().from(leads).where(eq(leads.id, row.id))
   return saved[0] as Lead

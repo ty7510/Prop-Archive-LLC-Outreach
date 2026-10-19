@@ -10,7 +10,6 @@ import { useAction } from '../hooks/useAction.ts'
 import { ensureHttp } from '../lib/format.ts'
 import { Modal } from './Confirm.tsx'
 import CopyButton from './CopyButton.tsx'
-import FindLinkedIn from './FindLinkedIn.tsx'
 
 /** A free LinkedIn account allows 200 characters in a connection note. */
 const NOTE_MAX = 200
@@ -114,9 +113,6 @@ export default function LinkedInRun({
               </a>
             ) : null}
           </div>
-          {!current.to_address ? (
-            <FindLinkedIn leadId={current.lead_id} person={current.person} />
-          ) : null}
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-stone-200 pt-4">
             <button
@@ -144,25 +140,19 @@ export default function LinkedInRun({
       ) : person ? (
         <div className="space-y-4">
           <p className="text-stone-700">
-            The app has no LinkedIn profile for this person. Have it look; their note comes up here
-            next when it finds them.
+            Enrich has not found a LinkedIn profile for this person, so there is no note to send.
           </p>
           <div>
             <p className="text-lg font-medium">{person.person}</p>
             {person.company ? <p className="text-stone-600">{person.company}</p> : null}
           </div>
-          <FindLinkedIn
-            leadId={person.lead_id}
-            person={person.person}
-            onFound={() => setPassed((prev) => new Set(prev).add(person.lead_id))}
-          />
           <div className="flex justify-end border-t border-stone-200 pt-4">
             <button
               type="button"
               className="btn-secondary"
               onClick={() => setPassed((prev) => new Set(prev).add(person.lead_id))}
             >
-              <SkipForward className="h-4 w-4" aria-hidden /> Can't find them, next
+              <SkipForward className="h-4 w-4" aria-hidden /> Next
             </button>
           </div>
         </div>

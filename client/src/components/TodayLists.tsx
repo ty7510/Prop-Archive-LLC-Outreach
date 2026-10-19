@@ -10,7 +10,6 @@ import { usePinnedIndex } from '../hooks/usePinnedIndex.ts'
 import { Chip } from './Field.tsx'
 import { Modal } from './Confirm.tsx'
 import { Empty } from './QueryState.tsx'
-import FindLinkedIn from './FindLinkedIn.tsx'
 import { personFacts, StepWork } from './TodoCard.tsx'
 
 const TAB_KEY = 'todo-tab'
@@ -206,7 +205,7 @@ export function OneByOneButton({ onClick }: { onClick: () => void }) {
   )
 }
 
-/** People on the list the app could not find on LinkedIn: paste their profile to get a note. */
+/** People on the list with no LinkedIn note, because Enrich has not found their profile. */
 export function NoLinkedIn({ people }: { people: TodayLists['noLinkedIn'] }) {
   if (people.length === 0) return null
   return (
@@ -215,8 +214,7 @@ export function NoLinkedIn({ people }: { people: TodayLists['noLinkedIn'] }) {
         No LinkedIn found ({people.length})
       </summary>
       <p className="mt-1 text-stone-700">
-        The app could not find these people on LinkedIn. It can look again; when it finds someone,
-        their note shows up above.
+        Enrich has not found these people on LinkedIn, so they get no LinkedIn note.
       </p>
       <ul className="mt-3 divide-y divide-stone-200">
         {people.map((p) => (
@@ -230,7 +228,6 @@ export function NoLinkedIn({ people }: { people: TodayLists['noLinkedIn'] }) {
             {p.company && p.company !== p.person ? (
               <span className="text-stone-600">, {p.company}</span>
             ) : null}
-            <FindLinkedIn leadId={p.lead_id} person={p.person} />
           </li>
         ))}
       </ul>

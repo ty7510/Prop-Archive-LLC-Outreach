@@ -9,7 +9,7 @@ import { judge, rejectLinkedInProfile, type LinkedInSearch } from './linkedinFin
 import { recordOutcome } from './outcomes.ts'
 import { addSuppression } from './suppression.ts'
 import { actOnQueueItem } from './queue.ts'
-import { clearStepProfile, fillTodo, findLinkedInNow, listTodo } from './todo.ts'
+import { fillTodo, listTodo } from './todo.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 
 const TUESDAY_10AM = new Date('2026-10-13T14:00:00.000Z')
@@ -165,22 +165,81 @@ describe('to-do list', () => {
     expect((await fillTodo(deps)).added).toBe(0)
   })
 
-  it('finds the LinkedIn profile first, so the note is on the card', async () => {
-    const search = fakeSearch(
-      [
-        {
-          url: 'https://www.linkedin.com/in/jane-doe-1a2b',
-          title: 'Jane Doe - Owner - Doe Homes | LinkedIn',
+  it('only people with an email, a mailing address and a LinkedIn Enrich found go on the list', async () => {
+    const { db, deps } = await todoSetup()
+    await setSettings(db, { people_per_day: 20 })
+    const ready = await insertLead(db, { full_name: 'Ready Person' })
+    // People Data Labs stores the link without https or www: it still counts.
+    const fromPdl = await insertLead(db, {
+      full_name: 'Pdl Person',
+      linkedin_url: 'https://www.linkedin.com/in/pdl-person/',
+      enrichment: {
+        pdl: { fetched_at: 'x', data: { linkedin_url: 'linkedin.com/in/pdl-person' } },
+      },
+    })
+    await insertLead(db, { full_name: 'No Email', email: null })
+    await insertLead(db, { full_name: 'Bad Email', email_status: 'invalid' })
+    await insertLead(db, { full_name: 'No Mailing', mailing_street: null })
+    await insertLead(db, { full_name: 'No LinkedIn', linkedin_url: null })
+    // From an imported list: Enrich never found it.
+    await insertLead(db, { full_name: 'Imported Link', enrichment: {} })
+    // Found by the separate LinkedIn lookup, not by Enrich.
+    await insertLead(db, {
+      full_name: 'Finder Link',
+      linkedin_url: 'https://www.linkedin.com/in/finder-link/',
+      enrichment: {
+        linkedin_find: {
+          fetched_at: 'x',
+          data: { url: 'https://www.linkedin.com/in/finder-link/' },
         },
-      ],
-      'https://www.linkedin.com/in/jane-doe-1a2b',
-    )
+      },
+    })
+    // Enrich ran but found a different profile (a longer name must not match either).
+    await insertLead(db, {
+      full_name: 'Other Link',
+      linkedin_url: 'https://www.linkedin.com/in/other',
+      enrichment: {
+        claude_research: {
+          fetched_at: 'x',
+          data: { linkedin_url: 'https://www.linkedin.com/in/other-person-2' },
+        },
+      },
+    })
+
+    expect((await fillTodo(deps, { limit: 20 })).added).toBe(2)
+    const people = (await listTodo(deps)).people
+    expect(people.map((p) => p.lead_id).sort()).toEqual([ready.id, fromPdl.id].sort())
+    for (const p of people) {
+      expect(p.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
+      expect(p.steps[0]!.found_by_app).toBe(true)
+    }
+  })
+
+  it('never looks people up on LinkedIn itself while it fills the list', async () => {
+    let searched = 0
+    const search: LinkedInSearch = async (...args) => {
+      searched++
+      return fakeSearch([], 'NONE')(...args)
+    }
     const { db, deps } = await todoSetup({ linkedInSearch: search })
+    await insertLead(db, {
+      full_name: 'Pat Lee',
+      first_name: 'Pat',
+      last_name: 'Lee',
+      linkedin_url: null,
+    })
+    await insertLead(db)
+    expect((await fillTodo(deps)).added).toBe(1)
+    expect(searched).toBe(0)
+  })
+
+  it('a wrong profile: it leaves the note and the finder never brings it back', async () => {
+    const { db, deps } = await todoSetup()
     const lead = await insertLead(db, {
       full_name: 'Jane Doe',
       first_name: 'Jane',
       last_name: 'Doe',
-      linkedin_url: null,
+      linkedin_url: 'https://www.linkedin.com/in/jane-doe-1a2b/',
     })
     await fillTodo(deps)
     const card = (await listTodo(deps)).people[0]!
@@ -189,10 +248,6 @@ describe('to-do list', () => {
       to_address: 'https://www.linkedin.com/in/jane-doe-1a2b/',
       found_by_app: true,
     })
-    const saved = (await db.select().from(leads).where(eq(leads.id, lead.id)))[0]!
-    expect(saved.linkedin_url).toBe('https://www.linkedin.com/in/jane-doe-1a2b/')
-
-    // Wrong person: the profile goes, and never comes back from the finder.
     await rejectLinkedInProfile(deps, lead.id)
     await actOnQueueItem(deps, card.steps[0]!.message_id, 'skip')
     const after = (await db.select().from(leads).where(eq(leads.id, lead.id)))[0]!
@@ -200,122 +255,7 @@ describe('to-do list', () => {
     expect((after.enrichment.linkedin_find?.data as { rejected: string[] }).rejected).toEqual([
       'https://www.linkedin.com/in/jane-doe-1a2b/',
     ])
-    const rest = (await listTodo(deps)).people[0]!
-    expect(rest.linkedin_missing).toBe('not_found')
-  })
-
-  it('no profile found: no LinkedIn note; "Find their LinkedIn" looks again and adds it', async () => {
-    const { db, deps } = await todoSetup({ linkedInSearch: fakeSearch([], 'NONE') })
-    const lead = await insertLead(db, {
-      full_name: 'Pat Lee',
-      first_name: 'Pat',
-      last_name: 'Lee',
-      linkedin_url: null,
-    })
-    await fillTodo(deps)
-    let card = (await listTodo(deps)).people[0]!
-    // Theo only sends a note he can open the exact profile for: no note without one.
-    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'email'])
-    expect(card.linkedin_missing).toBe('not_found')
-
-    // Still nobody: nothing changes.
-    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({
-      status: 'not_found',
-      linkedin_url: null,
-      queued: false,
-    })
-    expect((await listTodo(deps)).people[0]!.steps).toHaveLength(2)
-
-    // The app finds them on the next look: their note joins the card with that exact profile.
-    deps.linkedInSearch = fakeSearch(
-      [
-        {
-          url: 'https://www.linkedin.com/in/pat-lee-9',
-          title: 'Pat Lee - Landlord - Philadelphia',
-        },
-      ],
-      'https://www.linkedin.com/in/pat-lee-9',
-    )
-    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({
-      status: 'found',
-      linkedin_url: 'https://www.linkedin.com/in/pat-lee-9/',
-      queued: true,
-    })
-    card = (await listTodo(deps)).people[0]!
-    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
-    expect(card.steps[0]).toMatchObject({
-      to_address: 'https://www.linkedin.com/in/pat-lee-9/',
-      found_by_app: true,
-    })
-    expect(card.steps[0]!.body).toContain('Hi Pat')
-    expect(card.linkedin_missing).toBeNull()
-  })
-
-  it('a wrong profile on a waiting note: "Find their LinkedIn" puts the right one on that note', async () => {
-    const { db, deps } = await todoSetup({
-      linkedInSearch: fakeSearch(
-        [
-          {
-            url: 'https://www.linkedin.com/in/sam-roe-1',
-            title: 'Sam Roe - Realtor - Philadelphia',
-          },
-        ],
-        'https://www.linkedin.com/in/sam-roe-1',
-      ),
-    })
-    const lead = await insertLead(db, {
-      full_name: 'Sam Roe',
-      first_name: 'Sam',
-      last_name: 'Roe',
-      linkedin_url: null,
-    })
-    await fillTodo(deps)
-    const noteId = (await listTodo(deps)).people[0]!.steps[0]!.message_id
-    await rejectLinkedInProfile(deps, lead.id)
-    await clearStepProfile(deps, noteId)
-    expect((await listTodo(deps)).people[0]!.steps[0]!.to_address).toBeNull()
-
-    deps.linkedInSearch = fakeSearch(
-      [{ url: 'https://www.linkedin.com/in/sam-roe-2', title: 'Sam Roe - Owner - Roe Rentals' }],
-      'https://www.linkedin.com/in/sam-roe-2',
-    )
-    expect(await findLinkedInNow(deps, lead.id)).toMatchObject({ status: 'found', queued: true })
-    const card = (await listTodo(deps)).people[0]!
-    expect(card.steps.filter((s) => s.channel === 'linkedin')).toHaveLength(1)
-    expect(card.steps[0]).toMatchObject({
-      message_id: noteId,
-      to_address: 'https://www.linkedin.com/in/sam-roe-2/',
-      found_by_app: true,
-    })
-  })
-
-  it('no name and no profile: no LinkedIn step, the printout and email still come', async () => {
-    const { db, deps } = await todoSetup()
-    await insertLead(db, {
-      full_name: 'Fairmount Rentals LLC',
-      first_name: null,
-      last_name: null,
-      company: 'Fairmount Rentals LLC',
-      owner_kind: 'llc',
-      linkedin_url: null,
-    })
-    await fillTodo(deps)
-    const card = (await listTodo(deps)).people[0]!
-    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'email'])
-    expect(card.linkedin_missing).toBe('no_name')
-    expect(card.steps[0]!.subject).toBe('How Prop Archive can help Fairmount Rentals LLC')
-    expect(card.steps[1]!.body).toMatch(/^Hi,/)
-  })
-
-  it('no email, or a bad one: no email step', async () => {
-    const { db, deps } = await todoSetup()
-    await insertLead(db, { email: null })
-    await insertLead(db, { email_status: 'invalid' })
-    await fillTodo(deps)
-    const people = (await listTodo(deps)).people
-    expect(people).toHaveLength(2)
-    for (const p of people)
-      expect(p.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard'])
+    expect((await listTodo(deps)).people[0]!.linkedin_missing).toBe('not_found')
   })
 
   it('never puts someone on the suppression list on it', async () => {

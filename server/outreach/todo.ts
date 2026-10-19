@@ -12,7 +12,6 @@ import { and, asc, desc, eq, gte, inArray, like, notInArray, sql } from 'drizzle
 import type { Settings } from '../../shared/settings.ts'
 import type {
   CompletePerson,
-  LinkedInFindResult,
   RepliedPerson,
   TodoList,
   TodoPerson,
@@ -28,15 +27,10 @@ import type { OutreachDeps } from './deps.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { ruleProblems } from './copyRules.ts'
 import { emailFooter, fallbackEmail, subjectProblems, writeHandEmail } from './handEmail.ts'
-import {
-  FINDER_RETRY_DAYS,
-  finderRecord,
-  findLinkedInFor,
-  personFor,
-  type FindOutcome,
-} from './linkedinFinder.ts'
+import { personFor } from './linkedinFinder.ts'
 import { LINKEDIN_NOTE_MAX, writePersonalNote } from './linkedinNote.ts'
 import { postalAddressFor, type PostalAddress } from './mail.ts'
+import { linkedInFoundByEnrich, readyToContact, readyToContactSql } from './readyToContact.ts'
 import { checkOwnership, needsOwnershipCheck } from './ownership.ts'
 import { fallbackPrintout, printoutHeading, writePrintout } from './printout.ts'
 import { recipientBlocker } from './recipients.ts'
@@ -141,7 +135,8 @@ export async function todoCandidates(
       and(
         eq(leads.do_not_contact, false),
         notInArray(leads.status, [...BLOCKED_LEAD_STATUSES]),
-        sql`(trim(coalesce(${leads.mailing_street}, '')) <> '' or trim(coalesce(${leads.email}, '')) <> '' or trim(coalesce(${leads.phone}, '')) <> '' or trim(coalesce(${leads.linkedin_url}, '')) <> '')`,
+        // Only people with an email, a mailing address and a LinkedIn that Enrich found.
+        readyToContactSql(),
         sql`not exists (select 1 from ${messages} m where m.lead_id = ${leads.id} and m.direction = 'out' and (
           m.status = 'ready_for_human'
           or (m.status = 'sent' and m.provider = 'human' and m.sent_at > ${since})
@@ -225,20 +220,19 @@ async function linkedInStep(
 ): Promise<NewStep | null> {
   const profile = (lead.linkedin_url ?? '').trim()
   if (!settings.channels.linkedin) return null
-  // Theo sends a note only where he can open their exact profile (2026-10-19): no searching and no
-  // pasting. Without one, "Find their LinkedIn" has the app look again.
-  if (!profile) return null
+  // Theo sends a note only to a profile Enrich found (2026-10-19): not one from an imported list,
+  // pasted by hand, or from the separate LinkedIn lookup.
+  if (!profile || !linkedInFoundByEnrich(lead)) return null
   const kind = (await sentBefore(deps, lead.id, 'linkedin'))
     ? 'linkedin_follow_up'
     : 'linkedin_connect'
   const note = await linkedInBody(deps, settings, lead, kind)
-  const found = Boolean(profile) && finderRecord(lead)?.url === profile
   return {
     kind,
     channel: 'linkedin',
     body: note.body,
     to_address: profile || null,
-    raw: { todo: kind, found_by_app: found, ...(note.personal ? { personal: true } : {}) },
+    raw: { todo: kind, found_by_app: true, ...(note.personal ? { personal: true } : {}) },
   }
 }
 
@@ -419,25 +413,15 @@ export async function addPerson(
       )
     }
   }
-  // Find their LinkedIn first, so the card is whole when it shows up.
-  const record = finderRecord(lead)
-  const triedRecently =
-    record?.tried_at && now.getTime() - Date.parse(record.tried_at) < FINDER_RETRY_DAYS * DAY_MS
-  if (settings.channels.linkedin && !(lead.linkedin_url ?? '').trim() && !triedRecently) {
-    try {
-      const r = await findLinkedInFor(deps, lead.id)
-      if (r.status === 'found') {
-        lead = (await deps.db.select().from(leads).where(eq(leads.id, lead.id)).limit(1))[0] ?? lead
-      }
-    } catch (error) {
-      await logActivity(
-        'warn',
-        'linkedin_find_failed',
-        { error: error instanceof Error ? error.message : String(error) },
-        lead.id,
-        deps.db,
-      )
-    }
+  // Checked again here: the ownership check above may have changed what is on file.
+  if (!readyToContact(lead)) {
+    await markEmptyRound(
+      deps,
+      input.id,
+      round,
+      'not contacted: needs email, mailing address and a LinkedIn Enrich found',
+    )
+    return 0
   }
 
   const vars = buildVars(lead, settings, {
@@ -547,11 +531,11 @@ export async function addLinkedInStepToOpenCard(
   // Their note is already on the card: the pasted profile joins it (or replaces a wrong one).
   const waiting = open.find((m) => m.channel === 'linkedin')
   if (waiting && profile) {
+    if (!linkedInFoundByEnrich(lead)) return false
     const raw = (waiting.raw ?? {}) as Record<string, unknown>
-    const found = finderRecord(lead)?.url === profile
     const saved = await deps.db
       .update(messages)
-      .set({ to_address: profile, raw: { ...raw, found_by_app: found } })
+      .set({ to_address: profile, raw: { ...raw, found_by_app: true } })
       .where(and(eq(messages.id, waiting.id), eq(messages.status, 'ready_for_human')))
       .returning({ id: messages.id })
     return saved.length > 0
@@ -559,39 +543,6 @@ export async function addLinkedInStepToOpenCard(
   const step = await linkedInStep(deps, settings, lead)
   if (!step) return false
   return (await insertSteps(deps, lead, round, [step])) > 0
-}
-
-/**
- * Theo pressed "Find their LinkedIn": the app looks them up now (one finder search) and, when it
- * finds them, their note goes on their open card with that exact profile.
- */
-export async function findLinkedInNow(
-  deps: OutreachDeps,
-  leadId: string,
-): Promise<LinkedInFindResult> {
-  let found: FindOutcome
-  try {
-    found = await findLinkedInFor(deps, leadId)
-  } catch (error) {
-    await logActivity(
-      'warn',
-      'linkedin_find_failed',
-      { error: error instanceof Error ? error.message : String(error), by: 'button' },
-      leadId,
-      deps.db,
-    )
-    return {
-      status: 'skipped',
-      linkedin_url: null,
-      queued: false,
-      reason: 'the LinkedIn lookup did not answer. Try again in a few minutes.',
-    }
-  }
-  if (found.status !== 'found') {
-    return { status: found.status, linkedin_url: null, queued: false, reason: found.reason }
-  }
-  const queued = await addLinkedInStepToOpenCard(deps, leadId)
-  return { status: 'found', linkedin_url: found.linkedin_url, queued, reason: null }
 }
 
 function stepStatus(status: Message['status']): TodoStep['status'] | null {
