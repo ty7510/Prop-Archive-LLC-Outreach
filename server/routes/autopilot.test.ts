@@ -91,7 +91,13 @@ describe('/api/autopilot', () => {
     expect(res.body.on).toBe(false)
     expect(res.body.lastTick).toBe(INSIDE_WINDOW.toISOString())
     expect(res.body.tick.jobs.map((j: { job: string }) => j.job)).toEqual([...JOB_ORDER])
-    expect(res.body.tick.jobs.every((j: { status: string }) => j.status === 'ok')).toBe(true)
+    // Enrich runs in the background so a long batch never holds up the rest of the tick.
+    expect(
+      res.body.tick.jobs.every(
+        (j: { job: string; status: string }) =>
+          j.status === (j.job === 'enrich' ? 'started' : 'ok'),
+      ),
+    ).toBe(true)
     expect(res.body.jobs.discover.status).toBe('ok')
     expect(res.body.jobs.discover.summary).toEqual({ created: 2, merged: 1, skipped: 0 })
     expect(calls).toContain('send')

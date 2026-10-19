@@ -301,6 +301,48 @@ describe('to-do list', () => {
       for (const s of p.steps) if (s.channel === 'linkedin') expect(s.found_by_app).toBe(true)
   })
 
+  it('someone already on the list gets their LinkedIn note once Enrich finds their profile', async () => {
+    const { db, deps } = await todoSetup()
+    const lead = await insertLead(db, { linkedin_url: null })
+    expect((await fillTodo(deps)).added).toBe(1)
+    let card = (await listTodo(deps)).people[0]!
+    expect(card.steps.map((s) => s.kind)).toEqual(['postcard', 'email'])
+
+    // Enrich finds their LinkedIn while the printout is still waiting.
+    const url = 'https://www.linkedin.com/in/late-find'
+    await db
+      .update(leads)
+      .set({
+        linkedin_url: url,
+        enrichment: { claude_research: { fetched_at: 'x', data: { linkedin_url: url } } },
+      })
+      .where(eq(leads.id, lead.id))
+    await fillTodo(deps)
+    card = (await listTodo(deps)).people.find((p) => p.lead_id === lead.id)!
+    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    expect(card.steps[0]!.to_address ?? url).toBe(url)
+  })
+
+  it('someone already on the list gets their email once Enrich finds it (Emails tab)', async () => {
+    const { db, deps } = await todoSetup()
+    const lead = await insertLead(db, { email: null })
+    expect((await fillTodo(deps)).added).toBe(1)
+    let card = (await listTodo(deps)).people[0]!
+    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard'])
+
+    await db
+      .update(leads)
+      .set({ email: 'found@example.com', email_status: 'valid' })
+      .where(eq(leads.id, lead.id))
+    await fillTodo(deps)
+    card = (await listTodo(deps)).people.find((p) => p.lead_id === lead.id)!
+    expect(card.steps.map((s) => s.kind)).toEqual(['linkedin_connect', 'postcard', 'email'])
+    // Only once: the next round adds nothing more.
+    await fillTodo(deps)
+    card = (await listTodo(deps)).people.find((p) => p.lead_id === lead.id)!
+    expect(card.steps).toHaveLength(3)
+  })
+
   it('people with no LinkedIn are added at most the goal a day, however many notes are skipped', async () => {
     const { db, deps } = await todoSetup()
     for (let i = 0; i < 6; i++) await insertLead(db, { linkedin_url: null })

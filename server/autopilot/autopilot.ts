@@ -76,7 +76,12 @@ export class Autopilot implements AutopilotModule {
   runTick(): Promise<TickSummary> {
     if (this.inFlight) return this.inFlight
     this.lastTickAt = this.now().toISOString()
-    this.inFlight = runTick({ db: this.db(), now: this.now, warned: this.warned }).finally(() => {
+    this.inFlight = runTick({
+      db: this.db(),
+      now: this.now,
+      warned: this.warned,
+      enrichInBackground: true,
+    }).finally(() => {
       this.inFlight = null
     })
     return this.inFlight

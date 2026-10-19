@@ -38,6 +38,8 @@ export type JobOutcomeStatus =
   | 'not_due'
   /** send only: outside the send window */
   | 'outside_window'
+  /** enrich only: the batch was started in the background and the tick went on */
+  | 'started'
 
 export interface JobOutcome {
   job: JobName
@@ -58,7 +60,15 @@ export interface TickOptions {
   now?: () => Date
   /** Modules already warned about in this process, so the activity log gets one line, not one a minute. */
   warned?: Set<string>
+  /**
+   * Run the enrich batch in the background instead of waiting for it. A batch of web research takes
+   * minutes; waiting held up the to-do list, so nobody new came on until it finished.
+   */
+  enrichInBackground?: boolean
 }
+
+/** The enrich batch running in the background in this process, so a second one never starts. */
+let backgroundEnrich: Promise<JobOutcome> | null = null
 
 const warnedByDefault = new Set<string>()
 
@@ -184,8 +194,8 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
     const enrich = await resolveModule('enrich', 'enrich', db, warned)
     if (!enrich) jobs.push(notBuilt('enrich'))
     else {
-      jobs.push(
-        await runJob(
+      const batch = () =>
+        runJob(
           'enrich',
           async () => {
             const ids = await enrich.pickBatch(ENRICH_BATCH)
@@ -195,8 +205,16 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
           },
           db,
           now,
-        ),
-      )
+        )
+      if (!options.enrichInBackground) jobs.push(await batch())
+      else if (backgroundEnrich) jobs.push({ job: 'enrich', status: 'skipped', ms: 0 })
+      else {
+        // runJob never throws: it logs the error and returns it.
+        backgroundEnrich = batch().finally(() => {
+          backgroundEnrich = null
+        })
+        jobs.push({ job: 'enrich', status: 'started', ms: 0 })
+      }
     }
   }
 
