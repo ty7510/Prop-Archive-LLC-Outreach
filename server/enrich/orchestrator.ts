@@ -1,5 +1,5 @@
-// The enrichment orchestrator: runs providers in settings order, stops early when a lead has email
-// and (linkedin or phone), respects monthly credit caps, stores raw payloads, recomputes channels,
+// The enrichment orchestrator: runs providers in settings order, stops once nothing is left to find,
+// respects monthly credit caps, stores raw payloads, recomputes channels,
 // and moves status new -> enriching -> enriched. One provider failing never fails the batch.
 import { and, asc, eq, gte, inArray } from 'drizzle-orm'
 import type { EnrichProviderId, Settings } from '../../shared/settings.ts'
@@ -84,6 +84,34 @@ async function markDown(id: EnrichProviderId, err: unknown, batch: BatchState): 
 }
 
 /** Research is paused while the provider is down or its monthly cap is reached. */
+/**
+ * The paid lookup APIs. They look a person up by name, not by web search, so they still work when
+ * Claude web research is paused (Theo, 2026-10-19: out of web searches). Each runs once per lead.
+ */
+const LOOKUP_APIS = new Set<EnrichProviderId>(['apollo', 'pdl', 'hunter'])
+
+/** Lookup APIs that are on, have a key, and have credits left this month. */
+async function lookupsWithRoom(
+  settings: Settings,
+  all: Partial<Record<EnrichProviderId, EnrichProvider>>,
+  env: Env,
+  db: Db,
+  now: Date,
+): Promise<EnrichProvider[]> {
+  const out: EnrichProvider[] = []
+  for (const id of settings.enrichment.providers) {
+    const provider = all[id]
+    if (!provider || !LOOKUP_APIS.has(id) || !provider.isConfigured(env)) continue
+    const cap = capFor(settings.enrichment.monthly_credit_cap, id)
+    if (cap !== null) {
+      const { used } = await creditsUsed(id, monthRange(now, settings.send_window.tz), db)
+      if (wouldExceedCap(used, provider.costPerCall, cap)) continue
+    }
+    out.push(provider)
+  }
+  return out
+}
+
 async function researchPaused(
   settings: Settings,
   provider: EnrichProvider,
@@ -181,6 +209,12 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
   // picking them would only fail again, and they must not count as enriched without it.
   const paused =
     research && researchProvider ? await researchPaused(settings, researchProvider, db, now) : false
+  // While research is paused, a waiting lead is still picked when a lookup API has not had its turn
+  // on them yet, so emails and LinkedIn profiles keep coming in.
+  const lookups = paused ? await lookupsWithRoom(settings, all, env, db, now) : []
+  const ctx: EnrichContext = { env, settings, properties: [], now, log: async () => {} }
+  const lookupOwed = (r: Lead) =>
+    lookups.some((p) => !(r.enrichment ?? {})[p.id] && p.applies(r, ctx))
   const rows = await db
     .select()
     .from(leads)
@@ -198,7 +232,7 @@ export async function pickBatch(limit: number, deps: OrchestratorDeps = {}): Pro
   return rows
     .filter((r) => {
       const owed = research && researchOwed(r)
-      if (owed && paused) return false
+      if (owed && paused) return lookupOwed(r)
       return (
         r.status === 'new' ||
         (r.status === 'enriching' && new Date(r.updated_at) < staleBefore) ||
@@ -289,6 +323,8 @@ async function enrichOne(leadId: string, batch: BatchState): Promise<LeadOutcome
     const now = batch.now()
     const ctx: EnrichContext = { env, settings, properties: owned, now, log }
     if (!provider.applies(current, ctx)) continue
+    // A lookup API answers the same thing twice: never pay for it again on this lead.
+    if (LOOKUP_APIS.has(provider.id) && enrichment[provider.id]) continue
     if (isDown(provider.id, now)) {
       if (provider.id === 'claude_research') researchFailed = true
       continue
