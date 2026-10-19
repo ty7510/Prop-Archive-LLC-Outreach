@@ -92,109 +92,97 @@ export function TodoSection() {
               />
               <TodayTabs tab={tab} onChange={setTab} lists={lists} people={data.people.length} />
 
-              {tab === 'linkedin' ? (
-                <div className="space-y-4">
-                  <ListCount
-                    waiting={lists.linkedin.length}
-                    sent={data.sent_today.linkedin}
-                    verb="send"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {lists.linkedin.length > 0 ? (
-                      <OneByOneButton onClick={() => setLinkedInRunOpen(true)} />
-                    ) : null}
-                    {addPeople}
-                  </div>
-                  <StepList
-                    items={lists.linkedin}
-                    data={data}
-                    how="Copy each note, open their LinkedIn, press Connect, then Add a note, paste it and Send. Then press Sent it."
-                    empty={{
-                      title: 'No LinkedIn messages to send',
-                      hint: 'Each weekday new people show up with a note written for them.',
-                    }}
-                  />
-                  <NoLinkedIn people={lists.noLinkedIn} />
-                </div>
-              ) : tab === 'printouts' ? (
-                <div className="space-y-4">
-                  <ListCount
-                    waiting={lists.printouts.length}
-                    sent={data.sent_today.mail}
-                    verb="mail"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <PrintAll data={data} />
-                    {addPeople}
-                  </div>
-                  <StepList
-                    items={lists.printouts}
-                    data={data}
-                    how="Proof each one, print it, and mail it in a folder with your business card. Then press Mailed it."
-                    empty={{
-                      title: 'No printouts to mail',
-                      hint: 'Each weekday new people show up with a printout written for them.',
-                    }}
-                  />
-                </div>
-              ) : tab === 'emails' ? (
-                <div className="space-y-4">
-                  <ListCount
-                    waiting={lists.emails.length}
-                    sent={data.sent_today.email}
-                    verb="send"
-                  />
-                  {addPeople ? <div className="flex flex-wrap gap-2">{addPeople}</div> : null}
-                  <StepList
-                    items={lists.emails}
-                    data={data}
-                    how="Copy the email, then click their address. A new Gmail message to them opens with the subject filled in. Paste the email there, press Send, then press Sent it here."
-                    empty={{
-                      title: 'No emails to send',
-                      hint: 'Only people with an email address on file get an email.',
-                    }}
-                  />
-                  {lists.noEmail > 0 && data.people.length > 0 ? (
-                    <p className="text-sm text-stone-600">
-                      {lists.noEmail} of the {data.people.length} people on your list have no email
-                      to send. Only people with an email address on file get one.
-                    </p>
+              {/* All four lists stay mounted, so switching never drops words being edited. */}
+              <div className="space-y-4" hidden={tab !== 'linkedin'}>
+                <ListCount
+                  waiting={lists.linkedin.length}
+                  sent={data.sent_today.linkedin}
+                  verb="send"
+                />
+                <div className="flex flex-wrap gap-2">
+                  {lists.linkedin.length > 0 ? (
+                    <OneByOneButton onClick={() => setLinkedInRunOpen(true)} />
                   ) : null}
+                  {addPeople}
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
-                    {data.people.length > 0 ? (
-                      <button
-                        type="button"
-                        className="btn-primary"
-                        onClick={() => setRunOpen(true)}
-                      >
-                        <ListChecks className="h-4 w-4" aria-hidden /> Start: one person at a time
-                      </button>
-                    ) : null}
-                    <PrintAll data={data} />
-                    {addPeople}
+                <StepList
+                  items={lists.linkedin}
+                  data={data}
+                  how="Copy each note, open their LinkedIn, press Connect, then Add a note, paste it and Send. Then press Sent it."
+                  empty={{
+                    title: 'No LinkedIn messages to send',
+                    hint: 'Each weekday new people show up with a note written for them.',
+                  }}
+                />
+                <NoLinkedIn people={lists.noLinkedIn} />
+              </div>
+              <div className="space-y-4" hidden={tab !== 'printouts'}>
+                <ListCount
+                  waiting={lists.printouts.length}
+                  sent={data.sent_today.mail}
+                  verb="mail"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <PrintAll data={data} />
+                  {addPeople}
+                </div>
+                <StepList
+                  items={lists.printouts}
+                  data={data}
+                  how="Proof each one, print it, and mail it in a folder with your business card. Then press Mailed it."
+                  empty={{
+                    title: 'No printouts to mail',
+                    hint: 'Each weekday new people show up with a printout written for them.',
+                  }}
+                />
+              </div>
+              <div className="space-y-4" hidden={tab !== 'emails'}>
+                <ListCount waiting={lists.emails.length} sent={data.sent_today.email} verb="send" />
+                {addPeople ? <div className="flex flex-wrap gap-2">{addPeople}</div> : null}
+                <StepList
+                  items={lists.emails}
+                  data={data}
+                  how="Copy the email, then click their address. A new Gmail message to them opens with the subject filled in. Paste the email there, press Send, then press Sent it here."
+                  empty={{
+                    title: 'No emails to send',
+                    hint: 'Only people with an email address on file get an email.',
+                  }}
+                />
+                {lists.noEmail > 0 && data.people.length > 0 ? (
+                  <p className="text-sm text-stone-600">
+                    {lists.noEmail} of the {data.people.length} people on your list have no email to
+                    send. Only people with an email address on file get one.
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-4" hidden={tab !== 'people'}>
+                <div className="flex flex-wrap gap-2">
+                  {data.people.length > 0 ? (
+                    <button type="button" className="btn-primary" onClick={() => setRunOpen(true)}>
+                      <ListChecks className="h-4 w-4" aria-hidden /> Start: one person at a time
+                    </button>
+                  ) : null}
+                  <PrintAll data={data} />
+                  {addPeople}
+                </div>
+                {data.people.length === 0 ? (
+                  <Empty
+                    title="Nothing to do right now"
+                    hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
+                  />
+                ) : (
+                  <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+                    {data.people.map((p) => (
+                      <TodoCard
+                        key={p.lead_id}
+                        person={p}
+                        footer={data.email_footer}
+                        gmailUser={data.gmail_user}
+                      />
+                    ))}
                   </div>
-                  {data.people.length === 0 ? (
-                    <Empty
-                      title="Nothing to do right now"
-                      hint={`Each weekday up to ${data.today.goal} people show up here with every step: their LinkedIn note, a printout to mail with your card, and an email to send from Gmail.`}
-                    />
-                  ) : (
-                    <div className="grid min-w-0 gap-4 lg:grid-cols-2">
-                      {data.people.map((p) => (
-                        <TodoCard
-                          key={p.lead_id}
-                          person={p}
-                          footer={data.email_footer}
-                          gmailUser={data.gmail_user}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )
         }}
