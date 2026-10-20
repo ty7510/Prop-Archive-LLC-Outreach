@@ -24,6 +24,8 @@ export const JOB_ORDER = [
 export type JobName = (typeof JOB_ORDER)[number]
 
 export const ENRICH_BATCH = 10
+/** Stored research answers checked again per tick when the contact checks improve. */
+const RECHECK_BATCH = 10
 export const SYNC_REPLIES_EVERY_MS = 10 * 60_000
 export const HOUSEKEEPING_EVERY_MS = 60 * 60_000
 
@@ -199,9 +201,19 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
           'enrich',
           async () => {
             const ids = await enrich.pickBatch(ENRICH_BATCH)
-            if (ids.length === 0) return { picked: 0, enriched: 0, failed: 0, skipped: 0 }
-            const r = await enrich.enrichLeads(ids)
-            return { picked: ids.length, ...r }
+            const r =
+              ids.length === 0
+                ? { enriched: 0, failed: 0, skipped: 0 }
+                : await enrich.enrichLeads(ids)
+            // Stored answers checked by older contact checks get checked again (no research call).
+            const re = enrich.recheckStored ? await enrich.recheckStored(RECHECK_BATCH) : null
+            return {
+              picked: ids.length,
+              ...r,
+              ...(re && re.checked > 0
+                ? { rechecked: re.checked, recheck_improved: re.improved }
+                : {}),
+            }
           },
           db,
           now,

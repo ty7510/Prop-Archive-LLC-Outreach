@@ -237,9 +237,17 @@ function clamp01(n: unknown): number {
   return Math.min(1, Math.max(0, x))
 }
 
+/**
+ * Bump when the contact checks change (verify.ts, pageCheck.ts): stored answers checked by an
+ * older version are checked again in the background, with no new research call (recheck.ts).
+ */
+export const CHECK_VERSION = 2
+
 /** What the research stores: the model's answer plus the verdict on every contact. */
 export interface ResearchRaw extends ResearchResult {
   checked: CheckedContact[]
+  /** Which version of the checks gave these verdicts; missing on answers from before version 2. */
+  check_version?: number
 }
 
 /** The facts a contact can be tied to. */
@@ -283,7 +291,7 @@ export function mapResearchResult(
   /** From checkContacts, with the source pages the server opened. */
   checked: CheckedContact[],
 ): ProviderResult {
-  const raw: ResearchRaw = { ...parsed, checked }
+  const raw: ResearchRaw = { ...parsed, checked, check_version: CHECK_VERSION }
   const result: ProviderResult = {
     raw,
     confidence: clamp01(parsed.confidence),

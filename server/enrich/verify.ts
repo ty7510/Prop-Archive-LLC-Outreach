@@ -60,15 +60,24 @@ export interface OwnerFacts {
 
 const DIRECTIONS = new Set(['N', 'S', 'E', 'W', 'NORTH', 'SOUTH', 'EAST', 'WEST'])
 
-/** "1022 PINE" from "1022 Pine Street #202" or "1022 S. Pine St": house number and street name. */
+/**
+ * The street name's position after the house number at `i`: skips the end of a house number range
+ * ("2151-53 Cross St", common on Philadelphia records) and a direction ("S", "North").
+ */
+function streetNameAt(words: string[], i: number): number {
+  let j = i + 1
+  if (j < words.length - 1 && /^\d{1,4}$/.test(words[j]!)) j++
+  while (j < words.length && DIRECTIONS.has(words[j]!)) j++
+  return j
+}
+
+/** "1022 PINE" from "1022 Pine Street #202", "1022 S. Pine St" or "1022-24 Pine St". */
 export function streetKey(address: string | null | undefined): string | null {
   const words = normaliseStreet(address).split(' ').filter(Boolean)
   const num = words[0]
   if (!num || !/^\d{1,6}[A-Z]?$/.test(num)) return null
-  let i = 1
-  while (i < words.length && DIRECTIONS.has(words[i]!)) i++
-  const name = words[i]
-  return name ? `${num} ${name}` : null
+  const name = words[streetNameAt(words, 0)]
+  return name && !/^\d+$/.test(name) ? `${num} ${name}` : null
 }
 
 /** Every "number street" key mentioned anywhere in a text. */
@@ -77,9 +86,8 @@ export function streetKeysIn(text: string): Set<string> {
   const keys = new Set<string>()
   for (let i = 0; i < words.length; i++) {
     if (!/^\d{1,6}[A-Z]?$/.test(words[i]!)) continue
-    let j = i + 1
-    while (j < words.length && DIRECTIONS.has(words[j]!)) j++
-    if (words[j] && !/^\d+$/.test(words[j]!)) keys.add(`${words[i]} ${words[j]}`)
+    const name = words[streetNameAt(words, i)]
+    if (name && !/^\d+$/.test(name)) keys.add(`${words[i]} ${name}`)
   }
   return keys
 }
@@ -186,13 +194,72 @@ interface Tie {
   named: boolean
 }
 
+/** Words that are part of a name but say nothing about who it is. */
+const NAME_NOISE = new Set([
+  'JR',
+  'SR',
+  'II',
+  'III',
+  'IV',
+  'MR',
+  'MRS',
+  'MS',
+  'DR',
+  'AND',
+  'ET',
+  'AL',
+  'ETAL',
+  'DE',
+  'LA',
+  'DI',
+  'DA',
+  'DEL',
+  'DER',
+  'VAN',
+  'VON',
+  'LE',
+  'ST',
+  'TRUSTEE',
+  'TR',
+])
+
+/** Upper case, apostrophes dropped, hyphens and other marks as spaces: "O'Brien-Kelly" -> "OBRIEN KELLY". */
+function nameForm(text: string): string {
+  return text
+    .toUpperCase()
+    .replace(/['\u2019]/g, '')
+    .replace(/[^A-Z]+/g, ' ')
+}
+
+/**
+ * The words of the owner's name, without initials and titles. "Smith John A", "John A. Smith" and
+ * "John Smith" all give JOHN and SMITH, so a page that writes the name another way still names them.
+ * A hyphenated surname stays one word ("BUDA LEVIN"), so it never counts as two words of the name.
+ */
+export function nameWords(
+  facts: Pick<OwnerFacts, 'full_name' | 'first_name' | 'last_name'>,
+): string[] {
+  const text = [facts.full_name, facts.first_name, facts.last_name]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/&[a-z]+;|&#x?[0-9a-f]+;/gi, ' ') // "Karl &amp; Evelyn" as stored by some sources
+  const words = text
+    .split(/\s+/)
+    .map((w) => nameForm(w).trim())
+    .filter((w) => w.length >= 2 && !NAME_NOISE.has(w))
+  return [...new Set(words)]
+}
+
+/** At least two words of their name, as whole words, one of them three letters or more. */
+function nameShownIn(text: string, words: string[]): boolean {
+  const form = ` ${nameForm(text)} `
+  const found = words.filter((w) => form.includes(` ${w} `))
+  return found.length >= 2 && found.some((w) => w.length >= 3)
+}
+
 function namedIn(text: string, facts: OwnerFacts): 'name' | 'company' | null {
   const upper = text.toUpperCase()
-  const last = (facts.last_name ?? '').trim().toUpperCase()
-  const first = (facts.first_name ?? '').trim().toUpperCase()
-  if (last.length >= 2 && first.length >= 2 && upper.includes(last) && upper.includes(first)) {
-    return 'name'
-  }
+  if (nameShownIn(text, nameWords(facts))) return 'name'
   const tokens = companyTokens(facts.company ?? '')
   if (tokens.some((t) => t.length >= 4) && tokens.every((t) => upper.includes(t))) return 'company'
   return null
@@ -260,11 +327,14 @@ function profileNameTie(field: ContactField, value: string, facts: OwnerFacts): 
       .replace(/\/+$/, '')
       .split('/')
       .pop() ?? ''
-  ).toLowerCase()
-  const first = (facts.first_name ?? '').trim().toLowerCase()
-  const last = (facts.last_name ?? '').trim().toLowerCase()
-  if (first.length < 3 || last.length < 3) return null
-  if (!handle.includes(first) || !handle.includes(last)) return null
+  )
+    .toUpperCase()
+    .replace(/[^A-Z]/g, '')
+  // Two words of their name in the link, each three letters or more ("jonathan-potter-4a1b").
+  const inHandle = nameWords(facts)
+    .map((w) => w.replace(/ /g, ''))
+    .filter((w) => w.length >= 3 && handle.includes(w))
+  if (inHandle.length < 2) return null
   return {
     kind: 'name',
     reason: `the profile link carries the name ${facts.full_name ?? `${facts.first_name} ${facts.last_name}`}`,
