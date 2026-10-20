@@ -26,6 +26,8 @@ export type JobName = (typeof JOB_ORDER)[number]
 export const ENRICH_BATCH = 10
 /** Stored research answers checked again per tick when the contact checks improve. */
 const RECHECK_BATCH = 10
+/** Saved LinkedIn links name-checked per tick. Each is one read and one write, no outside call. */
+const LINKEDIN_CHECK_BATCH = 100
 export const SYNC_REPLIES_EVERY_MS = 10 * 60_000
 export const HOUSEKEEPING_EVERY_MS = 60 * 60_000
 
@@ -207,12 +209,17 @@ export async function runTick(options: TickOptions = {}): Promise<TickSummary> {
                 : await enrich.enrichLeads(ids)
             // Stored answers checked by older contact checks get checked again (no research call).
             const re = enrich.recheckStored ? await enrich.recheckStored(RECHECK_BATCH) : null
+            // LinkedIn links whose profile name is not the lead's come off (linkedinCheck.ts).
+            const li = enrich.checkSavedLinkedIn
+              ? await enrich.checkSavedLinkedIn(LINKEDIN_CHECK_BATCH)
+              : null
             return {
               picked: ids.length,
               ...r,
               ...(re && re.checked > 0
                 ? { rechecked: re.checked, recheck_improved: re.improved }
                 : {}),
+              ...(li && li.removed > 0 ? { linkedin_wrong_name_removed: li.removed } : {}),
             }
           },
           db,

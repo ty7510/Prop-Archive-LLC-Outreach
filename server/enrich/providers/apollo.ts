@@ -106,7 +106,11 @@ export function mapApolloPerson(
   if (last) result.last_name = last
   if (name) result.full_name = name
   const linkedin = clean(person.linkedin_url)
-  if (linkedin) result.linkedin_url = linkedin
+  if (linkedin) {
+    result.linkedin_url = linkedin
+    const shown = name ?? [first, last].filter(Boolean).join(' ')
+    if (shown) result.linkedin_names = [shown]
+  }
   const email = clean(person.email)
   const status = mapApolloEmailStatus(person.email_status)
   if (email && status !== 'invalid') {

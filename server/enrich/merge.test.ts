@@ -70,17 +70,37 @@ describe('shouldReplaceEmail', () => {
 
 describe('mergeProviderResult', () => {
   it('fills empty fields and leaves filled ones alone', () => {
-    const lead = makeLead({ company: 'Keep LLC', website: null })
+    const lead = makeLead({
+      company: 'Keep LLC',
+      website: null,
+      full_name: 'Maya Lopez',
+      first_name: 'Maya',
+      last_name: 'Lopez',
+    })
     const patch = mergeProviderResult(lead, {
       raw: {},
       confidence: 0.5,
       company: 'Other LLC',
       website: 'https://keep.com',
-      linkedin_url: ' https://linkedin.com/in/x ',
+      linkedin_url: ' https://linkedin.com/in/maya-lopez ',
     })
     expect(patch).toEqual({
       website: 'https://keep.com',
-      linkedin_url: 'https://linkedin.com/in/x',
+      linkedin_url: 'https://linkedin.com/in/maya-lopez',
+    })
+  })
+
+  it('never saves a LinkedIn profile whose name is someone else', () => {
+    const lead = makeLead({ full_name: 'Maya Lopez', first_name: 'Maya', last_name: 'Lopez' })
+    const merge = (linkedin_url: string, linkedin_names?: string[]) =>
+      mergeProviderResult(lead, { raw: {}, confidence: 0.7, linkedin_url, linkedin_names })
+    // A lookup API matched a namesake, or research took another person's profile.
+    expect(merge('https://linkedin.com/in/jsmith', ['John Smith'])).toEqual({})
+    expect(merge('https://linkedin.com/in/rosa-lopez-12')).toEqual({})
+    expect(merge('https://linkedin.com/in/x9')).toEqual({})
+    // The name the source showed for it is theirs.
+    expect(merge('https://linkedin.com/in/x9', ['Maya Lopez - Owner | LinkedIn'])).toEqual({
+      linkedin_url: 'https://linkedin.com/in/x9',
     })
   })
 

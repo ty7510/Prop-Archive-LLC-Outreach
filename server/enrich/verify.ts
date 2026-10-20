@@ -177,7 +177,7 @@ const COMPANY_NOISE = new Set([
   'OF',
 ])
 
-function companyTokens(company: string): string[] {
+export function companyTokens(company: string): string[] {
   return company
     .toUpperCase()
     .replace(/[^A-Z0-9 ]/g, ' ')
@@ -195,7 +195,7 @@ interface Tie {
 }
 
 /** Words that are part of a name but say nothing about who it is. */
-const NAME_NOISE = new Set([
+export const NAME_NOISE = new Set([
   'JR',
   'SR',
   'II',
@@ -224,8 +224,10 @@ const NAME_NOISE = new Set([
 ])
 
 /** Upper case, apostrophes dropped, hyphens and other marks as spaces: "O'Brien-Kelly" -> "OBRIEN KELLY". */
-function nameForm(text: string): string {
+export function nameForm(text: string): string {
   return text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // "José" reads as JOSE
     .toUpperCase()
     .replace(/['\u2019]/g, '')
     .replace(/[^A-Z]+/g, ' ')

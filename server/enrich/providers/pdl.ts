@@ -62,7 +62,11 @@ export function mapPdlResponse(res: PdlResponse): ProviderResult {
   if (first) result.first_name = first
   if (last) result.last_name = last
   const linkedin = clean(person.linkedin_url)
-  if (linkedin) result.linkedin_url = withScheme(linkedin)
+  if (linkedin) {
+    result.linkedin_url = withScheme(linkedin)
+    const shown = full ?? [first, last].filter(Boolean).join(' ')
+    if (shown) result.linkedin_names = [shown]
+  }
   const work = clean(person.work_email)
   const anyEmail = person.emails?.find((e) => clean(e.address))?.address ?? null
   const email = work ?? clean(anyEmail)
