@@ -9,6 +9,7 @@ import {
   createClaudeResearchProvider,
   ownerFacts,
   mapResearchResult,
+  searchProfileTitles,
   RESEARCH_MAX_TOKENS,
   RESEARCH_MODEL,
   ResearchSchema,
@@ -237,6 +238,52 @@ describe('mapResearchResult', () => {
 
   it('clamps confidence', () => {
     expect(map({ ...found, confidence: 7 }).confidence).toBe(1)
+  })
+
+  it('never saves a LinkedIn profile that search shows is someone else', () => {
+    // The model quoted Ray's name, but web search showed the profile belongs to another person.
+    const other: ResearchResult = {
+      ...found,
+      contacts: [
+        {
+          field: 'linkedin_url',
+          value: 'https://www.linkedin.com/in/rtorres88',
+          role: 'owner',
+          source_url: 'https://www.linkedin.com/in/rtorres88',
+          quote: 'Ray Torres, Owner at Torres Property Group',
+          tie_quote: null,
+        },
+      ],
+    }
+    const checked = checkContacts(other.contacts, facts(), new Map())
+    const titles = { 'in/rtorres88': ['Rosa Torres - Nurse - Temple Health | LinkedIn'] }
+    const r = mapResearchResult(other, lead(), 1, checked, titles)
+    expect(r.linkedin_url).toBeUndefined()
+    expect((r.raw as { profile_titles: unknown }).profile_titles).toEqual(titles)
+    // The same link with a search title that shows Ray is kept.
+    const right = { 'in/rtorres88': ['Ray Torres - Owner - Torres Property Group | LinkedIn'] }
+    expect(mapResearchResult(other, lead(), 1, checked, right).linkedin_url).toBe(
+      'https://www.linkedin.com/in/rtorres88',
+    )
+  })
+
+  it('reads the LinkedIn titles web search showed', () => {
+    const blocks = [
+      { type: 'text', text: 'x' },
+      {
+        type: 'web_search_tool_result',
+        tool_use_id: 't',
+        content: [
+          {
+            type: 'web_search_result',
+            url: 'https://www.linkedin.com/in/Ray-Torres-1/',
+            title: 'Ray Torres | LinkedIn',
+          },
+          { type: 'web_search_result', url: 'https://torrespg.com', title: 'Torres PG' },
+        ],
+      },
+    ] as unknown as Parameters<typeof searchProfileTitles>[0]
+    expect(searchProfileTitles(blocks)).toEqual({ 'in/ray-torres-1': ['Ray Torres | LinkedIn'] })
   })
 })
 

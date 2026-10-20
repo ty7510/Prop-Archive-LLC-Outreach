@@ -18,6 +18,8 @@ export interface EnrichModule {
   researchPause?(): Promise<ResearchPaused | null>
   /** Check stored research answers again with newer contact checks. No research call. */
   recheckStored?(limit: number): Promise<{ checked: number; improved: number }>
+  /** Take saved LinkedIn links off leads when the name on the profile is not theirs. */
+  checkSavedLinkedIn?(limit: number): Promise<{ checked: number; removed: number }>
 }
 
 export interface OutreachModule {

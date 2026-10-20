@@ -3,6 +3,7 @@
 import type { EmailStatus } from '../../shared/types.ts'
 import type { Lead } from '../db/schema.ts'
 import { isLlc, normaliseEmail, normalisePhone, splitName, titleCase } from '../lib/text.ts'
+import { linkedInNameMatches } from './linkedinName.ts'
 import type { LeadContactFields, ProviderResult } from './types.ts'
 
 const EMAIL_RANK: Record<EmailStatus, number> = { invalid: 0, unknown: 1, risky: 1, valid: 3 }
@@ -48,7 +49,6 @@ const TEXT_FIELDS: TextField[] = [
   'first_name',
   'last_name',
   'company',
-  'linkedin_url',
   'instagram_url',
   'facebook_url',
   'website',
@@ -123,6 +123,21 @@ export function mergeProviderResult(
     if (parts.last_name) patch.last_name = parts.last_name
   } else if (!fullName && (firstName || lastName)) {
     patch.full_name = titleCase(`${firstName} ${lastName}`.trim())
+  }
+
+  // LinkedIn: only a profile whose name is this lead's name (or a page with their company's name).
+  // A lookup that matched a namesake, or research that took someone else's profile, is dropped.
+  const incomingLinkedIn = str(result.linkedin_url)
+  if (incomingLinkedIn && !str(lead.linkedin_url)) {
+    const named = {
+      full_name: patch.full_name ?? lead.full_name,
+      first_name: patch.first_name ?? lead.first_name,
+      last_name: patch.last_name ?? lead.last_name,
+      company: patch.company ?? lead.company,
+    }
+    if (linkedInNameMatches(named, incomingLinkedIn, result.linkedin_names ?? [])) {
+      patch.linkedin_url = incomingLinkedIn
+    }
   }
 
   // A human behind an LLC turns owner_kind into 'person'. Never the other way round.

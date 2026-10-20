@@ -87,7 +87,7 @@ async function recheckOne(leadId: string, deps: Required<RecheckDeps>): Promise<
   const owned = await db.select().from(properties).where(eq(properties.lead_id, leadId))
   const rentals = owned.map((p) => p.address ?? '').filter(Boolean)
   const checked = await verifyContacts(raw, ownerFacts(lead, rentals), deps.pageFetcher)
-  const result = mapResearchResult(raw, lead, 0, checked)
+  const result = mapResearchResult(raw, lead, 0, checked, raw.profile_titles)
   const current: Lead = { ...lead }
   const patch = mergeProviderResult(current, result)
   Object.assign(current, patch)

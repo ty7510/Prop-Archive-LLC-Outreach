@@ -3,16 +3,19 @@
 import { registerModule } from '../contracts.ts'
 import { enrichLeads, pickBatch, researchPause } from './orchestrator.ts'
 import { recheckStored } from './recheck.ts'
+import { checkSavedLinkedIn } from './linkedinCheck.ts'
 
 registerModule('enrich', {
   pickBatch: (limit) => pickBatch(limit),
   enrichLeads: (ids) => enrichLeads(ids),
   researchPause: () => researchPause(),
   recheckStored: (limit) => recheckStored(limit),
+  checkSavedLinkedIn: (limit) => checkSavedLinkedIn(limit),
 })
 
 export { enrichLeads, pickBatch, researchPause } from './orchestrator.ts'
 export { recheckStored } from './recheck.ts'
+export { checkSavedLinkedIn } from './linkedinCheck.ts'
 export { usageReport } from './usage.ts'
 export { computeChannels, hasEnoughContact } from './channels.ts'
 export type { EnrichProvider, EnrichContext, ProviderResult, LeadContactFields } from './types.ts'

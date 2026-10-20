@@ -45,6 +45,11 @@ export interface ProviderResult extends Partial<LeadContactFields> {
   /** Credits actually consumed. Defaults to provider.costPerCall when omitted. */
   credits_used?: number
   property_updates?: PropertyUpdate[]
+  /**
+   * The name a source showed for linkedin_url: search result titles, or the person a lookup API
+   * matched. merge.ts keeps the link only when this or the link itself carries the lead's name.
+   */
+  linkedin_names?: string[]
 }
 
 export interface EnrichContext {

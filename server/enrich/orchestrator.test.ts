@@ -31,8 +31,8 @@ describe('when Claude research is down', () => {
       db,
     )
     const env = testEnv({ ANTHROPIC_API_KEY: 'k', APOLLO_API_KEY: 'k' })
-    const a = await insertLead(db, { full_name: 'A B' })
-    const b = await insertLead(db, { full_name: 'C D' })
+    const a = await insertLead(db, { full_name: 'Ann Bell' })
+    const b = await insertLead(db, { full_name: 'Ann Bell' })
     const noCredits = Object.assign(
       new Error(
         '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}',
@@ -40,13 +40,13 @@ describe('when Claude research is down', () => {
       { status: 400 },
     )
     const research = fakeProvider('claude_research', noCredits)
-    const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/ab' })
+    const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/ann-bell' })
     const deps = { db, env, providers: { claude_research: research, apollo }, now }
 
     expect(await enrichLeads([a.id], deps)).toEqual({ enriched: 0, failed: 1, skipped: 0 })
     const lead = await getLead(a.id)
     expect(lead.status).toBe('new') // picked again once research is back, never enrolled before
-    expect(lead.linkedin_url).toBe('https://linkedin.com/in/ab') // what Apollo found is kept
+    expect(lead.linkedin_url).toBe('https://linkedin.com/in/ann-bell') // what Apollo found is kept
     const down = (await listActivity(100, db)).filter((x) => x.event === 'enrich.provider_down')
     expect(down).toHaveLength(1)
     expect(down[0]!.detail).toMatchObject({
@@ -62,7 +62,7 @@ describe('when Claude research is down', () => {
     expect(research.calls).toHaveLength(1)
     expect(apollo.calls.map((l) => l.id)).toEqual([a.id, b.id])
     expect((await getLead(b.id)).status).toBe('new')
-    expect((await getLead(b.id)).linkedin_url).toBe('https://linkedin.com/in/ab')
+    expect((await getLead(b.id)).linkedin_url).toBe('https://linkedin.com/in/ann-bell')
     expect(await pickBatch(10, deps)).toEqual([])
 
     // After the pause both are picked, and research gets its turn.
@@ -219,7 +219,7 @@ describe('enrichLeads', () => {
     })
     const research = fakeProvider('claude_research', {
       email: 'ray@torrespg.com',
-      linkedin_url: 'https://linkedin.com/in/ray',
+      linkedin_url: 'https://linkedin.com/in/ray-torres',
     })
     const hunter = fakeProvider('hunter', { email: 'other@x.com', email_status: 'valid' })
     const apollo = fakeProvider('apollo', { phone: '2155550100' })
@@ -240,13 +240,13 @@ describe('enrichLeads', () => {
 
   it('stops once every wanted field is filled', async () => {
     await updateSettings({ enrichment: { providers: ['pdl', 'apollo'] } }, db)
-    const a = await insertLead(db, { full_name: 'A B' })
+    const a = await insertLead(db, { full_name: 'Ann Bell' })
     const env = testEnv({ PDL_API_KEY: 'k', APOLLO_API_KEY: 'k' })
     const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/x' })
     const pdlFull = fakeProvider('pdl', {
       email: 'a@b.co',
       phone: '2155550100',
-      linkedin_url: 'https://linkedin.com/in/a',
+      linkedin_url: 'https://linkedin.com/in/ann-bell',
       instagram_url: 'https://instagram.com/a',
       facebook_url: 'https://facebook.com/a',
       website: 'https://a.co',
@@ -337,13 +337,13 @@ describe('enrichLeads', () => {
   it('a failing provider is logged and the rest still run; all failing puts the lead back to new', async () => {
     await updateSettings({ enrichment: { providers: ['pdl', 'apollo'] } }, db)
     const env = testEnv({ PDL_API_KEY: 'k', APOLLO_API_KEY: 'k' })
-    const ok = await insertLead(db, { full_name: 'A B' })
+    const ok = await insertLead(db, { full_name: 'Ann Bell' })
     const bad = await insertLead(db, { full_name: 'C D' })
     const boom = fakeProvider('pdl', new Error('pdl: HTTP 500'))
-    const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/x' })
+    const apollo = fakeProvider('apollo', { linkedin_url: 'https://linkedin.com/in/ann-bell' })
     const r1 = await enrichLeads([ok.id], { db, env, providers: { pdl: boom, apollo }, now })
     expect(r1).toEqual({ enriched: 1, failed: 0, skipped: 0 })
-    expect((await getLead(ok.id)).linkedin_url).toBe('https://linkedin.com/in/x')
+    expect((await getLead(ok.id)).linkedin_url).toBe('https://linkedin.com/in/ann-bell')
     expect((await getLead(ok.id)).status).toBe('enriched')
 
     const boom2 = fakeProvider('apollo', new Error('apollo: HTTP 429'))
@@ -498,7 +498,7 @@ describe('when Claude research is out of searches for the month', () => {
     const research = fakeProvider('claude_research', {})
     const pdl = fakeProvider('pdl', {
       email: 'y@x.co',
-      linkedin_url: 'https://www.linkedin.com/in/y-z',
+      linkedin_url: 'https://www.linkedin.com/in/yuri-zane',
     })
     const deps = { db, env, providers: { claude_research: research, pdl }, now }
     const x = await insertLead(db, { full_name: 'X Y' })
@@ -506,13 +506,13 @@ describe('when Claude research is out of searches for the month', () => {
     await enrichLeads([x.id], deps)
     expect(research.calls).toHaveLength(1)
 
-    const y = await insertLead(db, { full_name: 'Y Z' })
+    const y = await insertLead(db, { full_name: 'Yuri Zane' })
     expect(await pickBatch(10, deps)).toEqual([y.id])
     expect(await enrichLeads([y.id], deps)).toEqual({ enriched: 1, failed: 0, skipped: 0 })
     expect(research.calls).toHaveLength(1)
     const saved = await getLead(y.id)
     expect(saved.email).toBe('y@x.co')
-    expect(saved.linkedin_url).toBe('https://www.linkedin.com/in/y-z')
+    expect(saved.linkedin_url).toBe('https://www.linkedin.com/in/yuri-zane')
 
     // People Data Labs already answered for y: never asked again while research waits.
     expect(await pickBatch(10, deps)).toEqual([])

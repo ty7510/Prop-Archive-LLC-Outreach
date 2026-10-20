@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm'
 import { events, leads, type Lead } from '../db/schema.ts'
 import { creditsUsed, monthRange, recordUsage } from '../enrich/usage.ts'
 import { computeChannels } from '../enrich/channels.ts'
+import { linkedInNameMatches } from '../enrich/linkedinName.ts'
 import { logActivity } from '../lib/activity.ts'
 import { newId } from '../lib/ids.ts'
 import { isLlc } from '../lib/text.ts'
@@ -169,15 +170,13 @@ function fold(s: string): string {
 
 /** Does the search result name this person: first and last name in its title or its link? */
 export function namesPerson(c: Candidate, person: FinderPerson): boolean {
-  const first = fold(person.first)
-  const last = fold(person.last)
-  // The title's name part comes before " - " or " | " ("Jane Doe - Owner - Doe Homes | LinkedIn").
-  const nameWords = fold(c.title.split(/\s[-|–]\s/)[0] ?? '')
-    .split(/[^a-z']+/)
-    .filter(Boolean)
-  if (nameWords.includes(first) && nameWords.includes(last)) return true
-  const slug = fold(c.url.match(/\/in\/([^/]+)/)?.[1] ?? '')
-  return slug.includes(first) && slug.includes(last)
+  const name = {
+    full_name: `${person.first} ${person.last}`,
+    first_name: person.first,
+    last_name: person.last,
+    company: null,
+  }
+  return linkedInNameMatches(name, c.url, [c.title])
 }
 
 const TIE_WORDS =

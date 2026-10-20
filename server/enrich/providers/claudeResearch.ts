@@ -9,6 +9,7 @@ import type { Env } from '../../env.ts'
 import { isLlc } from '../../lib/text.ts'
 import { clean, emptyResult, type EnrichProvider, type ProviderResult } from '../types.ts'
 import { fetchPublicPage, type PageFetcher } from '../pageCheck.ts'
+import { linkedInKey, linkedInNameMatches } from '../linkedinName.ts'
 import {
   CONTACT_FIELDS,
   checkContacts,
@@ -248,6 +249,46 @@ export interface ResearchRaw extends ResearchResult {
   checked: CheckedContact[]
   /** Which version of the checks gave these verdicts; missing on answers from before version 2. */
   check_version?: number
+  /**
+   * The titles web search showed for each LinkedIn link, by linkedInKey: the name on the profile.
+   * Missing on answers from before 2026-10-20.
+   */
+  profile_titles?: Record<string, string[]>
+}
+
+/** Every LinkedIn link the web searches returned, with the titles shown for it. */
+export function searchProfileTitles(
+  blocks: readonly Anthropic.Messages.ContentBlock[],
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const block of blocks) {
+    if (block.type !== 'web_search_tool_result' || !Array.isArray(block.content)) continue
+    for (const r of block.content) {
+      const key = linkedInKey(r.url)
+      const title = (r.title ?? '').trim()
+      if (!key || !title) continue
+      const list = (out[key] ??= [])
+      if (!list.includes(title)) list.push(title)
+    }
+  }
+  return out
+}
+
+/**
+ * The names a source showed for this LinkedIn link. With search titles stored, only those count
+ * (the model's quote is its own words). Older answers have none, so their quotes stand in.
+ */
+function namesShownFor(
+  contacts: CheckedContact[],
+  value: string,
+  titles: Record<string, string[]> | undefined,
+): string[] {
+  const key = linkedInKey(value)
+  if (titles) return key ? (titles[key] ?? []) : []
+  return contacts
+    .filter((c) => c.field === 'linkedin_url' && linkedInKey(c.value) === key)
+    .flatMap((c) => [c.quote ?? '', c.tie_quote ?? ''])
+    .filter(Boolean)
 }
 
 /** The facts a contact can be tied to. */
@@ -290,8 +331,15 @@ export function mapResearchResult(
   credits_used: number,
   /** From checkContacts, with the source pages the server opened. */
   checked: CheckedContact[],
+  /** Titles web search showed per LinkedIn link (searchProfileTitles); undefined for old answers. */
+  profileTitles?: Record<string, string[]>,
 ): ProviderResult {
-  const raw: ResearchRaw = { ...parsed, checked, check_version: CHECK_VERSION }
+  const raw: ResearchRaw = {
+    ...parsed,
+    checked,
+    check_version: CHECK_VERSION,
+    ...(profileTitles ? { profile_titles: profileTitles } : {}),
+  }
   const result: ProviderResult = {
     raw,
     confidence: clamp01(parsed.confidence),
@@ -314,14 +362,29 @@ export function mapResearchResult(
 
   // Best owner contact per field: verified beats likely. Email and phone only when verified:
   // the sequence emails automatically and a call to the wrong person is worse than no call.
+  // LinkedIn also needs the name on the profile to be theirs (linkedinName.ts).
+  const named = {
+    full_name: lead.full_name ?? result.full_name ?? null,
+    first_name: lead.first_name,
+    last_name: lead.last_name,
+    company: lead.company ?? result.company ?? null,
+  }
   for (const field of CONTACT_FIELDS) {
-    const owner = checked.filter((c) => c.field === field && c.role === 'owner')
+    let owner = checked.filter((c) => c.field === field && c.role === 'owner')
+    if (field === 'linkedin_url') {
+      owner = owner.filter((c) =>
+        linkedInNameMatches(named, c.value, namesShownFor(checked, c.value, profileTitles)),
+      )
+    }
     const strict = field === 'email' || field === 'phone'
     const best =
       owner.find((c) => c.verdict === 'verified') ??
       (strict ? undefined : owner.find((c) => c.verdict === 'likely'))
     if (!best) continue
     ;(result as unknown as Record<string, unknown>)[OWNER_FIELD[field]] = best.value
+    if (field === 'linkedin_url') {
+      result.linkedin_names = namesShownFor(checked, best.value, profileTitles)
+    }
   }
   // Research never checks deliverability; a mailbox-verified address from another provider wins.
   if (result.email) result.email_status = 'unknown'
@@ -379,9 +442,12 @@ export function createClaudeResearchProvider(deps: ClaudeResearchDeps = {}): Enr
       const prompt = buildResearchPrompt(lead, rentals)
       let messages: Anthropic.Messages.MessageParam[] = [{ role: 'user', content: prompt }]
       let calls = 0
+      // Every turn's search results, for the names shown on LinkedIn links.
+      const seen: Anthropic.Messages.ContentBlock[] = []
       for (let turn = 0; turn < RESEARCH_MAX_TURNS; turn++) {
         calls++
         const message = await client.parse(buildResearchParams(prompt, messages))
+        seen.push(...(message.content ?? []))
         // Always look at stop_reason before trusting content.
         if (message.stop_reason === 'pause_turn') {
           // The server tool loop paused; hand the assistant turn back and let it finish.
@@ -404,7 +470,13 @@ export function createClaudeResearchProvider(deps: ClaudeResearchDeps = {}): Enr
           ownerFacts(lead, rentals),
           deps.pageFetcher ?? fetchPublicPage,
         )
-        return mapResearchResult(message.parsed_output, lead, calls, checked)
+        return mapResearchResult(
+          message.parsed_output,
+          lead,
+          calls,
+          checked,
+          searchProfileTitles(seen),
+        )
       }
       await ctx.log('warn', 'enrich.research_paused_too_long', { lead_id: lead.id })
       return emptyResult({ stop_reason: 'pause_turn' }, calls)
