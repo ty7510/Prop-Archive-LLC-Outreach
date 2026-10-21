@@ -9,6 +9,7 @@ import { judge, rejectLinkedInProfile, type LinkedInSearch } from './linkedinFin
 import { recordOutcome } from './outcomes.ts'
 import { addSuppression } from './suppression.ts'
 import { actOnQueueItem } from './queue.ts'
+import { NO_NEW_LINKEDIN } from '../../shared/types.ts'
 import { fillTodo, listTodo } from './todo.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 
@@ -350,6 +351,26 @@ describe('to-do list', () => {
     for (const p of (await listTodo(deps)).people)
       for (const s of p.steps) await actOnQueueItem(deps, s.message_id, 'skip')
     expect((await fillTodo(deps)).added).toBe(0)
+  })
+
+  // Theo, 2026-10-21: "the linkedin is not refreshing to show me todays 25". With every profiled
+  // lead already reached (and Enrich out of credits), there was room but nobody to add, and the
+  // fill answered a bare zero that the page read as "already on your list".
+  it('says when there is room for LinkedIn notes but nobody new has a LinkedIn', async () => {
+    const { db, deps } = await todoSetup()
+    for (let i = 0; i < 3; i++) await insertLead(db, { linkedin_url: null })
+    const result = await fillTodo(deps)
+    expect(result.added).toBe(2)
+    expect(result.reason).toBe(NO_NEW_LINKEDIN)
+  })
+
+  it('gives no such reason once the LinkedIn notes fill the goal', async () => {
+    const { db, deps } = await todoSetup()
+    await insertLead(db, { full_name: 'First Person' })
+    await insertLead(db, { full_name: 'Second Person' })
+    const result = await fillTodo(deps)
+    expect(result.added).toBe(2)
+    expect(result.reason).toBeUndefined()
   })
 
   it('never looks people up on LinkedIn itself while it fills the list', async () => {

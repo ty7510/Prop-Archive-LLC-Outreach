@@ -5,8 +5,8 @@ import { useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks, Loader2, Printer, Tag, UserPlus } from 'lucide-react'
-import type { TodoList } from '@shared/types'
-import { fillTodoNow, getTodo, printLabelsUrl, printQueueUrl } from '../api.ts'
+import { NO_NEW_LINKEDIN, type TodoList } from '@shared/types'
+import { fillTodoNow, getReadiness, getTodo, printLabelsUrl, printQueueUrl } from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { CHANNEL_LABEL, relativeTime, shortDateTime } from '../lib/format.ts'
 import { todayLists } from '../lib/todayLists.ts'
@@ -35,12 +35,19 @@ export function TodoSection() {
   const [linkedInRunOpen, setLinkedInRunOpen] = useState(false)
   const [tab, setTab] = useTodayTab()
   const fill = useAction(fillTodoNow, {
-    success: (r) =>
-      r.added > 0
-        ? `${r.added} ${r.added === 1 ? 'person' : 'people'} added`
-        : r.reason === 'not a send day'
-          ? 'New people are added on weekdays'
-          : "Today's people are already on your list",
+    success: (r) => {
+      const people = `${r.added} ${r.added === 1 ? 'person' : 'people'} added`
+      // Room for LinkedIn notes but nobody new with a profile (Theo, 2026-10-21): never "already
+      // on your list", which read as if today's people were there.
+      if (r.reason === NO_NEW_LINKEDIN)
+        return r.added > 0
+          ? `${people}. Nobody new with a LinkedIn to add yet`
+          : 'Nobody new with a LinkedIn to add yet'
+      if (r.added > 0) return people
+      return r.reason === 'not a send day'
+        ? 'New people are added on weekdays'
+        : "Today's people are already on your list"
+    },
     invalidate: [['todo'], ['activity']],
   })
 
@@ -90,6 +97,9 @@ export function TodoSection() {
                 items={lists.linkedin}
                 data={data}
               />
+              {data.today.sent + lists.linkedin.length < data.today.goal ? (
+                <ResearchStopped />
+              ) : null}
               <TodayTabs tab={tab} onChange={setTab} lists={lists} people={data.people.length} />
 
               {/* All four lists stay mounted, so switching never drops words being edited. */}
@@ -349,5 +359,31 @@ export function RepliedSection() {
         </ul>
       )}
     </section>
+  )
+}
+
+/**
+ * Under today's LinkedIn goal while research has stopped (the Anthropic account is out of credits,
+ * the key was refused, or this month's research cap is reached): nobody new gets a LinkedIn
+ * profile, so the list cannot refill. Says so here, with the fix, instead of only in Settings
+ * (Theo, 2026-10-21: "the linkedin is not refreshing to show me todays 25").
+ */
+function ResearchStopped() {
+  const q = useQuery({ queryKey: ['readiness'], queryFn: getReadiness, staleTime: 60_000 })
+  const stopped = (q.data ?? []).filter(
+    (item) => !item.ok && (item.key === 'enrich' || item.key === 'research_cap'),
+  )
+  if (stopped.length === 0) return null
+  return (
+    <div role="status" className="card space-y-1 border-amber-300 bg-amber-50">
+      <p className="font-medium">
+        Research has stopped, so nobody new with a LinkedIn can come on the list.
+      </p>
+      {stopped.map((item) => (
+        <p key={item.key} className="text-stone-700">
+          {item.fix || item.label}
+        </p>
+      ))}
+    </div>
   )
 }

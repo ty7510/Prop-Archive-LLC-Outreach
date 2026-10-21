@@ -18,6 +18,7 @@ import type {
   TodoStep,
   TodoStepKind,
 } from '../../shared/types.ts'
+import { NO_NEW_LINKEDIN } from '../../shared/types.ts'
 import { events, leads, messages, sequenceSteps, type Lead, type Message } from '../db/schema.ts'
 import { logActivity } from '../lib/activity.ts'
 import { newId } from '../lib/ids.ts'
@@ -611,6 +612,8 @@ export async function fillTodo(
   const goal = settings.people_per_day
   let perRound = options.limit ?? 5
   let linkedInRoom = settings.channels.linkedin ? goal - progress.sent - progress.waiting : 0
+  const linkedInWanted = linkedInRoom > 0
+  let linkedInAdded = 0
   const otherRoom = goal - progress.withoutLinkedIn
   let added = 0
   // Enrich found an email for someone already on the list: it joins their card (Emails tab).
@@ -635,6 +638,7 @@ export async function fillTodo(
         added++
         perRound--
         linkedInRoom--
+        linkedInAdded++
       }
     }
   }
@@ -651,8 +655,11 @@ export async function fillTodo(
     }
     added += got
     perRound -= got
+    if (linkedIn) linkedInAdded += got
   }
-  return { added }
+  // Room for LinkedIn notes but nobody new to put on it: say so, so the page does not read a bare
+  // zero as "today's people are already on your list" (Theo, 2026-10-21).
+  return linkedInWanted && linkedInAdded === 0 ? { added, reason: NO_NEW_LINKEDIN } : { added }
 }
 
 /**

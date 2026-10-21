@@ -459,6 +459,12 @@ export type LinkedInProfileResult = z.infer<typeof LinkedInProfileResultSchema>
  * folder with Theo's card since 2026-10-16; older cards may still hold a 4x6 postcard), `email` is
  * written by the app and sent by Theo from Gmail, and `call` is only on cards made before then.
  */
+/**
+ * fillTodo's reason when there was room for LinkedIn notes today but nobody new has a LinkedIn
+ * profile to add (every profiled lead already reached, or research found none yet).
+ */
+export const NO_NEW_LINKEDIN = 'nobody new with a LinkedIn'
+
 export const TodoStepKindSchema = z.enum([
   'linkedin_connect',
   'linkedin_follow_up',
