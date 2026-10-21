@@ -15,6 +15,7 @@ import {
 } from './ownership.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 import { fillTodo, listTodo, recheckOpenCards } from './todo.ts'
+import { NO_NEW_LINKEDIN } from '../../shared/types.ts'
 
 const TUESDAY_10AM = new Date('2026-10-13T14:00:00.000Z')
 const DAY = 24 * 60 * 60 * 1000
@@ -114,7 +115,8 @@ describe('who owns their parcels now', () => {
     expect(r.lead.status).toBe('disqualified')
     expect(ownershipRecord(r.lead)?.status).toBe('sold_off')
     expect(opa.sqls[0]).toContain("parcel_number IN ('881000001','881000002','881000003')")
-    expect(await fillTodo(deps)).toEqual({ added: 0 })
+    // Never on the list; with no one else to add, the fill says nobody new has a LinkedIn.
+    expect(await fillTodo(deps)).toEqual({ added: 0, reason: NO_NEW_LINKEDIN })
   })
 
   it('sold some but still owns enough: stays, with the count lowered', async () => {
