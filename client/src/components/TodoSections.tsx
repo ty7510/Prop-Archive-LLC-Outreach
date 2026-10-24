@@ -4,9 +4,16 @@
 import { useState } from 'react'
 import { Link } from 'wouter'
 import { useQuery } from '@tanstack/react-query'
-import { ListChecks, Loader2, Printer, Tag, UserPlus } from 'lucide-react'
+import { Download, ListChecks, Loader2, Printer, Tag, UserPlus } from 'lucide-react'
 import { NO_NEW_LINKEDIN, type TodoList } from '@shared/types'
-import { fillTodoNow, getReadiness, getTodo, printLabelsUrl, printQueueUrl } from '../api.ts'
+import {
+  fillTodoNow,
+  getReadiness,
+  getTodo,
+  labelsPdfUrl,
+  printLabelsUrl,
+  printQueueUrl,
+} from '../api.ts'
 import { useAction } from '../hooks/useAction.ts'
 import { CHANNEL_LABEL, relativeTime, shortDateTime } from '../lib/format.ts'
 import { todayLists } from '../lib/todayLists.ts'
@@ -228,6 +235,11 @@ function PrintAll({ data }: { data: TodoList }) {
           className="btn-secondary"
         >
           <Tag className="h-4 w-4" aria-hidden /> Envelope labels
+        </a>
+      ) : null}
+      {printouts.length > 0 ? (
+        <a href={labelsPdfUrl(printouts)} download="envelope-labels.pdf" className="btn-secondary">
+          <Download className="h-4 w-4" aria-hidden /> Download labels (PDF)
         </a>
       ) : null}
       {postcards.length > 1 ? (

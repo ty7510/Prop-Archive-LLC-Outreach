@@ -1,6 +1,7 @@
 // 2026-10-16: the printout Theo mails in a folder with his card and the email he sends from Gmail.
 // The app writes both for each person, Theo proofs and edits them, and the app never sends either.
 import { eq } from 'drizzle-orm'
+import { PDFDocument } from 'pdf-lib'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PRINTOUT_BIO,
@@ -35,10 +36,12 @@ import {
 import {
   actOnQueueItem,
   editStepText,
+  envelopeLabels,
   printoutDoc,
   printPage,
   saveLinkedInProfile,
 } from './queue.ts'
+import { labelsPdf } from './labelsPdf.ts'
 import { insertLead, setSettings, setup } from './testFixtures.ts'
 import { clearStepProfile, fillTodo, listTodo, todoKey, upgradeOpenCards } from './todo.ts'
 import { getSettings } from '../lib/settings.ts'
@@ -370,12 +373,19 @@ describe('the print page', () => {
     expect(hasEmDash(html)).toBe(false)
 
     const labels = await printPage(deps, [...ids].reverse(), { labels: true })
-    expect(labels.match(/<div class="label">/g)).toHaveLength(2)
-    expect(labels).toContain('labels-sheet')
-    expect(labels).toContain('Avery 5163')
+    expect(labels.match(/<section class="label">/g)).toHaveLength(2)
+    expect(labels).toContain('@page label { size: 4in 6in')
+    expect(labels).toContain(`/api/queue/labels.pdf?ids=${ids[1]},${ids[0]}`)
     expect(labels.indexOf('Sam Ortiz')).toBeLessThan(labels.indexOf('Dana Smith'))
     expect(labels).toContain('Philadelphia, PA 19146')
     expect(labels).toContain('1500 Market St')
+
+    // The download: one 4 x 6 in portrait page per label, same order.
+    const found = await envelopeLabels(deps, [...ids].reverse())
+    expect(found.map((l) => l.to[0])).toEqual(['Sam Ortiz', 'Dana Smith'])
+    const pdf = await PDFDocument.load(await labelsPdf(found))
+    expect(pdf.getPageCount()).toBe(2)
+    expect(pdf.getPage(0).getSize()).toEqual({ width: 288, height: 432 })
   })
   it('looks like the overview page: logo band, four fact boxes, footer, photo once one is saved', async () => {
     const { db, deps } = await todoSetup()
