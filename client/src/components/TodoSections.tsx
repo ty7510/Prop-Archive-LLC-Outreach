@@ -10,6 +10,7 @@ import {
   fillTodoNow,
   getReadiness,
   getTodo,
+  labelsPdfFileName,
   labelsPdfUrl,
   printLabelsUrl,
   printQueueUrl,
@@ -238,7 +239,7 @@ function PrintAll({ data }: { data: TodoList }) {
         </a>
       ) : null}
       {printouts.length > 0 ? (
-        <a href={labelsPdfUrl(printouts)} download="envelope-labels.pdf" className="btn-secondary">
+        <a href={labelsPdfUrl(printouts)} download={labelsPdfFileName()} className="btn-secondary">
           <Download className="h-4 w-4" aria-hidden /> Download labels (PDF)
         </a>
       ) : null}

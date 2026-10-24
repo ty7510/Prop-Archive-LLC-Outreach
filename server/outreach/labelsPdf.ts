@@ -1,84 +1,96 @@
-import { PDFDocument, StandardFonts, type PDFFont } from 'pdf-lib'
-import type { EnvelopeLabel } from './queue.ts'
+import {
+  Duplex,
+  grayscale,
+  PDFDocument,
+  PrintScaling,
+  setCharacterSpacing,
+  StandardFonts,
+} from 'pdf-lib'
+import { LABEL_H, LABEL_W, layoutLabels, type EnvelopeLabel } from './labelLayout.ts'
+import { LABEL_MARK } from './labelMark.ts'
 
-/** A 4 x 6 in shipping label, portrait, in PDF points (72 a inch). */
-const W = 4 * 72
-const H = 6 * 72
-const MARGIN = 0.3 * 72
-
-/** The standard PDF fonts only know Windows-1252 letters; swap the rest for close ASCII. */
-function safe(text: string): string {
-  return text
-    .normalize('NFC')
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/[^\x20-\x7E\xA0-\xFF]/g, '')
+export interface LabelsPdfInfo {
+  title?: string
+  author?: string
+  date?: Date
 }
 
-/** Break one line into pieces that fit the width, on spaces where it can. */
-function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
-  const out: string[] = []
-  let line = ''
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    const next = line ? `${line} ${word}` : word
-    if (font.widthOfTextAtSize(next, size) <= width) {
-      line = next
-      continue
-    }
-    if (line) out.push(line)
-    line = word
-    while (font.widthOfTextAtSize(line, size) > width && line.length > 1) {
-      let cut = line.length - 1
-      while (cut > 1 && font.widthOfTextAtSize(line.slice(0, cut), size) > width) cut--
-      out.push(line.slice(0, cut))
-      line = line.slice(cut)
-    }
-  }
-  if (line) out.push(line)
-  return out
+/** A rounded rectangle as an SVG path, from its top left corner (Bezier corners). */
+function roundedRect(w: number, h: number, r: number): string {
+  const k = r * 0.4477
+  return [
+    `M${r} 0H${w - r}C${w - k} 0 ${w} ${k} ${w} ${r}`,
+    `V${h - r}C${w} ${h - k} ${w - k} ${h} ${w - r} ${h}`,
+    `H${r}C${k} ${h} 0 ${h - k} 0 ${h - r}`,
+    `V${r}C0 ${k} ${k} 0 ${r} 0Z`,
+  ].join('')
 }
 
 /**
- * One 4 x 6 in portrait page per label: return address top left, the person's address below.
- * Black text only: a thermal label printer turns grey into speckles.
+ * One 4 x 6 in portrait page per label, as laid out in labelLayout.ts: the black brand band, the
+ * return address, the person's address. Pure black only (a thermal printer turns grey into
+ * speckles), and the file asks the viewer to print at 100% on paper of the page's size.
  */
-export async function labelsPdf(labels: EnvelopeLabel[]): Promise<Uint8Array> {
+export async function labelsPdf(
+  labels: EnvelopeLabel[],
+  info: LabelsPdfInfo = {},
+): Promise<Uint8Array> {
   const pdf = await PDFDocument.create()
-  pdf.setTitle('Envelope labels')
+  const date = info.date ?? new Date()
+  pdf.setTitle(info.title ?? 'Envelope labels', { showInWindowTitleBar: true })
+  pdf.setSubject(
+    `${labels.length} envelope ${labels.length === 1 ? 'label' : 'labels'}, 4 x 6 in, one per page`,
+  )
+  pdf.setAuthor(info.author ?? 'Prop Archive LLC')
+  pdf.setCreator('Prop Archive Outreach')
   pdf.setProducer('Prop Archive Outreach')
+  pdf.setLanguage('en-US')
+  pdf.setCreationDate(date)
+  pdf.setModificationDate(date)
+  const prefs = pdf.catalog.getOrCreateViewerPreferences()
+  prefs.setPrintScaling(PrintScaling.None)
+  prefs.setPickTrayByPDFSize(true)
+  prefs.setDuplex(Duplex.Simplex)
+
   const regular = await pdf.embedFont(StandardFonts.Helvetica)
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
+  const black = grayscale(0)
+  const white = grayscale(1)
 
-  for (const label of labels) {
-    const page = pdf.addPage([W, H])
-    let y = H - MARGIN - 9
-    for (const raw of label.from) {
-      for (const line of wrap(safe(raw), regular, 9, W - 2 * MARGIN)) {
-        page.drawText(line, { x: MARGIN, y, size: 9, font: regular })
-        y -= 12
-      }
-    }
-
-    const toX = 0.5 * 72
-    const toWidth = W - toX - MARGIN
-    let size = 15
-    // The name in bold, the rest plain; each line wrapped to the label's width.
-    const fit = () =>
-      label.to.flatMap((l, i) => {
-        const font = i === 0 ? bold : regular
-        return wrap(safe(l), font, size, toWidth).map((text) => ({ text, font }))
+  for (const { pdf: art } of await layoutLabels(labels)) {
+    const page = pdf.addPage([LABEL_W, LABEL_H])
+    const { band, mark } = art
+    page.drawSvgPath(roundedRect(band.width, band.height, band.radius), {
+      x: band.x,
+      y: LABEL_H - band.y,
+      color: black,
+    })
+    page.drawSvgPath(LABEL_MARK.d, {
+      x: mark.x,
+      y: LABEL_H - mark.y,
+      scale: mark.width / LABEL_MARK.width,
+      color: white,
+    })
+    for (const r of art.rules) {
+      page.drawRectangle({
+        x: r.x,
+        y: LABEL_H - r.y - r.height,
+        width: r.width,
+        height: r.height,
+        color: black,
       })
-    let lines = fit()
-    // Shrink a long address until it fits the bottom part of the label.
-    while (size > 9 && lines.length * size * 1.4 > H - 2.4 * 72 - MARGIN) {
-      size -= 1
-      lines = fit()
     }
-    let toY = H - 2.4 * 72 - size
-    for (const { text, font } of lines) {
-      page.drawText(text, { x: toX, y: toY, size, font })
-      toY -= size * 1.4
+    for (const t of art.texts) {
+      if (!t.text) continue
+      if (t.tracking) page.pushOperators(setCharacterSpacing(t.tracking))
+      page.drawText(t.text, {
+        x: t.x,
+        y: LABEL_H - t.y,
+        size: t.size,
+        font: t.bold ? bold : regular,
+        color: t.white ? white : black,
+      })
+      if (t.tracking) page.pushOperators(setCharacterSpacing(0))
     }
   }
   return pdf.save()

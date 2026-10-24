@@ -186,6 +186,9 @@ export const printLabelsUrl = (ids: string[]) => `${printQueueUrl(ids)}&labels=1
 /** The same labels as a PDF file to download (works on a phone). */
 export const labelsPdfUrl = (ids: string[]) =>
   `/api/queue/labels.pdf?ids=${ids.map(encodeURIComponent).join(',')}`
+/** "envelope-labels-2026-10-24.pdf", today here (the server names the file the same way). */
+export const labelsPdfFileName = (now = new Date()) =>
+  `envelope-labels-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.pdf`
 /** One printout to proof and edit: this person's part plus the page as it prints. */
 export const getPrintout = (messageId: string) =>
   api<PrintoutDoc>(`/api/queue/${encodeURIComponent(messageId)}/printout`)
