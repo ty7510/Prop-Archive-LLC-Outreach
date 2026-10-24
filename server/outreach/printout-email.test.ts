@@ -37,6 +37,7 @@ import {
   actOnQueueItem,
   editStepText,
   envelopeLabels,
+  labelsDownload,
   printoutDoc,
   printPage,
   saveLinkedInProfile,
@@ -379,6 +380,11 @@ describe('the print page', () => {
     expect(labels.indexOf('Sam Ortiz')).toBeLessThan(labels.indexOf('Dana Smith'))
     expect(labels).toContain('Philadelphia, PA 19146')
     expect(labels).toContain('1500 Market St')
+    expect(labels).toContain('download="envelope-labels-2026-10-13.pdf"')
+    expect(labels).toContain('PROP ARCHIVE')
+    expect(labels).toContain('Label printer: paper 4 x 6 in (100 x 150 mm)')
+    expect(labels).not.toContain('class="fit-note">The PDF')
+    expect(hasEmDash(labels)).toBe(false)
 
     // The download: one 4 x 6 in portrait page per label, same order.
     const found = await envelopeLabels(deps, [...ids].reverse())
@@ -386,6 +392,31 @@ describe('the print page', () => {
     const pdf = await PDFDocument.load(await labelsPdf(found))
     expect(pdf.getPageCount()).toBe(2)
     expect(pdf.getPage(0).getSize()).toEqual({ width: 288, height: 432 })
+
+    // The download is named for the day and titled.
+    const file = await labelsDownload(deps, ids)
+    expect(file!.filename).toBe('envelope-labels-2026-10-13.pdf')
+    expect((await PDFDocument.load(file!.pdf)).getTitle()).toBe('Envelope labels, October 13, 2026')
+    expect(await labelsDownload(deps, ['nope'])).toBeNull()
+
+    // A name the PDF cannot spell: the page names the person and prints it as typed.
+    await db
+      .update(messages)
+      .set({
+        to_address: JSON.stringify({
+          name: 'Nguyễn Văn Đức',
+          street: '1234 S 10th St',
+          city: 'Philadelphia',
+          state: 'PA',
+          zip: '19147',
+        }),
+      })
+      .where(eq(messages.id, ids[0]!))
+    const intl = await printPage(deps, ids, { labels: true })
+    expect(intl).toContain(
+      'The PDF cannot print some letters in Nguyễn Văn Đức. Print that label from this page instead.',
+    )
+    expect(intl).toContain('>Nguyễn Văn Đức</text>')
   })
   it('looks like the overview page: logo band, four fact boxes, footer, photo once one is saved', async () => {
     const { db, deps } = await todoSetup()

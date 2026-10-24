@@ -1,19 +1,18 @@
 // Human queue API (linkedin, instagram, call, print mail). FILLED BY: the outreach builder.
 import { Router } from 'express'
 import { EditStepBodySchema, QueueActionBodySchema } from '../../shared/types.ts'
-import { asyncHandler, parseOr400 } from '../lib/http.ts'
+import { asyncHandler, notFound, parseOr400 } from '../lib/http.ts'
 import { outreachDeps } from '../outreach/index.ts'
 import {
   actOnQueueItem,
   editStepText,
-  envelopeLabels,
+  labelsDownload,
   listQueue,
   personalLinkedInNote,
   printoutDoc,
   printPage,
   restoreQueueItem,
 } from '../outreach/queue.ts'
-import { labelsPdf } from '../outreach/labelsPdf.ts'
 import { fillTodo, listTodo } from '../outreach/todo.ts'
 
 export const queueRouter = Router()
@@ -62,17 +61,18 @@ queueRouter.get(
   }),
 )
 
-// GET /api/queue/labels.pdf?ids=a,b,c -> PDF file: one 4x6 in portrait shipping label per page,
-// sent as a download so it saves on a phone too
+// GET /api/queue/labels.pdf?ids=a,b,c -> PDF file: one 4x6 in portrait label per page, sent as a
+// download named for the day (envelope-labels-2026-10-24.pdf) so it saves on a phone too
 queueRouter.get(
   '/labels.pdf',
   asyncHandler(async (req, res) => {
-    const ids = idsOf(req.query.ids)
-    const pdf = await labelsPdf(await envelopeLabels(outreachDeps(), ids))
+    const file = await labelsDownload(outreachDeps(), idsOf(req.query.ids))
+    if (!file) throw notFound('No envelope labels for these steps')
     res
       .type('application/pdf')
-      .set('Content-Disposition', 'attachment; filename="envelope-labels.pdf"')
-      .send(Buffer.from(pdf))
+      .set('Content-Disposition', `attachment; filename="${file.filename}"`)
+      .set('Cache-Control', 'private, no-store')
+      .send(Buffer.from(file.pdf))
   }),
 )
 

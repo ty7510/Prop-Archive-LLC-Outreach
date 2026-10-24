@@ -35,14 +35,16 @@ import { logActivity } from '../lib/activity.ts'
 import { badRequest, notFound } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
 import { getSettings } from '../lib/settings.ts'
-import { startOfDayInTz } from '../lib/time.ts'
+import { startOfDayInTz, zonedParts } from '../lib/time.ts'
 import type { OutreachDeps } from './deps.ts'
 import { computeChannels } from '../enrich/channels.ts'
 import { BLOCKED_LEAD_STATUSES, contactBlocker } from './enroll.ts'
 import { parsePostal, POSTCARD_MAX_CHARS, type PostalAddress } from './mail.ts'
 import { writePersonalNote } from './linkedinNote.ts'
-import { printoutParts } from './printout.ts'
-import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
+import { LABEL_MARK_DEFS, labelSvg, layoutLabels, type EnvelopeLabel } from './labelLayout.ts'
+import { labelsPdf } from './labelsPdf.ts'
+import { letterDate, printoutParts } from './printout.ts'
+import { buildVars, plainLinks, renderTemplate, type TemplateVars } from './templates.ts'
 import { profileKey, sendDue } from './send.ts'
 import {
   addLinkedInStepToOpenCard,
@@ -631,34 +633,24 @@ function esc(s: string | null | undefined): string {
   return (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-/** The address lines for an envelope or label. */
+/** The address lines for an envelope or label: name, company, street, then "City, ST ZIP". */
 function addressLines(to: PostalAddress | null, fallbackName: string): string[] {
-  const name = to?.name || fallbackName
-  return to
-    ? [name, to.company, to.street, `${to.city}, ${to.state} ${to.zip}`.trim()].filter(
-        (l): l is string => Boolean(l),
-      )
-    : [name]
+  const name = to?.name?.trim() || fallbackName
+  if (!to) return [name]
+  const stateZip = [to.state.trim(), to.zip.trim()].filter(Boolean).join(' ')
+  const cityLine = [to.city.trim(), stateZip].filter(Boolean).join(', ')
+  return [name, to.company?.trim(), to.street.trim(), cityLine].filter((l): l is string =>
+    Boolean(l),
+  )
 }
 
-/** One envelope label: who it is from and who it goes to. */
-export interface EnvelopeLabel {
-  from: string[]
-  to: string[]
-}
-
-function labelOf(
-  fromLine: string[],
-  toAddress: string | null,
-  lead: { full_name: string | null; company: string | null },
-): EnvelopeLabel {
-  return { from: fromLine, to: addressLines(parsePostal(toAddress), personOf(lead)) }
-}
-
-/** The envelope labels for these mail steps, in the order Theo picked them. */
-export async function envelopeLabels(deps: OutreachDeps, ids: string[]): Promise<EnvelopeLabel[]> {
+/** The envelope labels for these mail steps, with their ids, in the order Theo picked them. */
+async function labelsFor(
+  deps: OutreachDeps,
+  settings: Settings,
+  ids: string[],
+): Promise<{ id: string; label: EnvelopeLabel }[]> {
   if (ids.length === 0) return []
-  const settings = await getSettings(deps.db)
   const rows = await deps.db
     .select({
       id: messages.id,
@@ -670,18 +662,133 @@ export async function envelopeLabels(deps: OutreachDeps, ids: string[]): Promise
     .innerJoin(leads, eq(leads.id, messages.lead_id))
     .where(and(inArray(messages.id, ids), eq(messages.channel, 'mail')))
   rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
-  const fromLine = labelFrom(settings)
-  return rows.map((r) =>
-    labelOf(fromLine, r.to_address, { full_name: r.lead_name, company: r.lead_company }),
-  )
+  const from = labelFrom(settings)
+  const site = plainLinks(settings).site_link
+  return rows.map((r) => ({
+    id: r.id,
+    label: {
+      from,
+      to: addressLines(
+        parsePostal(r.to_address),
+        personOf({ full_name: r.lead_name, company: r.lead_company }),
+      ),
+      site,
+    },
+  }))
 }
 
-/** The return address: name, company, then the street and the city on their own lines. */
+/** The envelope labels for these mail steps, in the order Theo picked them. */
+export async function envelopeLabels(deps: OutreachDeps, ids: string[]): Promise<EnvelopeLabel[]> {
+  const found = await labelsFor(deps, await getSettings(deps.db), ids)
+  return found.map((f) => f.label)
+}
+
+/**
+ * The return address: Theo's name, Prop Archive LLC, then physical_address as he typed it, on two
+ * lines: the street (with any suite) and "City, ST ZIP" last, as the post office reads it.
+ */
 function labelFrom(settings: Settings): string[] {
-  const addr = settings.physical_address.trim()
-  const comma = addr.indexOf(',')
-  const addrLines = comma > 0 ? [addr.slice(0, comma).trim(), addr.slice(comma + 1).trim()] : [addr]
-  return [settings.owner_name, 'Prop Archive LLC', ...addrLines].filter(Boolean)
+  return [settings.owner_name, 'Prop Archive LLC', ...streetAndCity(settings.physical_address)]
+    .map((l) => l.trim())
+    .filter(Boolean)
+}
+
+/** "1500 Market St, Suite 400, Philadelphia, PA 19102" is "1500 Market St, Suite 400" + the city. */
+export function streetAndCity(address: string): string[] {
+  const lines = address
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (lines.length !== 1) return lines
+  const one = lines[0] ?? ''
+  const city = /^(.*\S)\s*,\s*([^,\s][^,]*?(?:,\s*|\s+)[A-Za-z]{2}\.?\s+\d{5}(?:-\d{4})?)$/.exec(
+    one,
+  )
+  if (city?.[1] && city[2]) return [city[1], city[2]]
+  const comma = one.indexOf(',')
+  return comma > 0 ? [one.slice(0, comma).trim(), one.slice(comma + 1).trim()] : [one]
+}
+
+/** "envelope-labels-2026-10-24.pdf": the day in Theo's time zone. */
+export function labelsFileName(settings: Pick<Settings, 'send_window'>, now: Date): string {
+  const p = zonedParts(now, settings.send_window.tz)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `envelope-labels-${p.year}-${two(p.month)}-${two(p.day)}.pdf`
+}
+
+/** The labels as a PDF to download (it saves on a phone), named for the day. Null: none found. */
+export async function labelsDownload(
+  deps: OutreachDeps,
+  ids: string[],
+): Promise<{ filename: string; pdf: Uint8Array } | null> {
+  const settings = await getSettings(deps.db)
+  const found = await labelsFor(deps, settings, ids)
+  if (found.length === 0) return null
+  const now = deps.now()
+  const pdf = await labelsPdf(
+    found.map((f) => f.label),
+    {
+      title: `Envelope labels, ${letterDate(settings, now)}`,
+      author: settings.owner_name.trim() || 'Prop Archive LLC',
+      date: now,
+    },
+  )
+  return { filename: labelsFileName(settings, now), pdf }
+}
+
+/** "a", "a and b", "a, b and c". */
+function listOf(items: string[]): string {
+  return items.length < 3
+    ? items.join(' and ')
+    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
+
+/**
+ * The labels page: each label drawn as the PDF draws it, one 4 x 6 in page each when printed. When
+ * the PDF had to change letters in a name, the page says so: the page prints every letter.
+ */
+async function labelsPage(deps: OutreachDeps, ids: string[]): Promise<string> {
+  const settings = await getSettings(deps.db)
+  const found = await labelsFor(deps, settings, ids)
+  const laid = await layoutLabels(found.map((f) => f.label))
+  const fileName = labelsFileName(settings, deps.now())
+  const pdfHref = `/api/queue/labels.pdf?ids=${found.map((f) => encodeURIComponent(f.id)).join(',')}`
+  const count = `${laid.length} ${laid.length === 1 ? 'label' : 'labels'}`
+  const fromLossy = laid.some((l) => l.fromLossy)
+  const who = [
+    ...(fromLossy ? ['your return address'] : []),
+    ...laid.filter((l) => l.lossy).map((l) => l.name),
+  ]
+  const note = who.length
+    ? `The PDF cannot print some letters in ${listOf(who)}. Print ${
+        fromLossy || who.length > 1 ? 'those labels' : 'that label'
+      } from this page instead.`
+    : ''
+  const body = laid.length
+    ? `${LABEL_MARK_DEFS}<main class="labels">${laid
+        .map(
+          (l, i) =>
+            `<p class="label-cap"><span>${i + 1} of ${laid.length}</span>${
+              l.lossy || l.fromLossy
+                ? '<span class="warn">Print this one from this page</span>'
+                : ''
+            }</p><section class="label">${labelSvg(l.page, `Envelope label for ${l.name}`)}</section>`,
+        )
+        .join('\n')}</main>`
+    : '<p class="empty">Nothing to print. Pick printouts on your list first.</p>'
+  return printDocument(
+    'Envelope labels',
+    [
+      `${count}, 4 x 6 in portrait, one per page.`,
+      'Label printer: paper 4 x 6 in (100 x 150 mm), margins None, scale 100%, headers and footers off.',
+      'On a phone: tap Download PDF, then print or save it from there.',
+    ],
+    body,
+    laid.length
+      ? `<a class="tool-link" href="${pdfHref}" download="${fileName}">Download PDF</a>`
+      : '',
+    { button: 'Print labels', note, printout: false },
+  )
 }
 
 /**
@@ -694,6 +801,7 @@ export async function printPage(
   ids: string[],
   opts: { labels?: boolean } = {},
 ): Promise<string> {
+  if (opts.labels) return labelsPage(deps, ids)
   const settings = await getSettings(deps.db)
   const now = deps.now()
   const rows =
@@ -711,29 +819,7 @@ export async function printPage(
           .where(and(inArray(messages.id, ids), eq(messages.channel, 'mail')))
   // The order Theo picked them in.
   rows.sort((a, b) => ids.indexOf(a.message.id) - ids.indexOf(b.message.id))
-  const fromLine = labelFrom(settings)
   const fromHtml = `${esc(settings.owner_name)}<br>Prop Archive LLC<br>${esc(settings.physical_address).replace(/,\s*/, '<br>')}`
-
-  if (opts.labels) {
-    const labels = rows.map((r) =>
-      labelOf(fromLine, r.message.to_address, {
-        full_name: r.lead_name,
-        company: r.lead_company,
-      }),
-    )
-    const pdfHref = `/api/queue/labels.pdf?ids=${rows.map((r) => encodeURIComponent(r.message.id)).join(',')}`
-    return printDocument(
-      'Envelope labels',
-      `${labels.length} ${labels.length === 1 ? 'label' : 'labels'}, one 4 x 6 in shipping label per page (portrait), for a label printer. In the print box pick your label printer, paper size 4 x 6 in (100 x 150 mm), Margins None, Scale 100 and headers and footers off. On a phone, tap Download PDF, then print or save it from there.`,
-      labels
-        .map(
-          (l) =>
-            `<section class="label"><div class="from">${l.from.map(esc).join('<br>')}</div><div class="to">${l.to.map(esc).join('<br>')}</div></section>`,
-        )
-        .join('\n'),
-      `<a class="tool-link" href="${pdfHref}" download="envelope-labels.pdf">Download PDF</a>`,
-    )
-  }
 
   const isPrintout = isPrintoutMessage
   const pieces = rows
@@ -811,14 +897,24 @@ export async function printPage(
   )
 }
 
-function printDocument(title: string, help: string, body: string, extra = ''): string {
+function printDocument(
+  title: string,
+  help: string | string[],
+  body: string,
+  extra = '',
+  opts: { button?: string; note?: string; printout?: boolean } = {},
+): string {
+  const printout = opts.printout ?? true
+  const helpHtml = Array.isArray(help)
+    ? `<span class="help">${help.map((l) => `<span class="help-line">${esc(l)}</span>`).join('')}</span>`
+    : `<span>${esc(help)}</span>`
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
-${PRINTOUT_FONT_LINK}
+${printout ? PRINTOUT_FONT_LINK : ''}
 <style>
   @page { margin: 0; }
   @page card { size: 6in 4in; margin: 0; }
@@ -839,20 +935,25 @@ ${PRINTOUT_FONT_LINK}
   .letter article { white-space: pre-wrap; font-size: 15px; line-height: 1.6; flex: 1; }
   footer { margin-top: 3rem; display: flex; align-items: flex-end; gap: 1rem; font-size: 14px; }
   footer .line { flex: 0 0 3in; border-bottom: 1px solid #111; }
-  .label { page: label; box-sizing: border-box; width: 4in; height: 6in; margin: 16px auto; padding: 0.3in; background: #fff; overflow: hidden; position: relative; font-family: Arial, Helvetica, sans-serif; break-after: page; page-break-after: always; outline: 1px dashed #ccc; outline-offset: -1px; }
+  .labels { padding: 4px 16px 40px; }
+  .label-cap { box-sizing: border-box; width: 4in; max-width: 100%; margin: 22px auto 8px; display: flex; justify-content: space-between; gap: 12px; font: 13px/1.4 Arial, Helvetica, sans-serif; color: #57534e; }
+  .label-cap .warn { color: #b91c1c; font-weight: 700; }
+  .label { page: label; box-sizing: border-box; width: 4in; height: 6in; margin: 0 auto; background: #fff; overflow: hidden; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 10px 28px rgba(0,0,0,0.14); break-after: page; page-break-after: always; }
   .label:last-of-type { break-after: auto; page-break-after: auto; }
-  .label .from { font-size: 9pt; line-height: 1.35; color: #000; }
-  .label .to { position: absolute; left: 0.5in; right: 0.3in; top: 2.4in; font-size: 15pt; line-height: 1.4; overflow-wrap: anywhere; }
+  .label-art { display: block; width: 100%; height: 100%; font-family: Helvetica, Arial, 'Liberation Sans', Arimo, sans-serif; font-kerning: none; }
+  .label-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .toolbar .help-line { display: block; }
+  @media screen and (max-width: 460px) { .label, .label-cap { width: calc(100vw - 32px); } .label { height: calc((100vw - 32px) * 1.5); } }
   .empty { font-family: Arial, sans-serif; text-align: center; padding: 3rem; font-size: 18px; }
   ${PRINTOUT_CSS}
-  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter, .label { margin: 0; } .label { outline: none; } }
+  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter, .label { margin: 0; } .labels { padding: 0; } .label-cap { display: none; } .label { border-radius: 0; box-shadow: none; } }
   @media (max-width: 700px) { .letter { width: auto; min-height: 0; padding: 1rem; } }
 </style>
 </head>
 <body>
-<div class="toolbar"><button onclick="window.print()">Print or save as PDF</button>${extra}<span>${esc(help)}</span><span id="fit-note" class="fit-note"></span></div>
+<div class="toolbar"><button onclick="window.print()">${esc(opts.button ?? 'Print or save as PDF')}</button>${extra}${helpHtml}<span id="fit-note" class="fit-note">${esc(opts.note ?? '')}</span></div>
 ${body}
-<script>${PRINTOUT_FIT_SCRIPT}</script>
+${printout ? `<script>${PRINTOUT_FIT_SCRIPT}</script>` : ''}
 </body>
 </html>`
 }
