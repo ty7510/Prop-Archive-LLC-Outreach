@@ -181,8 +181,11 @@ export const linkedInWrongPerson = (leadId: string, messageId?: string) =>
   })
 export const printQueueUrl = (ids: string[]) =>
   `/api/queue/print?ids=${ids.map(encodeURIComponent).join(',')}`
-/** The same people as envelope address labels (Avery 5163, 10 a sheet). */
+/** The same people as envelope labels: one 4x6 in shipping label per page. */
 export const printLabelsUrl = (ids: string[]) => `${printQueueUrl(ids)}&labels=1`
+/** The same labels as a PDF file to download (works on a phone). */
+export const labelsPdfUrl = (ids: string[]) =>
+  `/api/queue/labels.pdf?ids=${ids.map(encodeURIComponent).join(',')}`
 /** One printout to proof and edit: this person's part plus the page as it prints. */
 export const getPrintout = (messageId: string) =>
   api<PrintoutDoc>(`/api/queue/${encodeURIComponent(messageId)}/printout`)

@@ -641,10 +641,53 @@ function addressLines(to: PostalAddress | null, fallbackName: string): string[] 
     : [name]
 }
 
+/** One envelope label: who it is from and who it goes to. */
+export interface EnvelopeLabel {
+  from: string[]
+  to: string[]
+}
+
+function labelOf(
+  fromLine: string[],
+  toAddress: string | null,
+  lead: { full_name: string | null; company: string | null },
+): EnvelopeLabel {
+  return { from: fromLine, to: addressLines(parsePostal(toAddress), personOf(lead)) }
+}
+
+/** The envelope labels for these mail steps, in the order Theo picked them. */
+export async function envelopeLabels(deps: OutreachDeps, ids: string[]): Promise<EnvelopeLabel[]> {
+  if (ids.length === 0) return []
+  const settings = await getSettings(deps.db)
+  const rows = await deps.db
+    .select({
+      id: messages.id,
+      to_address: messages.to_address,
+      lead_name: leads.full_name,
+      lead_company: leads.company,
+    })
+    .from(messages)
+    .innerJoin(leads, eq(leads.id, messages.lead_id))
+    .where(and(inArray(messages.id, ids), eq(messages.channel, 'mail')))
+  rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
+  const fromLine = labelFrom(settings)
+  return rows.map((r) =>
+    labelOf(fromLine, r.to_address, { full_name: r.lead_name, company: r.lead_company }),
+  )
+}
+
+/** The return address: name, company, then the street and the city on their own lines. */
+function labelFrom(settings: Settings): string[] {
+  const addr = settings.physical_address.trim()
+  const comma = addr.indexOf(',')
+  const addrLines = comma > 0 ? [addr.slice(0, comma).trim(), addr.slice(comma + 1).trim()] : [addr]
+  return [settings.owner_name, 'Prop Archive LLC', ...addrLines].filter(Boolean)
+}
+
 /**
  * The print page. To-do printouts are one US Letter sheet each (shared/printout.ts), with a link to
  * proof and edit each one; older sequence mail prints as a 4x6 postcard or a letter. With
- * `labels`, the same people as address labels for the envelopes (Avery 5163, 10 a sheet).
+ * `labels`, the same people as 4x6 in shipping labels for the envelopes, one per page.
  */
 export async function printPage(
   deps: OutreachDeps,
@@ -668,29 +711,27 @@ export async function printPage(
           .where(and(inArray(messages.id, ids), eq(messages.channel, 'mail')))
   // The order Theo picked them in.
   rows.sort((a, b) => ids.indexOf(a.message.id) - ids.indexOf(b.message.id))
-  const fromLine = [
-    settings.owner_name,
-    'Prop Archive LLC',
-    settings.physical_address.trim(),
-  ].filter(Boolean)
+  const fromLine = labelFrom(settings)
   const fromHtml = `${esc(settings.owner_name)}<br>Prop Archive LLC<br>${esc(settings.physical_address).replace(/,\s*/, '<br>')}`
 
   if (opts.labels) {
-    const labels = rows.map((r) => {
-      const lines = addressLines(
-        parsePostal(r.message.to_address),
-        personOf({ full_name: r.lead_name, company: r.lead_company }),
-      )
-      return `<div class="label"><div class="from">${fromLine.map(esc).join(', ')}</div><div class="to">${lines.map(esc).join('<br>')}</div></div>`
-    })
-    const sheets: string[] = []
-    for (let i = 0; i < labels.length; i += 10) {
-      sheets.push(`<section class="labels-sheet">${labels.slice(i, i + 10).join('')}</section>`)
-    }
+    const labels = rows.map((r) =>
+      labelOf(fromLine, r.message.to_address, {
+        full_name: r.lead_name,
+        company: r.lead_company,
+      }),
+    )
+    const pdfHref = `/api/queue/labels.pdf?ids=${rows.map((r) => encodeURIComponent(r.message.id)).join(',')}`
     return printDocument(
       'Envelope labels',
-      `${labels.length} ${labels.length === 1 ? 'label' : 'labels'} for Avery 5163 or 8163 sheets (2 x 4 in, 10 a sheet). In the print box pick Letter, Margins None and Scale 100. Print one on plain paper first and hold it over a label sheet to check it lines up.`,
-      sheets.join('\n'),
+      `${labels.length} ${labels.length === 1 ? 'label' : 'labels'}, one 4 x 6 in shipping label per page (portrait), for a label printer. In the print box pick your label printer, paper size 4 x 6 in (100 x 150 mm), Margins None, Scale 100 and headers and footers off. On a phone, tap Download PDF, then print or save it from there.`,
+      labels
+        .map(
+          (l) =>
+            `<section class="label"><div class="from">${l.from.map(esc).join('<br>')}</div><div class="to">${l.to.map(esc).join('<br>')}</div></section>`,
+        )
+        .join('\n'),
+      `<a class="tool-link" href="${pdfHref}" download="envelope-labels.pdf">Download PDF</a>`,
     )
   }
 
@@ -782,7 +823,7 @@ ${PRINTOUT_FONT_LINK}
   @page { margin: 0; }
   @page card { size: 6in 4in; margin: 0; }
   @page letter { size: letter; margin: 0; }
-  @page labels { size: 8.5in 11in; margin: 0; }
+  @page label { size: 4in 6in; margin: 0; }
   body { margin: 0; font-family: Georgia, 'Times New Roman', serif; color: #111; background: #eee; }
   .toolbar { position: sticky; top: 0; z-index: 2; background: #fff; padding: 12px 16px; border-bottom: 1px solid #ccc; font-family: Arial, sans-serif; font-size: 15px; line-height: 1.5; }
   .toolbar button, .toolbar .tool-link { font-size: 18px; padding: 10px 18px; min-height: 44px; cursor: pointer; margin-right: 12px; display: inline-block; box-sizing: border-box; border: 1px solid #888; border-radius: 6px; background: #f5f5f4; color: #111; text-decoration: none; font-family: Arial, sans-serif; }
@@ -798,14 +839,13 @@ ${PRINTOUT_FONT_LINK}
   .letter article { white-space: pre-wrap; font-size: 15px; line-height: 1.6; flex: 1; }
   footer { margin-top: 3rem; display: flex; align-items: flex-end; gap: 1rem; font-size: 14px; }
   footer .line { flex: 0 0 3in; border-bottom: 1px solid #111; }
-  .labels-sheet { page: labels; box-sizing: border-box; width: 8.5in; height: 10.98in; margin: 16px auto; padding: 0.5in 0.15625in 0; background: #fff; display: grid; grid-template-columns: 4in 4in; column-gap: 0.1875in; grid-auto-rows: 2in; align-content: start; break-after: page; page-break-after: always; }
-  .labels-sheet:last-of-type { break-after: auto; page-break-after: auto; }
-  .label { box-sizing: border-box; padding: 0.2in 0.3in; overflow: hidden; font-family: Arial, Helvetica, sans-serif; outline: 1px dashed #ccc; outline-offset: -1px; }
-  .label .from { font-size: 7.5pt; line-height: 1.3; color: #333; }
-  .label .to { margin: 0.16in 0 0 0.6in; font-size: 11pt; line-height: 1.35; }
+  .label { page: label; box-sizing: border-box; width: 4in; height: 6in; margin: 16px auto; padding: 0.3in; background: #fff; overflow: hidden; position: relative; font-family: Arial, Helvetica, sans-serif; break-after: page; page-break-after: always; outline: 1px dashed #ccc; outline-offset: -1px; }
+  .label:last-of-type { break-after: auto; page-break-after: auto; }
+  .label .from { font-size: 9pt; line-height: 1.35; color: #000; }
+  .label .to { position: absolute; left: 0.5in; right: 0.3in; top: 2.4in; font-size: 15pt; line-height: 1.4; overflow-wrap: anywhere; }
   .empty { font-family: Arial, sans-serif; text-align: center; padding: 3rem; font-size: 18px; }
   ${PRINTOUT_CSS}
-  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter, .labels-sheet { margin: 0; } .label { outline: none; } }
+  @media print { .toolbar { display: none; } body { background: #fff; } .card, .letter, .label { margin: 0; } .label { outline: none; } }
   @media (max-width: 700px) { .letter { width: auto; min-height: 0; padding: 1rem; } }
 </style>
 </head>

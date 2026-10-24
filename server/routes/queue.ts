@@ -6,15 +6,26 @@ import { outreachDeps } from '../outreach/index.ts'
 import {
   actOnQueueItem,
   editStepText,
+  envelopeLabels,
   listQueue,
   personalLinkedInNote,
   printoutDoc,
   printPage,
   restoreQueueItem,
 } from '../outreach/queue.ts'
+import { labelsPdf } from '../outreach/labelsPdf.ts'
 import { fillTodo, listTodo } from '../outreach/todo.ts'
 
 export const queueRouter = Router()
+
+/** The message ids in ?ids=a,b,c (at most 200). */
+function idsOf(raw: unknown): string[] {
+  return (typeof raw === 'string' ? raw : '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 200)
+}
 
 // GET /api/queue -> Queue (ready_for_human messages grouped by channel)
 queueRouter.get(
@@ -45,14 +56,23 @@ queueRouter.post(
 queueRouter.get(
   '/print',
   asyncHandler(async (req, res) => {
-    const raw = typeof req.query.ids === 'string' ? req.query.ids : ''
-    const ids = raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 200)
+    const ids = idsOf(req.query.ids)
     const labels = req.query.labels === '1'
     res.type('html').send(await printPage(outreachDeps(), ids, { labels }))
+  }),
+)
+
+// GET /api/queue/labels.pdf?ids=a,b,c -> PDF file: one 4x6 in portrait shipping label per page,
+// sent as a download so it saves on a phone too
+queueRouter.get(
+  '/labels.pdf',
+  asyncHandler(async (req, res) => {
+    const ids = idsOf(req.query.ids)
+    const pdf = await labelsPdf(await envelopeLabels(outreachDeps(), ids))
+    res
+      .type('application/pdf')
+      .set('Content-Disposition', 'attachment; filename="envelope-labels.pdf"')
+      .send(Buffer.from(pdf))
   }),
 )
 
