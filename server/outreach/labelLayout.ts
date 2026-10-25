@@ -3,7 +3,7 @@
 // a frame round it all; a black band with the mark and PROP ARCHIVE LLC knocked out in white;
 // FROM and Theo's return address in small print; a heavy rule; SHIP TO and the person's address
 // set large and alone, so a sorting machine finds nothing else near it; a heavy rule; and a strip
-// of date, piece and reference. One layout feeds the PDF (labelsPdf.ts) and the print page
+// of the date and a reference. One layout feeds the PDF (labelsPdf.ts) and the print page
 // (labelSvg below), so the two print the same, line for line.
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { LABEL_MARK } from './labelMark.ts'
@@ -210,16 +210,23 @@ const SITE = { size: 7.5, tracking: 0.6, gap: 6.5 }
 const FROM_CAPTION = { text: 'FROM', size: 6.5, tracking: 0.9 }
 const SHIP_CAPTION = { text: 'SHIP TO', size: 8.5, tracking: 1.1, gap: 14 }
 
-// Type sizes. A field wraps to two lines at most; past that it ends in an ellipsis.
-/** The return address sits in a column right of its caption. */
-const FROM = { size: 8.5, min: 7, lead: 11 / 8.5, column: 34 }
-/** The person's address, indented under SHIP TO. */
-const TO = { size: 17, min: 12, lead: 1.24, indent: 18 }
-const MAX_ROWS = 2
+// Type sizes. A field wraps to `rows` lines at most; past that it ends in an ellipsis.
+/**
+ * The return address sits in a column right of its caption. A line of it may take three rows, so
+ * a long one typed without commas (which would split it) still prints whole, suite and all.
+ */
+const FROM = { size: 8.5, min: 7, lead: 11 / 8.5, column: 34, rows: 3 }
+/**
+ * The person's address, indented under SHIP TO when every line fits the indented column at 12 pt,
+ * flush with the caption otherwise. A name or company line may take three rows; the street and the
+ * city line never wrap (the post office reads the line above the city as the street): the block
+ * shrinks for them instead, down to `floor`, the smallest the post office reads well.
+ */
+const TO = { size: 17, min: 12, floor: 9, lead: 1.24, indent: 18, rows: 3 }
 /** Where the person's block sits in the space under SHIP TO (0 top, 1 bottom). */
 const TO_PLACE = 0.4
 
-/** The strip at the foot: date, piece and reference, each a caption over its value. */
+/** The strip at the foot: the date and the reference, each a caption over its value. */
 const META = { height: 40, caption: 6, captionTracking: 0.7, value: 10, min: 7, gap: 5.5 }
 
 /** Width of text at 1 pt, for laying out. */
@@ -235,11 +242,17 @@ interface Field {
 /** What goes in the strip at the foot of a label. Empty values leave their cell blank. */
 export interface LabelMeta {
   date: string
-  piece: string
   ref: string
 }
 
-function wrap(text: string, bold: boolean, size: number, max: number, measure: Measure): string[] {
+function wrap(
+  text: string,
+  bold: boolean,
+  size: number,
+  max: number,
+  measure: Measure,
+  maxRows: number,
+): string[] {
   if (!text) return ['']
   const fits = (s: string) => measure(s, bold) * size <= max + 1e-6
   const rows: string[] = []
@@ -262,16 +275,17 @@ function wrap(text: string, bold: boolean, size: number, max: number, measure: M
     }
   }
   rows.push(row)
-  if (rows.length <= MAX_ROWS) return rows
-  let last = rows[MAX_ROWS - 1] ?? ''
+  if (rows.length <= maxRows) return rows
+  let last = rows[maxRows - 1] ?? ''
   while (last && !fits(`${last}…`)) last = [...last].slice(0, -1).join('').trimEnd()
-  return [...rows.slice(0, MAX_ROWS - 1), `${last}…`]
+  return [...rows.slice(0, maxRows - 1), `${last}…`]
 }
 
 /**
  * A long plain line broken at its commas into address lines, as it would be written by hand:
  * "Close School, Pearlstein Center, 3230 Market St" is three lines, while parts that fit together
- * stay on one line ("1500 Market St, Suite 400"). A line that fits is left alone.
+ * stay on one line ("1500 Market St, Suite 400"), packed from the end so a suite stays with its
+ * street. A line that fits is left alone.
  */
 function splitAtCommas(f: Field, size: number, max: number, measure: Measure): Field[] {
   const fits = (s: string) => measure(s, f.bold) * size <= max + 1e-6
@@ -280,11 +294,12 @@ function splitAtCommas(f: Field, size: number, max: number, measure: Measure): F
     .split(',')
     .map((p) => p.trim())
     .filter(Boolean)
+  // Packed from the end, so the street keeps its suite beside it ("3230 Market St, Suite 402").
   const lines: string[] = []
-  for (const part of parts) {
-    const last = lines[lines.length - 1]
-    if (last !== undefined && fits(`${last}, ${part}`)) lines[lines.length - 1] = `${last}, ${part}`
-    else lines.push(part)
+  for (const part of [...parts].reverse()) {
+    const first = lines[0]
+    if (first !== undefined && fits(`${part}, ${first}`)) lines[0] = `${part}, ${first}`
+    else lines.unshift(part)
   }
   return lines.map((text) => ({ ...f, text }))
 }
@@ -292,7 +307,7 @@ function splitAtCommas(f: Field, size: number, max: number, measure: Measure): F
 /** One size for the whole block: as large as allowed, smaller until the widest line fits, then wrap. */
 function fit(
   fields: Field[],
-  spec: { size: number; min: number },
+  spec: { size: number; min: number; rows: number },
   max: number,
   measure: Measure,
 ): { size: number; rows: Field[] } {
@@ -300,7 +315,7 @@ function fit(
   const size =
     widest * spec.size <= max ? spec.size : Math.max(spec.min, Math.floor((2 * max) / widest) / 2)
   const rows = fields.flatMap((f) =>
-    wrap(f.text, f.bold, size, max, measure).map((text) => ({ ...f, text })),
+    wrap(f.text, f.bold, size, max, measure, spec.rows).map((text) => ({ ...f, text })),
   )
   return { size, rows }
 }
@@ -349,7 +364,7 @@ const furniture = (text: string): Field => ({ text, bold: true, exact: true })
 /**
  * Lay out one label as a carrier label is laid out, top to bottom: the black brand band, FROM and
  * the return address, a heavy rule, SHIP TO and the person's address large and alone, a heavy
- * rule, and a strip of date, piece and reference. A frame runs round it all. `from` and `to` are
+ * rule, and a strip of the date and a reference. A frame runs round it all. `from` and `to` are
  * set as given; the first line of each is a name, in bold.
  */
 export function layoutLabel(
@@ -435,13 +450,13 @@ export function layoutLabel(
   const fromRule = lastFrom + DESCENT * ret.size + PAD
   rules.push({ x: left, y: fromRule, width: INNER, height: HEAVY })
 
-  // The strip at the foot: three cells, each a caption over its value.
+  // The strip at the foot: two cells, each a caption over its value. (No "piece 2 of 5": on a
+  // carrier label that reads as more parcels coming to the same person.)
   const metaTop = bottom - META.height
   rules.push({ x: left, y: metaTop - HEAVY, width: INNER, height: HEAVY })
-  const cellW = INNER / 3
+  const cellW = INNER / 2
   const cells: [string, string][] = [
     ['DATE', meta.date],
-    ['PIECE', meta.piece],
     ['REF', meta.ref],
   ]
   cells.forEach(([caption, value], i) => {
@@ -479,13 +494,51 @@ export function layoutLabel(
       { tracking: SHIP_CAPTION.tracking },
     ),
   )
-  const toX = left + PAD + TO.indent
-  const person = fit(to, TO, right - PAD - toX, measure)
-  const lead = person.size * TO.lead
-  const blockH = CAP * person.size + (person.rows.length - 1) * lead
+  // A street too long for one row at 12 pt keeps its number and street on the line above the
+  // city; what follows its first comma (the apartment or suite) goes on the line above that, where
+  // the post office looks for it when it is not on the street line.
+  const flushMax = right - PAD - (left + PAD)
+  const streetAt = to.length >= 3 ? to.length - 2 : -1
+  const street = streetAt > 0 ? to[streetAt]! : undefined
+  const comma = street ? street.text.indexOf(',') : -1
+  const toLines: Field[] =
+    street && comma > 0 && measure(street.text, street.bold) * TO.min > flushMax + 1e-6
+      ? [
+          ...to.slice(0, streetAt),
+          { ...street, text: street.text.slice(comma + 1).trim() },
+          { ...street, text: street.text.slice(0, comma).trim() },
+          ...to.slice(streetAt + 1),
+        ]
+      : to
+  const indented = left + PAD + TO.indent
+  const widest = (fields: Field[]) => Math.max(0, ...fields.map((f) => measure(f.text, f.bold)))
+  const toX = widest(toLines) * TO.min <= right - PAD - indented + 1e-6 ? indented : left + PAD
+  const toMax = right - PAD - toX
+  // As large as it may be with the widest line on one row, but never under 12 pt for a long name
+  // (that wraps instead); the street and city lines are kept whole by going smaller, to the floor.
+  const critical = toLines.length > 1 ? toLines.slice(Math.max(1, toLines.length - 2)) : []
+  const halfPoints = (w: number) => (w > 0 ? Math.floor((2 * toMax) / w) / 2 : TO.size)
   const zoneTop = shipCaptionY + SHIP_CAPTION.gap
-  const zoneBottom = metaTop - HEAVY - PAD - DESCENT * person.size
-  const top = zoneTop + Math.max(0, zoneBottom - zoneTop - blockH) * TO_PLACE
+  let toSize = Math.min(
+    Math.max(TO.min, Math.min(TO.size, halfPoints(widest(toLines)))),
+    Math.max(TO.floor, halfPoints(widest(critical))),
+  )
+  const setTo = (size: number) => {
+    const rows = toLines.flatMap((f) =>
+      wrap(f.text, f.bold, size, toMax, measure, TO.rows).map((text) => ({ ...f, text })),
+    )
+    const blockH = CAP * size + (rows.length - 1) * size * TO.lead
+    const zoneBottom = metaTop - HEAVY - PAD - DESCENT * size
+    return { size, rows, blockH, zoneBottom }
+  }
+  // Smaller still when the block would run into the strip.
+  let person = setTo(toSize)
+  while (person.blockH > person.zoneBottom - zoneTop && toSize > TO.floor) {
+    toSize -= 0.5
+    person = setTo(toSize)
+  }
+  const lead = person.size * TO.lead
+  const top = zoneTop + Math.max(0, person.zoneBottom - zoneTop - person.blockH) * TO_PLACE
   person.rows.forEach((row, i) => {
     texts.push(line(row, 'to', toX, top + CAP * person.size + i * lead, person.size, measure))
   })
@@ -511,14 +564,13 @@ export interface LaidOutLabel {
  * Lay out each label twice: for the PDF in the letters its font has, and for the page with every
  * letter as typed. They match unless a letter had to change for the PDF. A line the PDF cannot
  * print at all (a name in Chinese) stays as a blank line, so the rest of the address keeps its
- * place and the next line is never set in the name's bold. Each label's strip counts it among the
- * batch ("2 of 5"), in the order given, so an envelope can be matched to its printout.
+ * place and the next line is never set in the name's bold.
  */
 export async function layoutLabels(labels: EnvelopeLabel[]): Promise<LaidOutLabel[]> {
   const font = await labelFont()
   const pdfMeasure: Measure = (text, bold) => font.width(text, bold)
   const pageMeasure: Measure = (text, bold) => pageWidth(font, text, bold)
-  return labels.map((label, index) => {
+  return labels.map((label) => {
     const from = label.from.map(cleanLabelText).filter(Boolean)
     const [name = '', ...rest] = label.to.map(cleanLabelText)
     const to = [name, ...rest.filter(Boolean)]
@@ -536,11 +588,7 @@ export async function layoutLabels(labels: EnvelopeLabel[]): Promise<LaidOutLabe
     const sitePrint = printableText(site, font.canPrint).text
     const plain = (s: string | undefined) =>
       printableText(cleanLabelText(s ?? ''), font.canPrint).text
-    const meta: LabelMeta = {
-      date: plain(label.date),
-      piece: `${index + 1} of ${labels.length}`,
-      ref: plain(label.ref),
-    }
+    const meta: LabelMeta = { date: plain(label.date), ref: plain(label.ref) }
     return {
       pdf: layoutLabel(printable(fromFields), printable(toFields), sitePrint, meta, pdfMeasure),
       page: layoutLabel(fromFields, toFields, sitePrint, meta, pageMeasure),

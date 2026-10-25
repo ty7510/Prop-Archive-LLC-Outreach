@@ -77,7 +77,7 @@ describe('the labels PDF', () => {
     expect(pages.join('\n')).toContain('PROP ARCHIVE LLC')
     expect(pages.join('\n')).toContain('Theo Young')
     expect(pages[0]).toContain('SHIP TO')
-    expect(pages[0]).toContain('1 of 4')
+    expect(pages.join('\n')).not.toContain('PIECE')
   })
 
   it('is 4 x 6 in portrait, titled, and asks to print at 100% on paper of its size', async () => {
@@ -208,7 +208,77 @@ describe('the label layout', () => {
     expect(from(1)).toContain('1500 Market St, Suite 400')
   })
 
-  it('prints the date, the piece in the batch and the reference in the strip', async () => {
+  it('keeps a suite after a comma on the street line, not alone under it', async () => {
+    const [laid] = await layoutLabels([
+      {
+        from: [
+          'Theo Young',
+          'Prop Archive LLC',
+          'Charles D. Close School of Entrepreneurship, Pearlstein Business Learning Center, 3230 Market St, Suite 402',
+          'Philadelphia, PA 19104',
+        ],
+        to: ['Dana Smith'],
+        site: '',
+      },
+    ])
+    const rows = laid!.pdf.texts.filter((t) => t.kind === 'from').map((t) => t.text)
+    expect(rows).toContain('3230 Market St, Suite 402')
+    expect(rows).not.toContain('Suite 402')
+  })
+
+  it('prints a long return address typed without commas whole, over three rows', async () => {
+    const line =
+      'Charles D Close School of Entrepreneurship Pearlstein Business Learning Center 3230 Market St Pearlstein Suite 402'
+    const [laid] = await layoutLabels([
+      {
+        from: ['Theo Young', 'Prop Archive LLC', line, 'Philadelphia, PA 19104'],
+        to: ['Esther Shemza', '107 S 2nd St Ste 300', 'Philadelphia, PA 19106'],
+        site: 'proparchive.app',
+      },
+    ])
+    const rows = laid!.pdf.texts.filter((t) => t.kind === 'from').map((t) => t.text)
+    expect(rows.join(' ')).not.toContain('…')
+    expect(rows.join(' ')).toContain(line)
+    expect(rows.at(-1)).toBe('Philadelphia, PA 19104')
+  })
+
+  it('never wraps the street or city line of the person it goes to', async () => {
+    const city = 'Philadelphia, PA 19103'
+    for (const street of ['1700 Benjamin Franklin Pkwy Apt 1210', '2317 N 29TH ST APT 2R REAR']) {
+      const [laid] = await layoutLabels([label(['Dana Smith', street, city])])
+      for (const art of [laid!.pdf, laid!.page]) {
+        const to = art.texts.filter((t) => t.kind === 'to')
+        expect(
+          to.map((t) => t.text),
+          street,
+        ).toEqual(['Dana Smith', street, city])
+        expect(Math.min(...to.map((t) => t.size))).toBeGreaterThanOrEqual(9)
+      }
+    }
+    // Too long even so: the apartment goes on the line above the street, as the post office
+    // prefers, and the street line stays whole above the city.
+    const long = '12345 North Broad Street, Apartment 1204, Building C'
+    const [laid] = await layoutLabels([label(['Dana Smith', long, city])])
+    const to = laid!.pdf.texts.filter((t) => t.kind === 'to')
+    expect(to.map((t) => t.text)).toEqual([
+      'Dana Smith',
+      'Apartment 1204, Building C',
+      '12345 North Broad Street',
+      city,
+    ])
+    expect(Math.min(...to.map((t) => t.size))).toBeGreaterThanOrEqual(12)
+  })
+
+  it('wraps a long name to more rows instead of cutting it', async () => {
+    const name = 'Estate of Margaret A Featherstonehaugh c/o Robert Featherstonehaugh'
+    const [laid] = await layoutLabels([label([name, '1 Main St', 'Media, PA 19063'])])
+    const to = laid!.pdf.texts.filter((t) => t.kind === 'to').map((t) => t.text)
+    expect(to.join(' ')).not.toContain('…')
+    expect(to.slice(0, -2).join(' ')).toBe(name)
+    expect(to.slice(-2)).toEqual(['1 Main St', 'Media, PA 19063'])
+  })
+
+  it('prints the date and the reference in the strip, never a piece count', async () => {
     const laid = await layoutLabels([
       {
         ...label(['Dana Smith', '1 Main St', 'Media, PA 19063']),
@@ -224,10 +294,11 @@ describe('the label layout', () => {
     ])
     const meta = (i: number) =>
       laid[i]!.pdf.texts.filter((t) => t.kind === 'meta').map((t) => t.text)
-    expect(meta(0)).toEqual(['DATE', '10/25/2026', 'PIECE', '1 of 3', 'REF', 'PA-7Q2K9M'])
-    expect(meta(1)).toEqual(['DATE', '10/25/2026', 'PIECE', '2 of 3', 'REF', 'PA-X4B1RT'])
+    // "Piece 2 of 3" on a carrier label reads as more parcels coming to the same person.
+    expect(meta(0)).toEqual(['DATE', '10/25/2026', 'REF', 'PA-7Q2K9M'])
+    expect(meta(1)).toEqual(['DATE', '10/25/2026', 'REF', 'PA-X4B1RT'])
     // Missing values leave their cell blank, never "undefined".
-    expect(meta(2)).toEqual(['DATE', 'PIECE', '3 of 3', 'REF'])
+    expect(meta(2)).toEqual(['DATE', 'REF'])
   })
 
   it('keeps a name the PDF cannot print as a blank line, so the address stays put and plain', async () => {
