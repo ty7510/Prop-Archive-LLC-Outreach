@@ -299,6 +299,15 @@ describe('the part Claude writes is sized to page one', () => {
     expect(fitPrintoutText(fine, DEFAULT_PAGE, PLANNED_SIZE)).toBe(fine)
   })
 
+  it('never cuts a sentence at an abbreviation like "St. Clair"', () => {
+    const text = 'Your leases stay in one place. We serve St. Clair Properties today.'
+    // Nine words would end the old cut on "We serve St." mid-sentence.
+    expect(fitPrintoutText(text, DEFAULT_PAGE, PLANNED_SIZE, 9)).toBe(
+      'Your leases stay in one place.',
+    )
+    expect(fitPrintoutText(text, DEFAULT_PAGE, PLANNED_SIZE, 12)).toBe(text)
+  })
+
   it("fits every one of Theo's fallback parts, even with long Settings", () => {
     for (const page of [DEFAULT_PAGE, LONG_PAGE]) {
       const plan = printoutWordPlan(page)

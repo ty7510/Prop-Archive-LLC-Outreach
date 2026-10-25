@@ -177,6 +177,21 @@ export function printoutFits(page: PrintoutPage, body: string, size: number): bo
   return pageFitsAt(parts, size, 1) && pageFitsAt(parts, SMALLEST_SIZE, 1, 'widest')
 }
 
+/** Short words that end in a dot but do not end a sentence, as in "St. Clair" or "Mr. Lee". */
+const ABBREVIATIONS =
+  /(?:^|\s)(?:St|Mt|Ft|Mr|Mrs|Ms|Dr|Jr|Sr|No|Ste|Apt|Ave|Blvd|Rd|vs|etc|e\.g|i\.e|[A-Z])\.$/
+
+/** A paragraph split into sentences, never after an abbreviation or an initial. */
+function sentences(paragraph: string): string[] {
+  const out: string[] = []
+  for (const piece of paragraph.split(/(?<=[.!?])\s+(?=\S)/)) {
+    const prev = out[out.length - 1]
+    if (prev !== undefined && ABBREVIATIONS.test(prev)) out[out.length - 1] = `${prev} ${piece}`
+    else out.push(piece)
+  }
+  return out
+}
+
 /**
  * The part fitted to the page: whole sentences come off the end until the page fits at `size`
  * (printoutFits) and it is no longer than `maxWords`, a paragraph going once its last sentence
@@ -191,7 +206,7 @@ export function fitPrintoutText(
   const paragraphs = text
     .trim()
     .split(/\n\s*\n/)
-    .map((p) => p.trim().split(/(?<=[.!?])\s+(?=\S)/))
+    .map((p) => sentences(p.trim()))
     .filter((p) => p.join('').trim())
   const joined = () => paragraphs.map((p) => p.join(' ')).join('\n\n')
   const words = () => joined().split(/\s+/).filter(Boolean).length
