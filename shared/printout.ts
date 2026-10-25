@@ -1,8 +1,11 @@
-// The printout Theo mails in a folder with his business card (2026-10-16): one US Letter page
-// (8.5 x 11 in) on how Prop Archive helps this person's company, what Prop Archive is, and a few
-// lines about Theo. One renderer for the print page (server) and the live preview while he proofs
-// and edits it (client), so what he reads is what prints. The fit script shrinks the text until it
-// fits the one page and flags the page when even the smallest size does not.
+// The printout Theo mails in a folder with his business card (2026-10-16): two US Letter pages
+// (8.5 x 11 in). Page one is a letter written for this person (how Prop Archive helps their
+// company, his closing and signature) with a few lines about Theo under it; page two is the full
+// pitch: what Prop Archive is and what you get (Theo, 2026-10-25: "two pages with the full spiel,
+// with a bio and a specified message to them"). One renderer for the print page (server) and the
+// live preview while he proofs and edits it (client), so what he reads is what prints. The fit
+// script sets each page in the largest type that fits its sheet and flags a page when even the
+// smallest size does not.
 
 import { PRINTOUT_LOGO } from './printoutLogo.ts'
 
@@ -17,11 +20,26 @@ export const DEFAULT_PRINTOUT_BIO =
 export const DEFAULT_PRINTOUT_CLOSING =
   "My card is in this folder. If any of this sounds like your week, call or text me and I'll show you around in 15 minutes. You can also look around first at proparchive.app."
 
-/** Longest each part may be, in characters. With the fit script this keeps it to one page. */
+/**
+ * Page two's "What you get", under what Prop Archive is: one thing it does per paragraph, its first
+ * sentence printed as the bold title. Worded from Theo's "Prop Archive in Action" clips, so it claims only what the
+ * app does today.
+ */
+export const DEFAULT_PRINTOUT_FEATURES = [
+  'Your morning on one screen. Late rent, open repairs, expiring documents, messages and leases ending soon, checked across every property each time you open the dashboard.',
+  "Documents that file themselves. Snap a photo or drop a PDF with no property picked. It's read, matched to the right property and filed, and the full text is searchable.",
+  'Leases read for you. Paste in a lease and the rent, dates, deposit and late fees come back for you to confirm. The end date goes straight into expiration tracking.',
+  'Repairs that reach the right vendor. Each repair request comes back with a category, an urgency and the right vendor from your own directory, so you know who to call.',
+  'Notices and forms in minutes. Nineteen templates for leases, notices, inspections and financial forms. Pick the property and tenant and their details fill in from your records.',
+  'A login for everyone. Tenants send repair requests from their own portal instead of your phone, and owners and contractors each get a portal of their own.',
+].join('\n\n')
+
+/** Longest each part may be, in characters. With the fit script this keeps it to its page. */
 export const PRINTOUT_LIMITS = {
   heading: 120,
   body: 1400,
   overview: 1200,
+  features: 1400,
   bio: 900,
   closing: 400,
 } as const
@@ -31,6 +49,8 @@ export interface PrintoutParts {
   /** The part written for this person. */
   body: string
   overview: string
+  /** Page two's "What you get": one item per paragraph, its first sentence the title. */
+  features: string
   bio: string
   closing: string
   /** "Prepared for" lines: their name, and their company when it is not just their name. */
@@ -67,6 +87,23 @@ export function paragraphsHtml(text: string): string {
     .join('')
 }
 
+/**
+ * The items of "What you get": one per paragraph, its first sentence the bold title (without its
+ * full stop) and the rest the line under it. A paragraph of one sentence is all title.
+ */
+export function featureItems(text: string): Array<{ title: string; text: string }> {
+  return text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((p) => {
+      const cut = /[.!?](?=\s)/.exec(p)
+      if (!cut) return { title: p.replace(/[.]$/, ''), text: '' }
+      return { title: p.slice(0, cut.index), text: p.slice(cut.index + 1).trim() }
+    })
+}
+
 /** Roboto, the face of Theo's Company Overview & Founder Bio page. Goes in each page's <head>. */
 export const PRINTOUT_FONT_LINK =
   '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap">'
@@ -83,11 +120,13 @@ export const PRINTOUT_STATS: ReadonlyArray<{ value: string; label: string }> = [
 export const PRINTOUT_ROLE = 'Founder & CEO'
 
 /**
- * The page's styles, matched to Theo's Company Overview & Founder Bio page (Canva, Sept 2026):
- * a navy band with the logo tile and PROP ARCHIVE, a light-blue rule, navy headings with a short
- * bar under them, four light-blue fact boxes, the about section with his photo, a navy footer.
- * Everything inside .op-flow is sized in em so the fit script can shrink it as one.
- * 10.98in tall, not 11: a hair under the sheet so no blank page follows.
+ * The pages' styles, matched to Theo's Company Overview & Founder Bio page (Canva, Sept 2026):
+ * a navy band with the logo tile and PROP ARCHIVE (a slimmer one on page two), a light-blue rule,
+ * navy headings with a short bar under them, four light-blue fact boxes, the things Prop Archive
+ * does in two columns, the about section with his photo, a navy footer. Everything inside .op-flow
+ * is sized in em so the fit script can shrink it as one. shared/printoutFit.ts lays the pages out
+ * from these same numbers; its test fails when they part. 10.98in tall, not 11: a hair under the
+ * sheet so no blank page follows.
  */
 export const PRINTOUT_CSS = `
 @page printout { size: 8.5in 11in; margin: 0; }
@@ -122,9 +161,17 @@ export const PRINTOUT_CSS = `
 .op-line { width: 2.4in; height: 0.4in; border-bottom: 1.5px solid var(--op-ink); }
 .op-name { font-size: 0.9em; line-height: 1.35; font-weight: 500; }
 .op-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.2in; height: 0.66in; padding: 0 0.45in; font: 700 10.5pt/1.2 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); white-space: nowrap; }
+.op-head2 { display: flex; align-items: center; gap: 0.2in; height: 0.8in; padding: 0 0.45in; }
+.op-logo2 { flex: 0 0 0.52in; width: 0.52in; height: 0.52in; display: block; }
+.op-word2 { font: 700 20pt/1 Roboto, Arial, Helvetica, sans-serif; letter-spacing: 0.01em; color: #fff; white-space: nowrap; }
+.op-for2 { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 10pt/1.3 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); }
+.op-features { display: grid; grid-template-columns: 1fr 1fr; gap: 1em 1.5em; }
+.op-feature { border-left: 3px solid var(--op-sky); padding-left: 0.75em; }
+.op-feature b { display: block; margin-bottom: 0.2em; font-weight: 700; font-size: 1.05em; line-height: 1.25; color: var(--op-ink); }
+.op-feature span { display: block; font-size: 0.95em; line-height: 1.42; }
 .op-edit { position: absolute; top: 0.12in; right: 0.12in; z-index: 1; font: 13px Arial, Helvetica, sans-serif; background: #eaf5fe; color: #0c2d57; border: 1px solid #92d0f8; border-radius: 6px; padding: 4px 10px; text-decoration: none; }
 .onepager.too-long { outline: 4px solid #dc2626; outline-offset: -4px; }
-.onepager.too-long::after { content: 'Too long for one page: cut some words'; position: absolute; left: 0; right: 0; bottom: 0; padding: 6px; background: #dc2626; color: #fff; font: 700 14px Arial, Helvetica, sans-serif; text-align: center; }
+.onepager.too-long::after { content: 'Too long for this page: cut some words'; position: absolute; left: 0; right: 0; bottom: 0; padding: 6px; background: #dc2626; color: #fff; font: 700 14px Arial, Helvetica, sans-serif; text-align: center; }
 @media print {
   .onepager { margin: 0; box-shadow: none; }
   .op-edit { display: none; }
@@ -134,9 +181,10 @@ export const PRINTOUT_CSS = `
 `
 
 /**
- * Shrinks the text of each page (11.5pt down to 8.5pt) until it fits, marks pages that still do
- * not, and tells a parent window (the editor's preview) whether everything fits. Runs again once
- * Roboto has loaded, since it measures wider than the fallback.
+ * Shrinks the text of each page (11.5pt down to 8.5pt) until it fits its sheet, marks pages that
+ * still do not, and tells a parent window (the editor's preview) how many do not. Each page fits on
+ * its own: the letter keeps its full size however full the second page is. Runs again once Roboto
+ * has loaded, since it measures wider than the fallback.
  */
 export const PRINTOUT_FIT_SCRIPT = `(function () {
   function fit() {
@@ -155,7 +203,7 @@ export const PRINTOUT_FIT_SCRIPT = `(function () {
       if (over) long++;
     });
     var note = document.getElementById('fit-note');
-    if (note) note.textContent = long ? long + (long === 1 ? ' page is' : ' pages are') + ' too long for one sheet: open Edit on the red one and cut some words.' : '';
+    if (note) note.textContent = long ? long + (long === 1 ? ' page is' : ' pages are') + ' too long for its sheet: open Edit on the red one and cut some words.' : '';
     if (window.parent !== window) window.parent.postMessage({ type: 'printout-fit', tooLong: long }, '*');
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();
@@ -171,7 +219,11 @@ export function isPhotoDataUrl(s: string): boolean {
   return /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(s)
 }
 
-/** One page. */
+/**
+ * One printout: two pages. Page one is the letter written for this person (their heading and part,
+ * Theo's closing and signature) and about Theo under it; page two is what Prop Archive is and what
+ * you get.
+ */
 export function printoutSection(p: PrintoutParts): string {
   const aboutOwner = p.ownerName.trim().split(/\s+/)[0] || 'me'
   const prepared = p.preparedFor.filter(Boolean)
@@ -179,6 +231,19 @@ export function printoutSection(p: PrintoutParts): string {
   const photo = p.photo && isPhotoDataUrl(p.photo) ? p.photo : ''
   const named = p.ownerName.trim() ? `${esc(p.ownerName.trim())}, ${esc(PRINTOUT_ROLE)}` : ''
   const foot = [named, esc(p.email), esc(p.site), esc(p.city ?? '')].filter(Boolean)
+  const footer = `<footer class="op-band op-foot">${foot.map((f) => `<span>${f}</span>`).join('')}</footer>`
+  const items = featureItems(p.features)
+  const features = items.length
+    ? `<div class="op-get">
+      <h2 class="op-h">What you get</h2>
+      <div class="op-features">${items
+        .map(
+          (f) =>
+            `<div class="op-feature"><b>${esc(f.title)}</b>${f.text ? `<span>${esc(f.text)}</span>` : ''}</div>`,
+        )
+        .join('')}</div>
+    </div>`
+    : ''
   return `<section class="onepager">
   ${p.editHref ? `<a class="op-edit" href="${esc(p.editHref)}" target="_blank" rel="noreferrer">Proof and edit</a>` : ''}
   <header class="op-band op-head">
@@ -195,11 +260,8 @@ export function printoutSection(p: PrintoutParts): string {
       <h1 class="op-h">${esc(p.heading)}</h1>
       ${paragraphsHtml(p.body)}
     </div>
-    <div class="op-what">
-      <h2 class="op-h">What Prop Archive is</h2>
-      ${paragraphsHtml(p.overview)}
-      <div class="op-stats">${PRINTOUT_STATS.map((s) => `<div class="op-stat"><b>${esc(s.value)}</b><i></i><span>${esc(s.label)}</span></div>`).join('')}</div>
-    </div>
+    <div class="op-close">${paragraphsHtml(p.closing)}</div>
+    <div class="op-sign"><span class="op-line"></span><span class="op-name">${esc(p.ownerName)}<br>Prop Archive</span></div>
     <hr class="op-divider">
     <div class="op-about">
       <h2 class="op-h op-h-sky">About ${esc(aboutOwner)}</h2>
@@ -211,14 +273,32 @@ export function printoutSection(p: PrintoutParts): string {
         </div>
       </div>
     </div>
-    <div class="op-close">${paragraphsHtml(p.closing)}</div>
-    <div class="op-sign"><span class="op-line"></span><span class="op-name">${esc(p.ownerName)}<br>Prop Archive</span></div>
   </div>
-  <footer class="op-band op-foot">${foot.map((f) => `<span>${f}</span>`).join('')}</footer>
+  ${footer}
+</section>
+<section class="onepager">
+  <header class="op-band op-head2">
+    <img class="op-logo2" src="${PRINTOUT_LOGO}" alt="">
+    <div class="op-word2">PROP ARCHIVE</div>
+    ${sub ? `<div class="op-for2">${sub}</div>` : ''}
+  </header>
+  <div class="op-rule"></div>
+  <div class="op-flow">
+    <div class="op-what">
+      <h2 class="op-h">What Prop Archive is</h2>
+      ${paragraphsHtml(p.overview)}
+      <div class="op-stats">${PRINTOUT_STATS.map((s) => `<div class="op-stat"><b>${esc(s.value)}</b><i></i><span>${esc(s.label)}</span></div>`).join('')}</div>
+    </div>
+    ${features}
+  </div>
+  ${footer}
 </section>`
 }
 
-/** A whole document with one page, for the editor's preview frame (it also prints from there). */
+/** The gap between the two pages in the editor's preview, in CSS pixels. */
+export const PREVIEW_PAGE_GAP = 16
+
+/** A whole document with the printout's two pages, for the editor's preview frame (it also prints from there). */
 export function printoutPreviewDocument(p: PrintoutParts): string {
   return `<!doctype html>
 <html lang="en">
@@ -227,8 +307,10 @@ export function printoutPreviewDocument(p: PrintoutParts): string {
 <title>${esc(p.heading)}</title>
 ${PRINTOUT_FONT_LINK}
 <style>${PRINTOUT_CSS}
-html, body { margin: 0; background: #fff; }
+html, body { margin: 0; background: #d6d3d1; }
 .onepager { margin: 0; box-shadow: none; }
+.onepager + .onepager { margin-top: ${PREVIEW_PAGE_GAP}px; }
+@media print { html, body { background: #fff; } .onepager + .onepager { margin-top: 0; } }
 </style>
 </head>
 <body>

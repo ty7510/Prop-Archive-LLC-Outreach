@@ -1,14 +1,14 @@
-// Proof and edit one printout: the one-page letter Theo mails in a folder with his business card.
+// Proof and edit one printout: the two-page letter Theo mails in a folder with his business card.
 // Left, the words: this person's heading and part, then the parts that are the same on every
-// printout. Right, the page exactly as it prints (shared/printout.ts draws it here and on the print
-// page), redrawn as he types, with a note when the words no longer fit one US Letter sheet.
+// printout. Right, the pages exactly as they print (shared/printout.ts draws them here and on the
+// print page), redrawn as he types, with a note when a page no longer fits its US Letter sheet.
 // Saving only stores the words; nothing is sent or mailed from here.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'wouter'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, Check, ExternalLink, Loader2, Printer, Save } from 'lucide-react'
 import clsx from 'clsx'
-import { PRINTOUT_LIMITS, printoutPreviewDocument } from '@shared/printout'
+import { PREVIEW_PAGE_GAP, PRINTOUT_LIMITS, printoutPreviewDocument } from '@shared/printout'
 import type { Settings } from '@shared/settings'
 import type { MessageStatus, PrintoutDoc } from '@shared/types'
 import { editStepText, getPrintout, printQueueUrl, putSettings } from '../api.ts'
@@ -21,9 +21,11 @@ import { ErrorNote, Loading } from '../components/QueryState.tsx'
 /** The sheet in CSS pixels: 8.5 x 11 inches at 96 to the inch. */
 const PAGE_W = 816
 const PAGE_H = 1056
+/** Both pages, one above the other, with the preview's gap between them. */
+const DOC_H = 2 * PAGE_H + PREVIEW_PAGE_GAP
 /** From this width up the words and the page sit side by side (Tailwind lg); below, they stack. */
 const TWO_COLUMNS = '(min-width: 1024px)'
-/** Height the side-by-side preview leaves for its card and the Save bar, so the whole sheet shows. */
+/** Height the side-by-side preview leaves for its card and the Save bar, so a whole sheet shows. */
 const PREVIEW_CHROME = 220
 /** Smallest the side-by-side preview gets on a short window (it never gets wider than its column). */
 const MIN_SCALE = 0.4
@@ -35,11 +37,12 @@ type Parts = Record<PartKey, string>
 type SharedKey = Exclude<PartKey, 'heading' | 'body'>
 type Fit = 'checking' | 'fits' | 'long'
 
-const PART_KEYS: readonly PartKey[] = ['heading', 'body', 'overview', 'bio', 'closing']
-const SHARED_KEYS: readonly SharedKey[] = ['overview', 'bio', 'closing']
+const PART_KEYS: readonly PartKey[] = ['heading', 'body', 'overview', 'features', 'bio', 'closing']
+const SHARED_KEYS: readonly SharedKey[] = ['overview', 'features', 'bio', 'closing']
 /** Where each shared part is kept in Settings. */
 const SETTING_KEY = {
   overview: 'printout_overview',
+  features: 'printout_features',
   bio: 'printout_bio',
   closing: 'printout_closing',
 } as const satisfies Record<SharedKey, keyof Settings>
@@ -48,6 +51,7 @@ const LABEL: Record<PartKey, string> = {
   heading: 'Heading',
   body: 'About them',
   overview: 'What Prop Archive is',
+  features: 'What you get',
   bio: 'About you',
   closing: 'Closing',
 }
@@ -63,8 +67,8 @@ function norm(s: string): string {
 }
 
 function partsOf(doc: PrintoutDoc): Parts {
-  const { heading, body, overview, bio, closing } = doc.parts
-  return { heading, body, overview, bio, closing }
+  const { heading, body, overview, features, bio, closing } = doc.parts
+  return { heading, body, overview, features, bio, closing }
 }
 
 function sameParts(a: Parts, b: Parts): boolean {
@@ -390,7 +394,7 @@ function PrintoutEditor({ doc, queryId }: { doc: PrintoutDoc; queryId: string })
             <div className="mt-4 space-y-4">
               <PartField
                 label={LABEL.overview}
-                hint="The section called What Prop Archive is."
+                hint="Page two: the section called What Prop Archive is."
                 value={drafts.overview}
                 max={PRINTOUT_LIMITS.overview}
                 onChange={(v) => setPart('overview', v)}
@@ -398,8 +402,17 @@ function PrintoutEditor({ doc, queryId }: { doc: PrintoutDoc; queryId: string })
                 emptyNote="Empty: this section prints blank on every printout."
               />
               <PartField
+                label={LABEL.features}
+                hint="Page two. One thing Prop Archive does per paragraph; its first sentence prints in bold as the title."
+                value={drafts.features}
+                max={PRINTOUT_LIMITS.features}
+                onChange={(v) => setPart('features', v)}
+                rows={10}
+                emptyNote="Empty: page two starts with About you on every printout."
+              />
+              <PartField
                 label={LABEL.bio}
-                hint={`The section called About ${aboutName}.`}
+                hint={`Page one: the section called About ${aboutName}, under your signature.`}
                 value={drafts.bio}
                 max={PRINTOUT_LIMITS.bio}
                 onChange={(v) => setPart('bio', v)}
@@ -408,7 +421,7 @@ function PrintoutEditor({ doc, queryId }: { doc: PrintoutDoc; queryId: string })
               />
               <PartField
                 label={LABEL.closing}
-                hint="The lines above your signature."
+                hint="Page one: the lines above your signature."
                 value={drafts.closing}
                 max={PRINTOUT_LIMITS.closing}
                 onChange={(v) => setPart('closing', v)}
@@ -468,7 +481,7 @@ function PrintoutEditor({ doc, queryId }: { doc: PrintoutDoc; queryId: string })
                 </p>
               ) : null}
               {fit === 'long' ? (
-                <p className="font-medium text-red-700">Too long for one page: cut some words.</p>
+                <p className="font-medium text-red-700">A page is too long: cut some words.</p>
               ) : null}
             </div>
           ) : null}
@@ -598,8 +611,9 @@ function PartField({
 }
 
 /**
- * The page as it prints, in a frame scaled down to its column. The frame runs the same fit script
- * as the print page and tells this window whether the words fit one sheet.
+ * The two pages as they print, in a frame scaled down to its column. The frame runs the same fit
+ * script as the print page and tells this window whether each page fits its sheet. Side by side
+ * with the words, one sheet fits the window's height and the pages scroll inside the card.
  */
 function PagePreview({
   html,
@@ -610,7 +624,7 @@ function PagePreview({
   html: string
   fit: Fit
   onFit: (fit: Fit) => void
-  /** Side by side with the words: also keep the whole sheet within the window's height. */
+  /** Side by side with the words: keep a whole sheet within the window's height. */
   fitHeight?: boolean
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null)
@@ -692,18 +706,18 @@ function PagePreview({
             <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
           )}
           {fit === 'long'
-            ? 'Too long for one page: cut some words'
+            ? 'A page is too long: cut some words'
             : fit === 'fits'
-              ? 'Fits on one page'
+              ? 'Fits on two pages'
               : 'Checking the fit'}
         </p>
       </div>
-      <div>
+      <div style={room === null ? undefined : { maxHeight: room, overflowY: 'auto' }}>
         <div ref={widthRef} className="h-0 w-full" aria-hidden />
-        {/* The frame keeps its full 816 x 1056 layout size; this box is the scaled size and clips it. */}
+        {/* The frame keeps its full layout size (both pages); this box is the scaled size and clips it. */}
         <div
           className="relative mx-auto overflow-hidden bg-white shadow-md ring-1 ring-stone-300"
-          style={{ width: Math.floor(PAGE_W * scale), height: Math.floor(PAGE_H * scale) }}
+          style={{ width: Math.floor(PAGE_W * scale), height: Math.floor(DOC_H * scale) }}
         >
           <iframe
             ref={frameRef}
@@ -714,7 +728,7 @@ function PagePreview({
             className="pointer-events-none absolute left-0 top-0 block max-w-none border-0"
             style={{
               width: PAGE_W,
-              height: PAGE_H,
+              height: DOC_H,
               transform: `scale(${scale})`,
               transformOrigin: 'top left',
             }}

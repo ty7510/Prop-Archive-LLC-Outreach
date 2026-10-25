@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PRINTOUT_BIO,
   DEFAULT_PRINTOUT_CLOSING,
+  DEFAULT_PRINTOUT_FEATURES,
   DEFAULT_PRINTOUT_OVERVIEW,
   PRINTOUT_LIMITS,
   printoutSection,
@@ -32,6 +33,7 @@ import {
   PRINTOUT_WORDS,
   printoutHeading,
   writePrintout,
+  type PrintoutPage,
 } from './printout.ts'
 import {
   actOnQueueItem,
@@ -51,6 +53,7 @@ const PARTS: PrintoutParts = {
   heading: 'How Prop Archive can help',
   body: 'Hello.',
   overview: DEFAULT_PRINTOUT_OVERVIEW,
+  features: DEFAULT_PRINTOUT_FEATURES,
   bio: DEFAULT_PRINTOUT_BIO,
   closing: DEFAULT_PRINTOUT_CLOSING,
   preparedFor: ['Dana Smith'],
@@ -107,7 +110,7 @@ const GOOD_EMAIL: HandEmail = {
     'Hi Dana,',
     'When repair texts and leases live in different places, the week gets eaten by keeping it all straight.',
     'Prop Archive keeps them in one place, with a portal each for tenants, owners and contractors.',
-    'This is my second company, and I grew up around landlords and property managers. I mailed you a one-page overview and my card too.',
+    'This is my second company, and I grew up around landlords and property managers. I mailed you a short overview and my card too.',
     "It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Worth a 15-minute look?",
     'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
     'Theo',
@@ -115,6 +118,17 @@ const GOOD_EMAIL: HandEmail = {
 }
 
 const lead = { persona: 'maya' as const, owner_kind: 'person' as const, enrichment: {} }
+
+/** The page around the part Claude writes, with Theo's default Settings and his photo. */
+const PAGE: PrintoutPage = {
+  heading: 'How Prop Archive can help Fairmount Rentals',
+  overview: DEFAULT_PRINTOUT_OVERVIEW,
+  features: DEFAULT_PRINTOUT_FEATURES,
+  bio: DEFAULT_PRINTOUT_BIO,
+  closing: DEFAULT_PRINTOUT_CLOSING,
+  ownerName: 'Theo Young',
+  photo: true,
+}
 
 describe('the words', () => {
   it("Theo's fallback printouts and emails pass the house rules", () => {
@@ -134,9 +148,12 @@ describe('the words', () => {
       DEFAULT_PRINTOUT_OVERVIEW,
       DEFAULT_PRINTOUT_BIO,
       DEFAULT_PRINTOUT_CLOSING,
+      DEFAULT_PRINTOUT_FEATURES,
     ]) {
       expect(hasEmDash(text)).toBe(false)
     }
+    // Page two's what you get: Theo's house rules, so no figures beyond the ones he chose.
+    expect(ruleProblems(DEFAULT_PRINTOUT_FEATURES)).toEqual([])
     // The same offer as the website and its terms: six months free at launch (Theo, 2026-10-16).
     expect(DEFAULT_PRINTOUT_OVERVIEW).toContain('six months free at launch')
     expect(fallbackEmail(vars, { mailed: true, followUp: false }).body).toContain(
@@ -148,6 +165,7 @@ describe('the words', () => {
     expect(DEFAULT_PRINTOUT_OVERVIEW.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.overview)
     expect(DEFAULT_PRINTOUT_BIO.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.bio)
     expect(DEFAULT_PRINTOUT_CLOSING.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.closing)
+    expect(DEFAULT_PRINTOUT_FEATURES.length).toBeLessThanOrEqual(PRINTOUT_LIMITS.features)
   })
 
   it('names a company owner by the company, never by a made-up first name', () => {
@@ -185,11 +203,13 @@ describe('Claude writes them for each person', () => {
 
   it('writes the part of the printout about them, and tries again once when a rule breaks', async () => {
     const llm = fakeLlm([`${GOOD_PART} Call 215-555-0100 today!`, GOOD_PART])
-    expect(await writePrintout(lead, vars, llm)).toBe(GOOD_PART)
+    expect(await writePrintout(lead, vars, llm, PAGE)).toBe(GOOD_PART)
     expect(llm.prompts[0]).toContain('company: Fairmount Rentals')
     expect(llm.prompts[1]).toContain('broke the rules')
-    expect(await writePrintout(lead, vars, fakeLlm(['Too short!', 'Still short!']))).toBeNull()
-    expect(await writePrintout(lead, vars, null)).toBeNull()
+    expect(
+      await writePrintout(lead, vars, fakeLlm(['Too short!', 'Still short!']), PAGE),
+    ).toBeNull()
+    expect(await writePrintout(lead, vars, null, PAGE)).toBeNull()
   })
 
   it('never tells Claude a company is a first name', async () => {
@@ -198,6 +218,7 @@ describe('Claude writes them for each person', () => {
       lead,
       { first_name: 'Fairmount', full_name: 'Fairmount Rentals LLC', company: '' },
       llm,
+      PAGE,
     )
     expect(llm.prompts[0]).not.toContain('first name: Fairmount')
     expect(llm.prompts[0]).toContain('company: Fairmount Rentals LLC')
@@ -208,11 +229,11 @@ describe('Claude writes them for each person', () => {
     expect(await writeHandEmail(lead, vars, { mailed: true, followUp: false }, llm)).toEqual(
       GOOD_EMAIL,
     )
-    expect(llm.systems[0]).toContain('mailed them a one-page overview')
+    expect(llm.systems[0]).toContain('mailed them a short overview')
     const again = fakeLlm([], [])
     await writeHandEmail(lead, vars, { mailed: false, followUp: true }, again)
     expect(again.systems[0]).toContain('follow-up')
-    expect(again.systems[0]).not.toContain('mailed them a one-page overview')
+    expect(again.systems[0]).not.toContain('mailed them a short overview')
   })
 })
 
@@ -353,7 +374,7 @@ describe('proofing and editing on the to-do list', () => {
 })
 
 describe('the print page', () => {
-  it('prints each printout on one letter page with a proof link, and envelope labels', async () => {
+  it('prints each printout on two letter pages with a proof link, and envelope labels', async () => {
     const { db, deps } = await todoSetup()
     await insertLead(db, { full_name: 'Dana Smith', first_name: 'Dana', last_name: 'Smith' })
     await insertLead(db, { full_name: 'Sam Ortiz', first_name: 'Sam', last_name: 'Ortiz' })
@@ -362,7 +383,10 @@ describe('the print page', () => {
       (p) => p.steps.find((s) => s.kind === 'postcard')!.message_id,
     )
     const html = await printPage(deps, ids)
-    expect(html.match(/<section class="onepager">/g)).toHaveLength(2)
+    // Two pages each: the letter, then what Prop Archive is and what you get.
+    expect(html.match(/<section class="onepager">/g)).toHaveLength(4)
+    expect(html).toContain('What you get')
+    expect(html).toContain('Two-sided')
     expect(html).toContain('Dana, here is how Prop Archive can help')
     expect(html).toContain(`href="/printout/${ids[0]}"`)
     expect(html).toContain('@page printout { size: 8.5in 11in')
@@ -509,7 +533,7 @@ describe('cards made before printouts', () => {
     const printout = card.steps[1]!
     expect(printout).toMatchObject({ message_id: 'old-card', printout: true })
     expect(printout.subject).toBe('Lead, here is how Prop Archive can help')
-    expect(card.steps[2]!.body).toContain('I mailed you a one-page overview')
+    expect(card.steps[2]!.body).toContain('I mailed you a short overview')
     // Once is enough.
     expect(await upgradeOpenCards(deps, await getSettings(db))).toBe(0)
   })

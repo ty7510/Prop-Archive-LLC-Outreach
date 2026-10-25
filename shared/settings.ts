@@ -3,6 +3,7 @@
 import { z } from 'zod'
 import {
   DEFAULT_PRINTOUT_BIO,
+  DEFAULT_PRINTOUT_FEATURES,
   DEFAULT_PRINTOUT_CLOSING,
   DEFAULT_PRINTOUT_OVERVIEW,
   isPhotoDataUrl,
@@ -276,8 +277,10 @@ export const SettingsSchema = z.object({
   people_per_day: z.number().int().min(0).max(100).default(25),
   /** To-do list: days after a person's last step before they come back if they have not replied. */
   recycle_after_days: z.number().int().min(1).max(365).default(30),
-  /** The printout (one letter page Theo mails in a folder with his card): what Prop Archive is. */
+  /** The printout (two letter pages Theo mails in a folder with his card): what Prop Archive is. */
   printout_overview: z.string().max(PRINTOUT_LIMITS.overview).default(DEFAULT_PRINTOUT_OVERVIEW),
+  /** The printout, page two: what you get, one item per paragraph (its first sentence the title). */
+  printout_features: z.string().max(PRINTOUT_LIMITS.features).default(DEFAULT_PRINTOUT_FEATURES),
   /** The printout: a few lines about Theo. */
   printout_bio: z.string().max(PRINTOUT_LIMITS.bio).default(DEFAULT_PRINTOUT_BIO),
   /** The printout: the lines above his signature. */

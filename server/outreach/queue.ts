@@ -810,7 +810,7 @@ async function labelsPage(deps: OutreachDeps, ids: string[]): Promise<string> {
 }
 
 /**
- * The print page. To-do printouts are one US Letter sheet each (shared/printout.ts), with a link to
+ * The print page. To-do printouts are two US Letter pages each (shared/printout.ts), with a link to
  * proof and edit each one; older sequence mail prints as a 4x6 postcard or a letter. With
  * `labels`, the same people as 4x6 in shipping labels for the envelopes, one per page.
  */
@@ -892,7 +892,7 @@ export async function printPage(
     .join(', ')
   const how = [
     printouts
-      ? 'Read each page first: Proof and edit (top right of a page, not printed) changes it. Each printout is one US Letter sheet: in the print box pick Letter, Margins None and Scale 100. Put each in a folder with your business card.'
+      ? 'Read each printout first: Proof and edit (top right of its first page, not printed) changes it. Each printout is two US Letter pages: in the print box pick Letter, Margins None and Scale 100, and Two-sided (flip on the long edge) for one sheet each. Put each in a folder with your business card.'
       : '',
     cards
       ? 'Load 4x6 postcard stock and print double-sided (flip on the short edge), then sign, stamp and mail.'
@@ -976,7 +976,7 @@ ${printout ? `<script>${PRINTOUT_FIT_SCRIPT}</script>` : ''}
 </html>`
 }
 
-/** A to-do printout (one letter page), as opposed to an old 4x6 postcard or sequence mail. */
+/** A to-do printout (two letter pages), as opposed to an old 4x6 postcard or sequence mail. */
 export function isPrintoutMessage(
   m: Pick<Message, 'channel' | 'raw' | 'idempotency_key'>,
 ): boolean {
