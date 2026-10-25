@@ -602,6 +602,7 @@ export const PrintoutPartsSchema = z.object({
   heading: z.string(),
   body: z.string(),
   overview: z.string(),
+  features: z.string(),
   bio: z.string(),
   closing: z.string(),
   preparedFor: z.array(z.string()),

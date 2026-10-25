@@ -538,7 +538,7 @@ function LinkedInStep({
   )
 }
 
-/** The one-page printout: proof and edit it on its own page, then print it and mail it. */
+/** The two-page printout: proof and edit it on its own page, then print it and mail it. */
 function PrintoutStep({
   step,
   how,

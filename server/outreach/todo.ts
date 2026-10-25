@@ -3,7 +3,7 @@
 // no replies"). Each send day up to settings.people_per_day people go on the list with every step
 // at once, in the order Theo does them (2026-10-16: "a linkedin message then a printout i will mail
 // in a folder with my business card then a email; all hand sent by me but not written by me"):
-// their LinkedIn note (the app finds the profile and writes the note for them), a one-page
+// their LinkedIn note (the app finds the profile and writes the note for them), a two-page
 // printout about their company, and an email he sends from Gmail. He proofs and can edit each one
 // first. Steps are ready_for_human messages keyed todo:<lead>:<round>:<kind>, so Done, Skip and the
 // print page work as before. When no step is waiting the person is complete; once
@@ -279,7 +279,7 @@ async function linkedInStep(
 
 /**
  * The part of the printout about them: written for them, else Theo's words for their kind. Either
- * way it is sized to the room his Settings leave on the page, so the page fits its one sheet.
+ * way it is sized to the room his Settings leave on page one, so the page fits its sheet.
  */
 async function printoutText(
   deps: OutreachDeps,
@@ -297,7 +297,7 @@ async function printoutText(
   }
 }
 
-/** The printout (one letter page) Theo mails in a folder with his business card. */
+/** The printout (two letter pages) Theo mails in a folder with his business card. */
 async function printoutStep(
   deps: OutreachDeps,
   settings: Settings,

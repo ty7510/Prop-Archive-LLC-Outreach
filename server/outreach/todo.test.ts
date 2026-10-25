@@ -86,7 +86,7 @@ describe('to-do list', () => {
     expect(email!.to_address).toMatch(/@example\.com$/)
     expect(email!.subject).toBeTruthy()
     expect(email!.body).toMatch(/^Hi Lead,/)
-    expect(email!.body).toContain('I mailed you a one-page overview')
+    expect(email!.body).toContain('I mailed you a short overview')
     expect(list.email_footer).toContain('Reply "stop"')
     expect(list.email_footer).toContain('1500 Market St')
   })

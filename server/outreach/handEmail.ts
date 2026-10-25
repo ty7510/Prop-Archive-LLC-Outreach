@@ -37,7 +37,7 @@ function followUpSystem(mailed: boolean): string {
     'One new reason it might matter to them, picked from the facts: one concrete moment in their week that Prop Archive makes easier. Do not repeat a whole pitch.',
     ...(mailed
       ? [
-          'One short line saying he also mailed them a one-page overview and his card. Never say when it arrives.',
+          'One short line saying he also mailed them a short overview and his card. Never say when it arrives.',
         ]
       : []),
     "The ask, one sentence: a 15-minute look, and that a one-word no is fine if it's not a fit right now.",
@@ -69,7 +69,7 @@ export function emailSystem(context: EmailContext): string {
     'One line on why Theo: Prop Archive is his second company (he ran his first for five years), and he grew up around landlords, realtors and property managers.',
     ...(mailed
       ? [
-          'One short line saying he also mailed them a one-page overview and his card. Never say when it arrives.',
+          'One short line saying he also mailed them a short overview and his card. Never say when it arrives.',
         ]
       : []),
     "The beta, in these words or very close: free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Write the number as the word six.",
@@ -128,7 +128,7 @@ export function fallbackEmail(vars: TemplateVars, context: EmailContext): HandEm
       subject: 'Following up on Prop Archive',
       body: [
         first ? `Hi ${first},` : 'Hi,',
-        `Following up on my email from last month. If repairs, leases or rent ever pile up at the worst times${company ? ` at ${company}` : ''}, Prop Archive keeps all three in one place, so fewer things land on your phone.${mailed ? ' I mailed you a one-page overview and my card too.' : ''}`,
+        `Following up on my email from last month. If repairs, leases or rent ever pile up at the worst times${company ? ` at ${company}` : ''}, Prop Archive keeps all three in one place, so fewer things land on your phone.${mailed ? ' I mailed you a short overview and my card too.' : ''}`,
         "Worth a 15-minute look? If it's not a fit right now, a one-word no is fine too.",
         'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
         'Theo',
@@ -143,7 +143,7 @@ export function fallbackEmail(vars: TemplateVars, context: EmailContext): HandEm
       first ? `Hi ${first},` : 'Hi,',
       'If your leases live in one folder, repair requests in your texts and rent in a spreadsheet, you know how much of the week goes to keeping it all straight.',
       'Prop Archive puts it in one place, with a portal each for tenants, owners and contractors, so fewer things land on your phone.',
-      `This is my second company, and I grew up around landlords, realtors and property managers.${mailed ? ' I mailed you a one-page overview and my card too.' : ''}`,
+      `This is my second company, and I grew up around landlords, realtors and property managers.${mailed ? ' I mailed you a short overview and my card too.' : ''}`,
       "It's free while we're in beta, beta members get six months free at launch, and there's nothing to sign. Worth a 15-minute look?",
       'If you\'d like to look around first, the "Join the beta" button and the link to proparchive.app are both in my signature below.',
       'Theo',

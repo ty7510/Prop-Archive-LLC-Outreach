@@ -1,18 +1,17 @@
-// The printout Theo mails in a folder with his business card (2026-10-16): one letter page. This
-// file writes its middle, the part about this person and their company: Claude writes it from the
+// The printout Theo mails in a folder with his business card (2026-10-16): two letter pages. This
+// file writes the top of page one, the part about this person and their company: Claude writes it from the
 // same facts as the LinkedIn note, the rules are checked again in code, and without a model (or
 // when two tries break the rules) a version for their kind of owner is used. Either way the part is
-// sized to the room the rest of the page leaves (shared/printoutFit.ts), so the page always fits its
-// one sheet (Theo, 2026-10-25). Theo proofs and edits every printout before he prints it; the page
+// sized to the room the rest of page one leaves (shared/printoutFit.ts), so the page always fits its
+// sheet (Theo, 2026-10-25). Theo proofs and edits every printout before he prints it; the page
 // itself is drawn by shared/printout.ts.
 import { isPhotoDataUrl, type PrintoutParts } from '../../shared/printout.ts'
 import {
   bodyRoom,
   FIT_SIZES,
-  fitsAt,
-  fitsInAnyChrome,
   lineCount,
   FLOW_WIDTH,
+  pageFitsAt,
   PLANNED_SIZE,
   SMALLEST_SIZE,
   type PrintoutFitParts,
@@ -114,10 +113,10 @@ export function fallbackPrintout(lead: Pick<Lead, 'persona' | 'property_count'>)
 }
 
 export const PRINTOUT_SYSTEM = [
-  'You write the middle of a printed one-page letter from Theo to one Philadelphia landlord or property manager: the part about them and their company. Theo mails it in a folder with his business card, and he reads it before he prints it.',
-  'Below your part the page already has a short overview of Prop Archive, a few lines about Theo and his sign-off. Do not repeat those, do not introduce Theo and do not sign off.',
+  'You write the letter at the top of a printed two-page piece from Theo to one Philadelphia landlord or property manager: the part about them and their company, on page one. Theo mails it in a folder with his business card, and he reads it before he prints it.',
+  'After your part, page one has his closing, his signature and a few lines about him, and page two has an overview of Prop Archive and what it does. Do not repeat those, do not list features, do not introduce Theo and do not sign off.',
   'Prop Archive is one place for a small landlord or manager to keep leases and documents, repair requests and rent, with a portal each for tenants, owners and contractors.',
-  'Write two short paragraphs, {words} in all. It is printed on one page with the rest, so never go over the most:',
+  'Write two short paragraphs, {words} in all. It is printed on page one with the rest, so never go over the most:',
   '- The first sentence names a problem an owner like them really has, picked from the facts: how many places they run, what kind of company it is, the part of the city. It is about them, not Theo.',
   '- Then what changes for them with Prop Archive: one or two concrete moments in their week that get easier. No feature list, no headings, no bullet points.',
   '- Speak to them as "you". Name their company once when one is given and it is not just their own name.',
@@ -136,6 +135,7 @@ export function printoutPage(settings: Settings, heading: string): PrintoutPage 
   return {
     heading,
     overview: settings.printout_overview,
+    features: settings.printout_features,
     bio: settings.printout_bio,
     closing: settings.printout_closing,
     ownerName: settings.owner_name,
@@ -168,27 +168,34 @@ export function printoutWordPlan(page: PrintoutPage): {
 }
 
 /**
- * The page fits with this part: at `size` as Chrome on Windows sets it (what Theo prints), and by
- * the smallest size in any Chrome, so the print page never runs past its one sheet.
+ * Page one fits with this part: at `size` as Chrome on Windows sets it (what Theo prints), and by
+ * the smallest size in any Chrome, so it never runs past its sheet. Page two holds only Theo's
+ * Settings, so this part never decides whether page two fits (Settings says when it does not).
  */
 export function printoutFits(page: PrintoutPage, body: string, size: number): boolean {
   const parts = { ...page, body }
-  return fitsAt(parts, size) && fitsInAnyChrome(parts)
+  return pageFitsAt(parts, size, 1) && pageFitsAt(parts, SMALLEST_SIZE, 1, 'widest')
 }
 
 /**
  * The part fitted to the page: whole sentences come off the end until the page fits at `size`
- * (printoutFits), a paragraph going once its last sentence does. Empty when not even its first
- * sentence fits.
+ * (printoutFits) and it is no longer than `maxWords`, a paragraph going once its last sentence
+ * does. Empty when not even its first sentence fits.
  */
-export function fitPrintoutText(text: string, page: PrintoutPage, size: number): string {
+export function fitPrintoutText(
+  text: string,
+  page: PrintoutPage,
+  size: number,
+  maxWords = Number.POSITIVE_INFINITY,
+): string {
   const paragraphs = text
     .trim()
     .split(/\n\s*\n/)
     .map((p) => p.trim().split(/(?<=[.!?])\s+(?=\S)/))
     .filter((p) => p.join('').trim())
   const joined = () => paragraphs.map((p) => p.join(' ')).join('\n\n')
-  while (paragraphs.length && !printoutFits(page, joined(), size)) {
+  const words = () => joined().split(/\s+/).filter(Boolean).length
+  while (paragraphs.length && (!printoutFits(page, joined(), size) || words() > maxWords)) {
     const last = paragraphs[paragraphs.length - 1]!
     last.pop()
     if (last.length === 0) paragraphs.pop()
@@ -208,7 +215,7 @@ function bodyLines(text: string, size: number): number {
 /**
  * The part about them, written for them and sized to `page`; null when there is no model, the page
  * has no room for a part of its own, or two tries break a rule. A second try that only runs long
- * is cut to fit at whole sentences rather than thrown away.
+ * is cut to fit at whole sentences rather than thrown away, as long as both its paragraphs stay.
  */
 export async function writePrintout(
   lead: Pick<Lead, 'persona' | 'owner_kind' | 'enrichment'>,
@@ -244,8 +251,12 @@ export async function writePrintout(
     if (rules.length === 0 && !long) return text
     if (attempt === 1) {
       if (rules.length > 0) return null
-      const cut = fitPrintoutText(text, page, plan.size)
-      return copyProblems(cut, { min: LEAST_WORDS, max: plan.words.max + 20 }).length === 0
+      // Cut to fit, but only while both its paragraphs stay: without the second one the part
+      // names their problem and never says what changes, and Theo's own words read better.
+      const cut = fitPrintoutText(text, page, plan.size, plan.words.max + 20)
+      const count = (t: string) => t.split(/\n\s*\n/).filter((p) => p.trim()).length
+      const whole = count(cut) >= Math.min(2, count(text))
+      return whole && copyProblems(cut, { min: limits.min, max: plan.words.max + 20 }).length === 0
         ? cut
         : null
     }
@@ -282,7 +293,7 @@ export function cityLine(address: string): string {
   return 'Philadelphia, PA'
 }
 
-/** Everything one page needs: this person's part from the message, the rest from Settings. */
+/** Everything the two pages need: this person's part from the message, the rest from Settings. */
 export function printoutParts(
   settings: Settings,
   message: { id: string; subject: string | null; body: string },
@@ -301,6 +312,7 @@ export function printoutParts(
       }),
     body: message.body,
     overview: settings.printout_overview,
+    features: settings.printout_features,
     bio: settings.printout_bio,
     closing: settings.printout_closing,
     // Once each: a company owner's name is the company.

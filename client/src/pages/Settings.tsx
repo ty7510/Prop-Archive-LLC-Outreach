@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Save, Loader2, KeyRound, Plus } from 'lucide-react'
 import clsx from 'clsx'
 import { isPhotoDataUrl, PRINTOUT_LIMITS } from '@shared/printout'
-import { bodyRoom, PLANNED_SIZE } from '@shared/printoutFit'
+import { bodyRoom, pageTwoSize, PLANNED_SIZE } from '@shared/printoutFit'
 import type { Settings as SettingsT } from '@shared/settings'
 import { ENRICH_PROVIDER_IDS, type EnrichProviderId } from '@shared/settings'
 import {
@@ -457,7 +457,7 @@ function SettingsForm({
 
       <Section
         title="To-do list"
-        intro="Each weekday the app puts people on the Go page with every step at once: their LinkedIn note, a one-page printout you mail in a folder with your card, and an email you send from Gmail. The app writes each one for that person and you proof it first. When every step is done they move to Complete, and they come back if they have not replied."
+        intro="Each weekday the app puts people on the Go page with every step at once: their LinkedIn note, a two-page printout you mail in a folder with your card, and an email you send from Gmail. The app writes each one for that person and you proof it first. When every step is done they move to Complete, and they come back if they have not replied."
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="New people per day" hint="Each gets a note, a printout and an email">
@@ -500,13 +500,10 @@ function SettingsForm({
         </div>
         <div className="space-y-4">
           <p className="text-stone-700">
-            Every printout has a part written for that person, then these three parts, the same on
-            every page. Changing them here changes every printout.
+            Every printout is two pages: the part written for that person, then these parts, the
+            same on every printout. Changing them here changes every printout.
           </p>
-          <Field
-            label="What Prop Archive is"
-            hint="The section under your part, above the four fact boxes"
-          >
+          <Field label="What Prop Archive is" hint="Page two, above the four fact boxes">
             <textarea
               className="input min-h-[140px] py-2"
               maxLength={PRINTOUT_LIMITS.overview}
@@ -514,7 +511,18 @@ function SettingsForm({
               onChange={(e) => set('printout_overview', e.target.value)}
             />
           </Field>
-          <Field label="About you" hint="The About section, beside your photo">
+          <Field
+            label="What you get"
+            hint="Page two. One thing Prop Archive does per paragraph; its first sentence prints in bold as the title."
+          >
+            <textarea
+              className="input min-h-[200px] py-2"
+              maxLength={PRINTOUT_LIMITS.features}
+              value={draft.printout_features}
+              onChange={(e) => set('printout_features', e.target.value)}
+            />
+          </Field>
+          <Field label="About you" hint="Page one, under your signature, beside your photo">
             <textarea
               className="input min-h-[120px] py-2"
               maxLength={PRINTOUT_LIMITS.bio}
@@ -522,7 +530,7 @@ function SettingsForm({
               onChange={(e) => set('printout_bio', e.target.value)}
             />
           </Field>
-          <Field label="Closing" hint="The lines above your signature">
+          <Field label="Closing" hint="Page one, the lines above your signature">
             <textarea
               className="input min-h-[80px] py-2"
               maxLength={PRINTOUT_LIMITS.closing}
@@ -1027,9 +1035,9 @@ function PersonaRow({
 const ROOMY_WORDS = 60
 
 /**
- * How much room the three parts and the photo leave on the printout for the part written for each
- * person, at the 10 pt the app plans every printout for. The app sizes that part to this room, so
- * the page always fits; long parts here just leave it fewer words.
+ * What the parts here leave on the printout: how many words page one (the letter, then about you)
+ * has for the part written for each person at the 10 pt the app plans for (the app sizes that part
+ * to this room, so page one always fits), and whether page two fits at a comfortable size.
  */
 function PrintoutRoom({ draft }: { draft: SettingsT }) {
   const words = useMemo(
@@ -1037,28 +1045,35 @@ function PrintoutRoom({ draft }: { draft: SettingsT }) {
       bodyRoom(
         {
           heading: 'How Prop Archive can help Fairmount Rentals LLC',
-          overview: draft.printout_overview,
-          bio: draft.printout_bio,
           closing: draft.printout_closing,
+          bio: draft.printout_bio,
           ownerName: draft.owner_name,
           photo: isPhotoDataUrl(draft.printout_photo ?? ''),
         },
         PLANNED_SIZE,
       ).words,
-    [
-      draft.printout_overview,
-      draft.printout_bio,
-      draft.printout_closing,
-      draft.owner_name,
-      draft.printout_photo,
-    ],
+    [draft.printout_closing, draft.printout_bio, draft.owner_name, draft.printout_photo],
+  )
+  const pageTwo = useMemo(
+    () => pageTwoSize({ overview: draft.printout_overview, features: draft.printout_features }),
+    [draft.printout_overview, draft.printout_features],
   )
   const cramped = words < ROOMY_WORDS
+  const small = pageTwo === null || pageTwo < PLANNED_SIZE
   return (
-    <p className={clsx('text-sm', cramped ? 'font-medium text-red-700' : 'text-stone-500')}>
-      {cramped
-        ? `These parts leave room for only about ${Math.max(0, words)} words about each person. Shorten them so the part written for each person has room.`
-        : `The part written for each person gets about ${Math.min(140, words)} words, so every printout fits its one page.`}
-    </p>
+    <div className="space-y-1 text-sm">
+      <p className={cramped ? 'font-medium text-red-700' : 'text-stone-500'}>
+        {cramped
+          ? `Your closing and About you leave room for only about ${Math.max(0, words)} words about each person on page one. Shorten them so the part written for each person has room.`
+          : `Page one: the part written for each person gets about ${Math.min(140, words)} words, so the page always fits.`}
+      </p>
+      <p className={small ? 'font-medium text-red-700' : 'text-stone-500'}>
+        {pageTwo === null
+          ? 'Page two is too long even in the smallest type: shorten What Prop Archive is or What you get.'
+          : small
+            ? `Page two only fits in small type (${pageTwo} pt). Shorten What Prop Archive is or What you get.`
+            : 'Page two fits at a comfortable size.'}
+      </p>
+    </div>
   )
 }
