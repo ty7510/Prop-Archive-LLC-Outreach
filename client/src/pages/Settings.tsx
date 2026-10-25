@@ -3,7 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Save, Loader2, KeyRound, Plus } from 'lucide-react'
 import clsx from 'clsx'
-import { PRINTOUT_LIMITS } from '@shared/printout'
+import { isPhotoDataUrl, PRINTOUT_LIMITS } from '@shared/printout'
+import { bodyRoom, PLANNED_SIZE } from '@shared/printoutFit'
 import type { Settings as SettingsT } from '@shared/settings'
 import { ENRICH_PROVIDER_IDS, type EnrichProviderId } from '@shared/settings'
 import {
@@ -535,6 +536,7 @@ function SettingsForm({
           >
             <PhotoPicker value={draft.printout_photo} onChange={(v) => set('printout_photo', v)} />
           </Field>
+          <PrintoutRoom draft={draft} />
         </div>
         <Toggle
           checked={draft.sequences_on}
@@ -1018,5 +1020,45 @@ function PersonaRow({
         })}
       </div>
     </div>
+  )
+}
+
+/** Fewer words than this for the part about each person, and the printout reads cramped. */
+const ROOMY_WORDS = 60
+
+/**
+ * How much room the three parts and the photo leave on the printout for the part written for each
+ * person, at the 10 pt the app plans every printout for. The app sizes that part to this room, so
+ * the page always fits; long parts here just leave it fewer words.
+ */
+function PrintoutRoom({ draft }: { draft: SettingsT }) {
+  const words = useMemo(
+    () =>
+      bodyRoom(
+        {
+          heading: 'How Prop Archive can help Fairmount Rentals LLC',
+          overview: draft.printout_overview,
+          bio: draft.printout_bio,
+          closing: draft.printout_closing,
+          ownerName: draft.owner_name,
+          photo: isPhotoDataUrl(draft.printout_photo ?? ''),
+        },
+        PLANNED_SIZE,
+      ).words,
+    [
+      draft.printout_overview,
+      draft.printout_bio,
+      draft.printout_closing,
+      draft.owner_name,
+      draft.printout_photo,
+    ],
+  )
+  const cramped = words < ROOMY_WORDS
+  return (
+    <p className={clsx('text-sm', cramped ? 'font-medium text-red-700' : 'text-stone-500')}>
+      {cramped
+        ? `These parts leave room for only about ${Math.max(0, words)} words about each person. Shorten them so the part written for each person has room.`
+        : `The part written for each person gets about ${Math.min(140, words)} words, so every printout fits its one page.`}
+    </p>
   )
 }

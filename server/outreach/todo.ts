@@ -38,7 +38,14 @@ import {
   readyToContactSql,
 } from './readyToContact.ts'
 import { checkOwnership, needsOwnershipCheck } from './ownership.ts'
-import { fallbackPrintout, printoutHeading, writePrintout } from './printout.ts'
+import {
+  fallbackPrintout,
+  fitPrintoutText,
+  printoutHeading,
+  printoutPage,
+  printoutWordPlan,
+  writePrintout,
+} from './printout.ts'
 import { recipientBlocker } from './recipients.ts'
 import { buildVars, renderTemplate, type TemplateVars } from './templates.ts'
 
@@ -270,16 +277,22 @@ async function linkedInStep(
   }
 }
 
-/** The part of the printout about them: written for them, else Theo's words for their kind. */
+/**
+ * The part of the printout about them: written for them, else Theo's words for their kind. Either
+ * way it is sized to the room his Settings leave on the page, so the page fits its one sheet.
+ */
 async function printoutText(
   deps: OutreachDeps,
+  settings: Settings,
   lead: Lead,
   vars: TemplateVars,
 ): Promise<{ heading: string; body: string; personal: boolean }> {
-  const written = await writePrintout(lead, vars, deps.llm).catch(() => null)
+  const heading = printoutHeading(vars)
+  const page = printoutPage(settings, heading)
+  const written = await writePrintout(lead, vars, deps.llm, page).catch(() => null)
   return {
-    heading: printoutHeading(vars),
-    body: written ?? fallbackPrintout(lead),
+    heading,
+    body: written ?? fitPrintoutText(fallbackPrintout(lead), page, printoutWordPlan(page).size),
     personal: Boolean(written),
   }
 }
@@ -287,11 +300,12 @@ async function printoutText(
 /** The printout (one letter page) Theo mails in a folder with his business card. */
 async function printoutStep(
   deps: OutreachDeps,
+  settings: Settings,
   lead: Lead,
   vars: TemplateVars,
   postal: PostalAddress,
 ): Promise<NewStep> {
-  const text = await printoutText(deps, lead, vars)
+  const text = await printoutText(deps, settings, lead, vars)
   return {
     kind: 'postcard',
     channel: 'mail',
@@ -469,7 +483,7 @@ export async function addPerson(
     postal && !(await recipientBlocker(deps.db, settings, lead, 'mail', now)) ? postal : null
   const written = await Promise.all([
     linkedInStep(deps, settings, lead),
-    mailing ? printoutStep(deps, lead, vars, mailing) : Promise.resolve(null),
+    mailing ? printoutStep(deps, settings, lead, vars, mailing) : Promise.resolve(null),
     emailStep(deps, settings, lead, vars, Boolean(mailing)),
   ])
   const steps = written.filter((s): s is NewStep => s !== null)
@@ -982,7 +996,7 @@ export async function upgradeOpenCards(
       sequenceName: 'To do',
     })
     const [text, email] = await Promise.all([
-      printoutText(deps, lead, vars),
+      printoutText(deps, settings, lead, vars),
       emailStep(deps, settings, lead, vars, true),
     ])
     const raw = (message.raw ?? {}) as Record<string, unknown>

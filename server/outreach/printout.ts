@@ -1,9 +1,22 @@
 // The printout Theo mails in a folder with his business card (2026-10-16): one letter page. This
 // file writes its middle, the part about this person and their company: Claude writes it from the
 // same facts as the LinkedIn note, the rules are checked again in code, and without a model (or
-// when two tries break the rules) a version for their kind of owner is used. Theo proofs and edits
-// every printout before he prints it; the page itself is drawn by shared/printout.ts.
-import type { PrintoutParts } from '../../shared/printout.ts'
+// when two tries break the rules) a version for their kind of owner is used. Either way the part is
+// sized to the room the rest of the page leaves (shared/printoutFit.ts), so the page always fits its
+// one sheet (Theo, 2026-10-25). Theo proofs and edits every printout before he prints it; the page
+// itself is drawn by shared/printout.ts.
+import { isPhotoDataUrl, type PrintoutParts } from '../../shared/printout.ts'
+import {
+  bodyRoom,
+  FIT_SIZES,
+  fitsAt,
+  fitsInAnyChrome,
+  lineCount,
+  FLOW_WIDTH,
+  PLANNED_SIZE,
+  SMALLEST_SIZE,
+  type PrintoutFitParts,
+} from '../../shared/printoutFit.ts'
 import type { Settings } from '../../shared/settings.ts'
 import type { Lead } from '../db/schema.ts'
 import { isLlc, titleCase } from '../lib/text.ts'
@@ -104,7 +117,7 @@ export const PRINTOUT_SYSTEM = [
   'You write the middle of a printed one-page letter from Theo to one Philadelphia landlord or property manager: the part about them and their company. Theo mails it in a folder with his business card, and he reads it before he prints it.',
   'Below your part the page already has a short overview of Prop Archive, a few lines about Theo and his sign-off. Do not repeat those, do not introduce Theo and do not sign off.',
   'Prop Archive is one place for a small landlord or manager to keep leases and documents, repair requests and rent, with a portal each for tenants, owners and contractors.',
-  'Write two short paragraphs, 80 to 140 words in all:',
+  'Write two short paragraphs, {words} in all. It is printed on one page with the rest, so never go over the most:',
   '- The first sentence names a problem an owner like them really has, picked from the facts: how many places they run, what kind of company it is, the part of the city. It is about them, not Theo.',
   '- Then what changes for them with Prop Archive: one or two concrete moments in their week that get easier. No feature list, no headings, no bullet points.',
   '- Speak to them as "you". Name their company once when one is given and it is not just their own name.',
@@ -115,13 +128,101 @@ export const PRINTOUT_SYSTEM = [
   'Return the two paragraphs only, with one blank line between them.',
 ].join('\n')
 
-/** The part about them, written for them; null when there is no model or two tries break a rule. */
+/** The rest of the page around the part written for them: what decides how much room it has. */
+export type PrintoutPage = Omit<PrintoutFitParts, 'body'>
+
+/** The page as it will print for them: their heading and Theo's Settings. */
+export function printoutPage(settings: Settings, heading: string): PrintoutPage {
+  return {
+    heading,
+    overview: settings.printout_overview,
+    bio: settings.printout_bio,
+    closing: settings.printout_closing,
+    ownerName: settings.owner_name,
+    photo: isPhotoDataUrl(settings.printout_photo ?? ''),
+  }
+}
+
+/** Fewest words worth asking Claude for: under this the page has no room for a part of its own. */
+const LEAST_WORDS = 25
+
+/**
+ * How long the part written for them may be: as many words as fit at the planned 10 pt (never more
+ * than the 140 Theo's letters run to). When his overview, bio and closing leave less room than a
+ * proper part needs, the page is planned at a smaller size, down to 8.5 pt; `words.max` under
+ * LEAST_WORDS means there is no room even then.
+ */
+export function printoutWordPlan(page: PrintoutPage): {
+  size: number
+  words: { min: number; max: number }
+} {
+  // Never more than fits by the smallest size in the Chrome that sets text widest.
+  const anyChrome = bodyRoom(page, SMALLEST_SIZE, 'widest').words
+  const roomAt = (size: number) => Math.min(140, anyChrome, bodyRoom(page, size).words)
+  const proper = 60
+  const size =
+    FIT_SIZES.find((s) => s <= PLANNED_SIZE && roomAt(s) >= proper) ??
+    (roomAt(SMALLEST_SIZE) > 0 ? SMALLEST_SIZE : PLANNED_SIZE)
+  const max = roomAt(size)
+  return { size, words: { min: Math.min(80, Math.max(LEAST_WORDS, max - 40)), max } }
+}
+
+/**
+ * The page fits with this part: at `size` as Chrome on Windows sets it (what Theo prints), and by
+ * the smallest size in any Chrome, so the print page never runs past its one sheet.
+ */
+export function printoutFits(page: PrintoutPage, body: string, size: number): boolean {
+  const parts = { ...page, body }
+  return fitsAt(parts, size) && fitsInAnyChrome(parts)
+}
+
+/**
+ * The part fitted to the page: whole sentences come off the end until the page fits at `size`
+ * (printoutFits), a paragraph going once its last sentence does. Empty when not even its first
+ * sentence fits.
+ */
+export function fitPrintoutText(text: string, page: PrintoutPage, size: number): string {
+  const paragraphs = text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((p) => p.trim().split(/(?<=[.!?])\s+(?=\S)/))
+    .filter((p) => p.join('').trim())
+  const joined = () => paragraphs.map((p) => p.join(' ')).join('\n\n')
+  while (paragraphs.length && !printoutFits(page, joined(), size)) {
+    const last = paragraphs[paragraphs.length - 1]!
+    last.pop()
+    if (last.length === 0) paragraphs.pop()
+  }
+  return joined()
+}
+
+/** Lines the part takes at `size` pt, for telling Claude how far over the page it ran. */
+function bodyLines(text: string, size: number): number {
+  return text
+    .trim()
+    .split(/\n\s*\n/)
+    .filter((p) => p.trim())
+    .reduce((n, p) => n + lineCount(p.trim(), size, FLOW_WIDTH), 0)
+}
+
+/**
+ * The part about them, written for them and sized to `page`; null when there is no model, the page
+ * has no room for a part of its own, or two tries break a rule. A second try that only runs long
+ * is cut to fit at whole sentences rather than thrown away.
+ */
 export async function writePrintout(
   lead: Pick<Lead, 'persona' | 'owner_kind' | 'enrichment'>,
   vars: TemplateVars,
   llm: Llm | null,
+  page: PrintoutPage,
 ): Promise<string | null> {
   if (!llm) return null
+  const plan = printoutWordPlan(page)
+  if (plan.words.max < LEAST_WORDS) return null
+  const system = PRINTOUT_SYSTEM.replace('{words}', `${plan.words.min} to ${plan.words.max} words`)
+  // A few words over is fine while the page still fits: the page is what counts.
+  const limits = { min: Math.min(PRINTOUT_WORDS.min, plan.words.min), max: PRINTOUT_WORDS.max }
+  const room = bodyRoom(page, plan.size)
   const facts = noteFacts(lead, letterVars(vars))
   const prompt = [
     `Facts about this person:\n${facts.join('\n') || '(none)'}`,
@@ -131,14 +232,29 @@ export async function writePrintout(
   for (let attempt = 0; attempt < 2; attempt++) {
     let out: string | null
     try {
-      out = await llm.text(ask, { system: PRINTOUT_SYSTEM, maxTokens: 500 })
+      out = await llm.text(ask, { system, maxTokens: 500 })
     } catch {
       return null
     }
     if (!out) return null
     const text = cleanNote(out)
-    const problems = copyProblems(text, PRINTOUT_WORDS)
-    if (problems.length === 0) return text
+    const rules = copyProblems(text, { min: limits.min, max: Number.MAX_SAFE_INTEGER })
+    const fits = printoutFits(page, text, plan.size)
+    const long = !fits || copyProblems(text, limits).some((p) => p.includes('the most is'))
+    if (rules.length === 0 && !long) return text
+    if (attempt === 1) {
+      if (rules.length > 0) return null
+      const cut = fitPrintoutText(text, page, plan.size)
+      return copyProblems(cut, { min: LEAST_WORDS, max: plan.words.max + 20 }).length === 0
+        ? cut
+        : null
+    }
+    const problems = [...rules]
+    if (long) {
+      problems.push(
+        `it is too long for the page: it takes ${bodyLines(text, plan.size)} lines and there is room for ${room.lines}; cut it to at most ${plan.words.max} words`,
+      )
+    }
     ask = `${prompt}\n\nYour last version broke the rules (${problems.join('; ')}):\n${text}\n\nWrite it again.`
   }
   return null

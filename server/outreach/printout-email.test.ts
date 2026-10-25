@@ -32,6 +32,7 @@ import {
   PRINTOUT_WORDS,
   printoutHeading,
   writePrintout,
+  type PrintoutPage,
 } from './printout.ts'
 import {
   actOnQueueItem,
@@ -116,6 +117,16 @@ const GOOD_EMAIL: HandEmail = {
 
 const lead = { persona: 'maya' as const, owner_kind: 'person' as const, enrichment: {} }
 
+/** The page around the part Claude writes, with Theo's default Settings and his photo. */
+const PAGE: PrintoutPage = {
+  heading: 'How Prop Archive can help Fairmount Rentals',
+  overview: DEFAULT_PRINTOUT_OVERVIEW,
+  bio: DEFAULT_PRINTOUT_BIO,
+  closing: DEFAULT_PRINTOUT_CLOSING,
+  ownerName: 'Theo Young',
+  photo: true,
+}
+
 describe('the words', () => {
   it("Theo's fallback printouts and emails pass the house rules", () => {
     for (const text of Object.values(FALLBACK_PRINTOUT)) {
@@ -185,11 +196,13 @@ describe('Claude writes them for each person', () => {
 
   it('writes the part of the printout about them, and tries again once when a rule breaks', async () => {
     const llm = fakeLlm([`${GOOD_PART} Call 215-555-0100 today!`, GOOD_PART])
-    expect(await writePrintout(lead, vars, llm)).toBe(GOOD_PART)
+    expect(await writePrintout(lead, vars, llm, PAGE)).toBe(GOOD_PART)
     expect(llm.prompts[0]).toContain('company: Fairmount Rentals')
     expect(llm.prompts[1]).toContain('broke the rules')
-    expect(await writePrintout(lead, vars, fakeLlm(['Too short!', 'Still short!']))).toBeNull()
-    expect(await writePrintout(lead, vars, null)).toBeNull()
+    expect(
+      await writePrintout(lead, vars, fakeLlm(['Too short!', 'Still short!']), PAGE),
+    ).toBeNull()
+    expect(await writePrintout(lead, vars, null, PAGE)).toBeNull()
   })
 
   it('never tells Claude a company is a first name', async () => {
@@ -198,6 +211,7 @@ describe('Claude writes them for each person', () => {
       lead,
       { first_name: 'Fairmount', full_name: 'Fairmount Rentals LLC', company: '' },
       llm,
+      PAGE,
     )
     expect(llm.prompts[0]).not.toContain('first name: Fairmount')
     expect(llm.prompts[0]).toContain('company: Fairmount Rentals LLC')
