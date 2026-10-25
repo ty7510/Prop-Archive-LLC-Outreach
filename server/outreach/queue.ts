@@ -949,10 +949,10 @@ ${printout ? PRINTOUT_FONT_LINK : ''}
   .card.address .stamp { position: absolute; top: 0.3in; right: 0.3in; width: 0.85in; height: 1in; border: 1px dashed #888; font: 10px Arial, sans-serif; color: #888; display: flex; align-items: center; justify-content: center; }
   .card.address .to { position: absolute; left: 2.9in; top: 1.9in; font-size: 14px; line-height: 1.45; }
   .letter { page: letter; background: #fff; width: 8.5in; min-height: 11in; margin: 16px auto; padding: 1in; box-sizing: border-box; page-break-after: always; display: flex; flex-direction: column; }
-  header { display: flex; justify-content: space-between; gap: 2rem; font-size: 14px; line-height: 1.4; margin-bottom: 2rem; }
+  .letter > header { display: flex; justify-content: space-between; gap: 2rem; font-size: 14px; line-height: 1.4; margin-bottom: 2rem; }
   .letter article { white-space: pre-wrap; font-size: 15px; line-height: 1.6; flex: 1; }
-  footer { margin-top: 3rem; display: flex; align-items: flex-end; gap: 1rem; font-size: 14px; }
-  footer .line { flex: 0 0 3in; border-bottom: 1px solid #111; }
+  .letter > footer { margin-top: 3rem; display: flex; align-items: flex-end; gap: 1rem; font-size: 14px; }
+  .letter > footer .line { flex: 0 0 3in; border-bottom: 1px solid #111; }
   .labels { padding: 4px 16px 40px; }
   .label-cap { box-sizing: border-box; width: 4in; max-width: 100%; margin: 22px auto 8px; display: flex; justify-content: space-between; gap: 12px; font: 13px/1.4 Arial, Helvetica, sans-serif; color: #57534e; }
   .label-cap .warn { color: #b91c1c; font-weight: 700; }
