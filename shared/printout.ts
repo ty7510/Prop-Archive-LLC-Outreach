@@ -141,7 +141,7 @@ export const PRINTOUT_CSS = `
 .op-sub { margin-top: 0.1in; font: 700 14pt/1.25 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); }
 .op-date { margin-top: 0.05in; font: 500 10pt/1.3 Roboto, Arial, Helvetica, sans-serif; color: var(--op-sky-text); opacity: 0.85; }
 .op-rule { flex: 0 0 auto; height: 0.13in; background: linear-gradient(var(--op-sky) 0 62%, #dff1fd 80%, #fff 100%); }
-.op-flow { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 0.95em; padding: 0.2in 0.47in 0.16in; font-size: 11.5pt; line-height: 1.42; color: var(--op-ink); }
+.op-flow { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; gap: 0.95em; padding: 0.2in 0.47in 0.16in; font-size: 11.5pt; line-height: 1.42; color: var(--op-ink); }
 .op-flow p { margin: 0 0 0.55em; }
 .op-flow p:last-child { margin-bottom: 0; }
 .op-h { margin: 0 0 0.75em; padding-bottom: 0.32em; position: relative; font: 700 1.55em/1.18 Roboto, Arial, Helvetica, sans-serif; color: var(--op-ink); }
@@ -169,6 +169,14 @@ export const PRINTOUT_CSS = `
 .op-feature { border-left: 3px solid var(--op-sky); padding-left: 0.75em; }
 .op-feature b { display: block; margin-bottom: 0.2em; font-weight: 700; font-size: 1.05em; line-height: 1.25; color: var(--op-ink); }
 .op-feature span { display: block; font-size: 0.95em; line-height: 1.42; }
+.op-extra[hidden] { display: none; }
+.op-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6em; }
+.op-card { background: var(--op-card); border: 1px solid #a9d8f5; padding: 0.7em 0.8em; }
+.op-card b { display: block; margin-bottom: 0.25em; font-weight: 700; line-height: 1.25; color: var(--op-ink); }
+.op-card span { display: block; font-size: 0.92em; line-height: 1.4; }
+.op-ps { margin: 0; font-style: italic; }
+.op-callout { background: var(--op-navy); color: #fff; padding: 0.8em 1em; font-weight: 500; line-height: 1.35; }
+.op-callout b { color: var(--op-sky-text); }
 .op-edit { position: absolute; top: 0.12in; right: 0.12in; z-index: 1; font: 13px Arial, Helvetica, sans-serif; background: #eaf5fe; color: #0c2d57; border: 1px solid #92d0f8; border-radius: 6px; padding: 4px 10px; text-decoration: none; }
 .onepager.too-long { outline: 4px solid #dc2626; outline-offset: -4px; }
 .onepager.too-long::after { content: 'Too long for this page: cut some words'; position: absolute; left: 0; right: 0; bottom: 0; padding: 6px; background: #dc2626; color: #fff; font: 700 14px Arial, Helvetica, sans-serif; text-align: center; }
@@ -181,7 +189,8 @@ export const PRINTOUT_CSS = `
 `
 
 /**
- * Shrinks the text of each page (11.5pt down to 8.5pt) until it fits its sheet, marks pages that
+ * Fills each page first: of its extra sections (.op-extra), picks at most one card section and one
+ * short line (.op-small), the pair that fits at full size and leaves the least empty room. Then shrinks the text of each page (11.5pt down to 8.5pt) until it fits its sheet, marks pages that
  * still do not, and tells a parent window (the editor's preview) how many do not. Each page fits on
  * its own: the letter keeps its full size however full the second page is. Runs again once Roboto
  * has loaded, since it measures wider than the fallback.
@@ -194,6 +203,31 @@ export const PRINTOUT_FIT_SCRIPT = `(function () {
       if (!flow) return;
       var size = 11.5;
       flow.style.fontSize = size + 'pt';
+      // At most one card section and one short line: the pair that fits and leaves the least room.
+      var cards = [].slice.call(flow.querySelectorAll('.op-extra:not(.op-small)'));
+      var smalls = [].slice.call(flow.querySelectorAll('.op-extra.op-small'));
+      var extras = cards.concat(smalls);
+      function show(set) { extras.forEach(function (x) { x.hidden = set.indexOf(x) < 0; }); }
+      function tooTall() { return flow.scrollHeight > flow.clientHeight + 1; }
+      function room() {
+        flow.style.justifyContent = 'flex-start';
+        var kids = [].filter.call(flow.children, function (k) { return !k.hidden; });
+        var bottom = flow.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(flow).paddingBottom) || 0);
+        var left = bottom - kids[kids.length - 1].getBoundingClientRect().bottom;
+        flow.style.justifyContent = '';
+        return left;
+      }
+      var best = [], bestRoom = Infinity;
+      [null].concat(cards).forEach(function (c) {
+        [null].concat(smalls).forEach(function (s) {
+          var set = [c, s].filter(Boolean);
+          show(set);
+          if (tooTall()) return;
+          var left = room();
+          if (left < bestRoom - 1 || (Math.abs(left - bestRoom) <= 1 && set.length < best.length)) { best = set; bestRoom = left; }
+        });
+      });
+      show(best);
       while (flow.scrollHeight > flow.clientHeight + 1 && size > 8.5) {
         size -= 0.25;
         flow.style.fontSize = size + 'pt';
@@ -224,6 +258,91 @@ export function isPhotoDataUrl(s: string): boolean {
  * Theo's closing and signature) and about Theo under it; page two is what Prop Archive is and what
  * you get.
  */
+/**
+ * Extra sections that print only when their page has room left at full size (the fit script picks
+ * at most one card section and one short line, whichever fill the gap best), so a short letter or
+ * overview still fills its sheet. Worded only from what the overview, features and bio already say.
+ */
+export interface PrintoutExtra {
+  title: string
+  cards: ReadonlyArray<{ title: string; text: string }>
+}
+
+export const PAGE_ONE_PS =
+  'P.S. Not the right time? Keep my card. A text whenever it suits you is all it takes.'
+
+export const PAGE_ONE_EXTRAS: readonly PrintoutExtra[] = [
+  {
+    title: 'What happens next',
+    cards: [
+      { title: '1. Call or text me', text: 'My number is on the card in this folder.' },
+      {
+        title: '2. Take a 15-minute look',
+        text: "I'll walk you through it with your rentals in mind.",
+      },
+      {
+        title: '3. Join the beta',
+        text: "It's free while we're in beta, and there's nothing to sign.",
+      },
+    ],
+  },
+  {
+    title: 'A week with Prop Archive',
+    cards: [
+      {
+        title: 'Monday',
+        text: 'Open the dashboard: late rent, open repairs and leases ending soon are already there.',
+      },
+      {
+        title: 'Wednesday',
+        text: 'A tenant sends a repair from their portal. It comes back with the right vendor from your directory.',
+      },
+      {
+        title: 'Friday',
+        text: 'Paste in a new lease. The rent, dates and deposit come back for you to confirm.',
+      },
+    ],
+  },
+]
+
+export const PAGE_TWO_EXTRAS: readonly PrintoutExtra[] = [
+  {
+    title: 'Getting set up',
+    cards: [
+      {
+        title: 'Bring what you have',
+        text: "Snap photos or drop PDFs of your leases and documents. They're read and filed to the right property.",
+      },
+      {
+        title: 'Invite your people',
+        text: 'Tenants, owners and contractors each get a portal of their own.',
+      },
+      { title: 'See it first', text: 'A 15-minute look on a call, before you set anything up.' },
+    ],
+  },
+  {
+    title: "Who it's for",
+    cards: [
+      {
+        title: 'A few rentals on the side',
+        text: 'Repair requests come through a tenant portal instead of your phone.',
+      },
+      { title: 'Rentals full time', text: 'Run a small operation like a much bigger one.' },
+      {
+        title: 'A management company',
+        text: 'Your team, your owners and your tenants on the same page.',
+      },
+    ],
+  },
+]
+
+function extraCards(x: PrintoutExtra): string {
+  return `<div class="op-extra" hidden>
+      <h2 class="op-h op-h-sky">${esc(x.title)}</h2>
+      <div class="op-cards">${x.cards.map((c) => `<div class="op-card"><b>${esc(c.title)}</b><span>${esc(c.text)}</span></div>`).join('')}</div>
+    </div>`
+}
+
 export function printoutSection(p: PrintoutParts): string {
   const aboutOwner = p.ownerName.trim().split(/\s+/)[0] || 'me'
   const prepared = p.preparedFor.filter(Boolean)
@@ -262,6 +381,7 @@ export function printoutSection(p: PrintoutParts): string {
     </div>
     <div class="op-close">${paragraphsHtml(p.closing)}</div>
     <div class="op-sign"><span class="op-line"></span><span class="op-name">${esc(p.ownerName)}<br>Prop Archive</span></div>
+    <p class="op-extra op-small op-ps" hidden>${esc(PAGE_ONE_PS)}</p>
     <hr class="op-divider">
     <div class="op-about">
       <h2 class="op-h op-h-sky">About ${esc(aboutOwner)}</h2>
@@ -273,6 +393,7 @@ export function printoutSection(p: PrintoutParts): string {
         </div>
       </div>
     </div>
+    ${PAGE_ONE_EXTRAS.map(extraCards).join('\n    ')}
   </div>
   ${footer}
 </section>
@@ -290,6 +411,8 @@ export function printoutSection(p: PrintoutParts): string {
       <div class="op-stats">${PRINTOUT_STATS.map((s) => `<div class="op-stat"><b>${esc(s.value)}</b><i></i><span>${esc(s.label)}</span></div>`).join('')}</div>
     </div>
     ${features}
+    ${PAGE_TWO_EXTRAS.map(extraCards).join('\n    ')}
+    <div class="op-extra op-small op-callout" hidden><b>See it in 15 minutes.</b> Call or text ${esc(aboutOwner === 'me' ? 'me' : aboutOwner)}: the number is on the card in this folder. Or look around first at ${esc(p.site)}.</div>
   </div>
   ${footer}
 </section>`
