@@ -664,6 +664,7 @@ async function labelsFor(
   rows.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
   const from = labelFrom(settings)
   const site = plainLinks(settings).site_link
+  const date = labelDate(settings, deps.now())
   return rows.map((r) => ({
     id: r.id,
     label: {
@@ -673,8 +674,25 @@ async function labelsFor(
         personOf({ full_name: r.lead_name, company: r.lead_company }),
       ),
       site,
+      date,
+      ref: labelRef(r.id),
     },
   }))
+}
+
+/** "10/25/2026": the day in Theo's time zone, for the strip at the foot of a label. */
+export function labelDate(settings: Pick<Settings, 'send_window'>, now: Date): string {
+  const p = zonedParts(now, settings.send_window.tz)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(p.month)}/${two(p.day)}/${p.year}`
+}
+
+/**
+ * "PA-7Q2K9M": the last six letters of the mail step's id. Ids sort by time, so their first letters
+ * are the same for a batch printed together and the last ones tell the pieces apart.
+ */
+export function labelRef(id: string): string {
+  return `PA-${id.slice(-6).toUpperCase()}`
 }
 
 /** The envelope labels for these mail steps, in the order Theo picked them. */
