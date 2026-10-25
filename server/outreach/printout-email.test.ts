@@ -391,6 +391,9 @@ describe('the print page', () => {
     expect(html).toContain(`href="/printout/${ids[0]}"`)
     expect(html).toContain('@page printout { size: 8.5in 11in')
     expect(html).toContain('printout-fit')
+    // The plain letter's header and footer rules must not reach the printout's bands: they took
+    // 80px from page one, so a printout that fit the preview ran long on paper.
+    expect(html).not.toMatch(/^\s*(header|footer)\b[^{<]*\{/m)
     expect(html).toContain('2 printouts')
     // In the order Theo picked them.
     expect(html.indexOf('Sam')).toBeGreaterThan(html.indexOf('Dana, here'))
