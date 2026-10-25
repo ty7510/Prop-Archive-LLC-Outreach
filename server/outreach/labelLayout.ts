@@ -1,9 +1,10 @@
 // Envelope labels: one 4 x 6 in portrait label per page, for a thermal label printer (203 dpi,
-// black only), on the envelope that carries the printout. The top echoes the printout's navy band:
-// a black band with the mark and PROP ARCHIVE knocked out in white. Theo's return address sits under
-// it in small print, and the person's address is set large and alone in the lower middle, so a
-// sorting machine finds nothing else near it. One layout feeds the PDF (labelsPdf.ts) and the print
-// page (labelSvg below), so the two print the same, line for line.
+// black only), on the envelope that carries the printout. Laid out as a carrier's shipping label:
+// a frame round it all; a black band with the mark and PROP ARCHIVE LLC knocked out in white;
+// FROM and Theo's return address in small print; a heavy rule; SHIP TO and the person's address
+// set large and alone, so a sorting machine finds nothing else near it; a heavy rule; and a strip
+// of date, piece and reference. One layout feeds the PDF (labelsPdf.ts) and the print page
+// (labelSvg below), so the two print the same, line for line.
 import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { LABEL_MARK } from './labelMark.ts'
 
@@ -13,8 +14,12 @@ export interface EnvelopeLabel {
   from: string[]
   /** The person's address, their name first. */
   to: string[]
-  /** The site under PROP ARCHIVE in the band ("proparchive.app"); empty leaves it off. */
+  /** The site under PROP ARCHIVE LLC in the band ("proparchive.app"); empty leaves it off. */
   site: string
+  /** The day it is printed, for the strip at the foot ("10/25/2026"). */
+  date?: string
+  /** A short reference that finds this piece in the outreach list ("PA-7Q2K9M"). */
+  ref?: string
 }
 
 /** 4 x 6 in, portrait, in PDF points (72 an inch). */
@@ -141,9 +146,13 @@ export function labelFont(): Promise<LabelFont> {
 // ---------------------------------------------------------------------------------------------
 // The layout
 
+/** What a line of type is, so a test (or a reader) can tell the address from the furniture. */
+export type LabelTextKind = 'brand' | 'caption' | 'from' | 'to' | 'meta'
+
 /** A line of type. x is its left edge and y its baseline, in points from the label's top left. */
 export interface LabelText {
   text: string
+  kind: LabelTextKind
   x: number
   y: number
   size: number
@@ -169,6 +178,7 @@ export interface LabelBox {
 export interface LabelArt {
   band: LabelBox & { radius: number }
   mark: LabelBox
+  /** Solid black boxes: the frame, the rules between sections and the strip's dividers. */
   rules: LabelBox[]
   texts: LabelText[]
 }
@@ -176,26 +186,41 @@ export interface LabelArt {
 /** 0.3 in clear of every edge: a thermal printer can drift, so nothing prints nearer than that. */
 const EDGE = 21.6
 const INNER = LABEL_W - 2 * EDGE
+const INNER_H = LABEL_H - 2 * EDGE
 /** Helvetica's capital height and how far its letters reach below the baseline, per point. */
 const CAP = 0.718
 const DESCENT = 0.21
 
+// A carrier label's furniture: a frame round the whole label, heavy rules between the sections,
+// thin rules between the cells of the strip at the foot. Every weight is 2+ dots at 203 dpi.
+const FRAME = 1.5
+const HEAVY = 3
+const THIN = 1
+/** Space inside a section, from the frame and the rules. */
+const PAD = 9
+
 // The band. The mark is drawn big enough that its thinnest white strokes stay 2+ dots at 203 dpi.
-const BAND = { height: 54, radius: 3, pad: 12, gap: 11 }
+const BAND = { height: 54, pad: 12, gap: 11 }
 const MARK_H = 34
-const WORDMARK = { text: 'PROP ARCHIVE', size: 15, tracking: 1.8 }
+/** The company's name as registered, sized down (never under `min`) until it fits the band. */
+const WORDMARK = { text: 'PROP ARCHIVE LLC', size: 15, min: 10, tracking: 0.12 }
 const SITE = { size: 7.5, tracking: 0.6, gap: 6.5 }
-/** The thin rule under the band, after the light-blue rule under the printout's band. */
-const BAND_RULE = { gap: 3, weight: 1 }
+
+// Section captions, small bold capitals as carriers print them.
+const FROM_CAPTION = { text: 'FROM', size: 6.5, tracking: 0.9 }
+const SHIP_CAPTION = { text: 'SHIP TO', size: 8.5, tracking: 1.1, gap: 14 }
 
 // Type sizes. A field wraps to two lines at most; past that it ends in an ellipsis.
-const FROM = { size: 8.5, min: 7, lead: 11 / 8.5, top: 17 }
-const TO = { size: 17, min: 12, lead: 1.24 }
+/** The return address sits in a column right of its caption. */
+const FROM = { size: 8.5, min: 7, lead: 11 / 8.5, column: 34 }
+/** The person's address, indented under SHIP TO. */
+const TO = { size: 17, min: 12, lead: 1.24, indent: 18 }
 const MAX_ROWS = 2
-/** Where the person's block sits in the space under the return address (0 top, 1 bottom). */
-const TO_PLACE = 0.45
-/** Breathing room between the return address and the person's address, at the least. */
-const TO_GAP = 30
+/** Where the person's block sits in the space under SHIP TO (0 top, 1 bottom). */
+const TO_PLACE = 0.4
+
+/** The strip at the foot: date, piece and reference, each a caption over its value. */
+const META = { height: 40, caption: 6, captionTracking: 0.7, value: 10, min: 7, gap: 5.5 }
 
 /** Width of text at 1 pt, for laying out. */
 export type Measure = (text: string, bold: boolean) => number
@@ -205,6 +230,13 @@ interface Field {
   text: string
   bold: boolean
   exact: boolean
+}
+
+/** What goes in the strip at the foot of a label. Empty values leave their cell blank. */
+export interface LabelMeta {
+  date: string
+  piece: string
+  ref: string
 }
 
 function wrap(text: string, bold: boolean, size: number, max: number, measure: Measure): string[] {
@@ -236,6 +268,27 @@ function wrap(text: string, bold: boolean, size: number, max: number, measure: M
   return [...rows.slice(0, MAX_ROWS - 1), `${last}…`]
 }
 
+/**
+ * A long plain line broken at its commas into address lines, as it would be written by hand:
+ * "Close School, Pearlstein Center, 3230 Market St" is three lines, while parts that fit together
+ * stay on one line ("1500 Market St, Suite 400"). A line that fits is left alone.
+ */
+function splitAtCommas(f: Field, size: number, max: number, measure: Measure): Field[] {
+  const fits = (s: string) => measure(s, f.bold) * size <= max + 1e-6
+  if (f.bold || fits(f.text) || !f.text.includes(',')) return [f]
+  const parts = f.text
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const lines: string[] = []
+  for (const part of parts) {
+    const last = lines[lines.length - 1]
+    if (last !== undefined && fits(`${last}, ${part}`)) lines[lines.length - 1] = `${last}, ${part}`
+    else lines.push(part)
+  }
+  return lines.map((text) => ({ ...f, text }))
+}
+
 /** One size for the whole block: as large as allowed, smaller until the widest line fits, then wrap. */
 function fit(
   fields: Field[],
@@ -252,8 +305,23 @@ function fit(
   return { size, rows }
 }
 
+/** The largest half-point size, from `size` down to `min`, at which `text` fits `max`. */
+function sizeToFit(
+  text: string,
+  spec: { size: number; min: number },
+  max: number,
+  tracking: (size: number) => number,
+  measure: Measure,
+): number {
+  const gaps = Math.max(0, [...text].length - 1)
+  let size = spec.size
+  while (size > spec.min && measure(text, true) * size + tracking(size) * gaps > max) size -= 0.5
+  return size
+}
+
 function line(
   f: Field,
+  kind: LabelTextKind,
   x: number,
   y: number,
   size: number,
@@ -264,6 +332,7 @@ function line(
   const letters = [...f.text].length
   return {
     text: f.text,
+    kind,
     x,
     y,
     size,
@@ -275,62 +344,153 @@ function line(
   }
 }
 
-/** Lay out one label. `from` and `to` are set as given; `to[0]` is the person's name, in bold. */
-export function layoutLabel(from: Field[], to: Field[], site: string, measure: Measure): LabelArt {
+const furniture = (text: string): Field => ({ text, bold: true, exact: true })
+
+/**
+ * Lay out one label as a carrier label is laid out, top to bottom: the black brand band, FROM and
+ * the return address, a heavy rule, SHIP TO and the person's address large and alone, a heavy
+ * rule, and a strip of date, piece and reference. A frame runs round it all. `from` and `to` are
+ * set as given; the first line of each is a name, in bold.
+ */
+export function layoutLabel(
+  from: Field[],
+  to: Field[],
+  site: string,
+  meta: LabelMeta,
+  measure: Measure,
+): LabelArt {
   const texts: LabelText[] = []
-  const band = { x: EDGE, y: EDGE, width: INNER, height: BAND.height, radius: BAND.radius }
+  const left = EDGE
+  const right = EDGE + INNER
+  const bottom = LABEL_H - EDGE
+  const rules: LabelBox[] = [
+    { x: left, y: EDGE, width: INNER, height: FRAME },
+    { x: left, y: bottom - FRAME, width: INNER, height: FRAME },
+    { x: left, y: EDGE, width: FRAME, height: INNER_H },
+    { x: right - FRAME, y: EDGE, width: FRAME, height: INNER_H },
+  ]
+
+  // The band, flush with the frame: the mark, PROP ARCHIVE LLC and the site under it.
+  const band = { x: left, y: EDGE, width: INNER, height: BAND.height, radius: 0 }
   const markW = (MARK_H * LABEL_MARK.width) / LABEL_MARK.height
   const mark = {
-    x: EDGE + BAND.pad,
+    x: left + BAND.pad,
     y: EDGE + (BAND.height - MARK_H) / 2,
     width: markW,
     height: MARK_H,
   }
-
-  // PROP ARCHIVE, with the site under it, centred on the band's height.
   const wordX = mark.x + markW + BAND.gap
-  const wordCap = CAP * WORDMARK.size
+  const wordMax = right - BAND.pad - wordX
+  const wordSize = sizeToFit(
+    WORDMARK.text,
+    WORDMARK,
+    wordMax,
+    (s) => s * WORDMARK.tracking,
+    measure,
+  )
+  const wordCap = CAP * wordSize
   const group = site ? wordCap + SITE.gap + CAP * SITE.size : wordCap
   const wordY = EDGE + (BAND.height - group) / 2 + wordCap
-  const word = { text: WORDMARK.text, bold: true, exact: true }
   texts.push(
-    line(word, wordX, wordY, WORDMARK.size, measure, { white: true, tracking: WORDMARK.tracking }),
+    line(furniture(WORDMARK.text), 'brand', wordX, wordY, wordSize, measure, {
+      white: true,
+      tracking: wordSize * WORDMARK.tracking,
+    }),
   )
   if (site) {
     const siteY = wordY + SITE.gap + CAP * SITE.size
-    const siteField = { text: site, bold: true, exact: true }
     texts.push(
-      line(siteField, wordX, siteY, SITE.size, measure, { white: true, tracking: SITE.tracking }),
+      line(furniture(site), 'brand', wordX, siteY, SITE.size, measure, {
+        white: true,
+        tracking: SITE.tracking,
+      }),
     )
   }
-  const bandRule = {
-    x: EDGE,
-    y: EDGE + BAND.height + BAND_RULE.gap,
-    width: INNER,
-    height: BAND_RULE.weight,
-  }
 
-  // The return address, small, under the band.
-  const ret = fit(from, FROM, INNER, measure)
-  let y = bandRule.y + bandRule.height + FROM.top + CAP * ret.size
+  // FROM: the caption, and the return address in a column beside it.
+  const fromX = left + PAD + FROM.column
+  const fromMax = right - PAD - fromX
+  const fromFields = from.flatMap((f) => splitAtCommas(f, FROM.min, fromMax, measure))
+  const ret = fit(fromFields, FROM, fromMax, measure)
+  const firstFrom = EDGE + BAND.height + PAD + CAP * Math.max(ret.size, FROM_CAPTION.size)
+  texts.push(
+    line(
+      furniture(FROM_CAPTION.text),
+      'caption',
+      left + PAD,
+      firstFrom,
+      FROM_CAPTION.size,
+      measure,
+      {
+        tracking: FROM_CAPTION.tracking,
+      },
+    ),
+  )
+  let y = firstFrom
   for (const row of ret.rows) {
-    texts.push(line(row, EDGE, y, ret.size, measure))
+    texts.push(line(row, 'from', fromX, y, ret.size, measure))
     y += ret.size * FROM.lead
   }
-  const fromBottom = y - ret.size * FROM.lead + DESCENT * ret.size
+  const lastFrom = ret.rows.length ? y - ret.size * FROM.lead : firstFrom
+  const fromRule = lastFrom + DESCENT * ret.size + PAD
+  rules.push({ x: left, y: fromRule, width: INNER, height: HEAVY })
 
-  // The person's address: large, alone, in the lower middle.
-  const person = fit(to, TO, INNER, measure)
-  const lead = person.size * TO.lead
-  const blockH = CAP * person.size + (person.rows.length - 1) * lead
-  const zoneTop = fromBottom + TO_GAP
-  const zoneBottom = LABEL_H - EDGE - DESCENT * person.size
-  const top = zoneTop + Math.max(0, zoneBottom - zoneTop - blockH) * TO_PLACE
-  person.rows.forEach((row, i) => {
-    texts.push(line(row, EDGE, top + CAP * person.size + i * lead, person.size, measure))
+  // The strip at the foot: three cells, each a caption over its value.
+  const metaTop = bottom - META.height
+  rules.push({ x: left, y: metaTop - HEAVY, width: INNER, height: HEAVY })
+  const cellW = INNER / 3
+  const cells: [string, string][] = [
+    ['DATE', meta.date],
+    ['PIECE', meta.piece],
+    ['REF', meta.ref],
+  ]
+  cells.forEach(([caption, value], i) => {
+    const cellX = left + i * cellW
+    if (i > 0) rules.push({ x: cellX - THIN / 2, y: metaTop, width: THIN, height: META.height })
+    const group = CAP * META.caption + META.gap + CAP * META.value
+    const captionY = metaTop + (META.height - FRAME - group) / 2 + CAP * META.caption
+    texts.push(
+      line(furniture(caption), 'meta', cellX + PAD, captionY, META.caption, measure, {
+        tracking: META.captionTracking,
+      }),
+    )
+    if (!value) return
+    const valueSize = sizeToFit(
+      value,
+      { size: META.value, min: META.min },
+      cellW - 2 * PAD,
+      () => 0,
+      measure,
+    )
+    const valueY = captionY + META.gap + CAP * valueSize
+    texts.push(line(furniture(value), 'meta', cellX + PAD, valueY, valueSize, measure))
   })
 
-  return { band, mark, rules: [bandRule], texts }
+  // SHIP TO: the caption, and the person's address large, indented and alone under it.
+  const shipCaptionY = fromRule + HEAVY + PAD + CAP * SHIP_CAPTION.size
+  texts.push(
+    line(
+      furniture(SHIP_CAPTION.text),
+      'caption',
+      left + PAD,
+      shipCaptionY,
+      SHIP_CAPTION.size,
+      measure,
+      { tracking: SHIP_CAPTION.tracking },
+    ),
+  )
+  const toX = left + PAD + TO.indent
+  const person = fit(to, TO, right - PAD - toX, measure)
+  const lead = person.size * TO.lead
+  const blockH = CAP * person.size + (person.rows.length - 1) * lead
+  const zoneTop = shipCaptionY + SHIP_CAPTION.gap
+  const zoneBottom = metaTop - HEAVY - PAD - DESCENT * person.size
+  const top = zoneTop + Math.max(0, zoneBottom - zoneTop - blockH) * TO_PLACE
+  person.rows.forEach((row, i) => {
+    texts.push(line(row, 'to', toX, top + CAP * person.size + i * lead, person.size, measure))
+  })
+
+  return { band, mark, rules, texts }
 }
 
 /** A label laid out for the PDF and for the page. */
@@ -351,13 +511,14 @@ export interface LaidOutLabel {
  * Lay out each label twice: for the PDF in the letters its font has, and for the page with every
  * letter as typed. They match unless a letter had to change for the PDF. A line the PDF cannot
  * print at all (a name in Chinese) stays as a blank line, so the rest of the address keeps its
- * place and the next line is never set in the name's bold.
+ * place and the next line is never set in the name's bold. Each label's strip counts it among the
+ * batch ("2 of 5"), in the order given, so an envelope can be matched to its printout.
  */
 export async function layoutLabels(labels: EnvelopeLabel[]): Promise<LaidOutLabel[]> {
   const font = await labelFont()
   const pdfMeasure: Measure = (text, bold) => font.width(text, bold)
   const pageMeasure: Measure = (text, bold) => pageWidth(font, text, bold)
-  return labels.map((label) => {
+  return labels.map((label, index) => {
     const from = label.from.map(cleanLabelText).filter(Boolean)
     const [name = '', ...rest] = label.to.map(cleanLabelText)
     const to = [name, ...rest.filter(Boolean)]
@@ -373,9 +534,16 @@ export async function layoutLabels(labels: EnvelopeLabel[]): Promise<LaidOutLabe
     const fromFields = asTyped(from, true)
     const toFields = asTyped(to, true)
     const sitePrint = printableText(site, font.canPrint).text
+    const plain = (s: string | undefined) =>
+      printableText(cleanLabelText(s ?? ''), font.canPrint).text
+    const meta: LabelMeta = {
+      date: plain(label.date),
+      piece: `${index + 1} of ${labels.length}`,
+      ref: plain(label.ref),
+    }
     return {
-      pdf: layoutLabel(printable(fromFields), printable(toFields), sitePrint, pdfMeasure),
-      page: layoutLabel(fromFields, toFields, sitePrint, pageMeasure),
+      pdf: layoutLabel(printable(fromFields), printable(toFields), sitePrint, meta, pdfMeasure),
+      page: layoutLabel(fromFields, toFields, sitePrint, meta, pageMeasure),
       name,
       lossy: toFields.some((f) => !f.exact),
       fromLossy: fromFields.some((f) => !f.exact),
