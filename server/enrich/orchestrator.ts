@@ -28,16 +28,26 @@ export const STALE_ENRICHING_MS = 30 * 60_000
 /** After a provider fails on credits, its key or an outage, it is not asked again for this long. */
 export const PROVIDER_DOWN_MS = 15 * 60_000
 
-const downUntil = new Map<EnrichProviderId, number>()
+interface Down {
+  until: number
+  why: string
+  hint: string
+}
+
+const downUntil = new Map<EnrichProviderId, Down>()
 
 /** For tests: forget that a provider was down. */
 export function resetProviderDown(): void {
   downUntil.clear()
 }
 
+function downNow(id: EnrichProviderId, now: Date): Down | null {
+  const down = downUntil.get(id)
+  return down !== undefined && now.getTime() < down.until ? down : null
+}
+
 function isDown(id: EnrichProviderId, now: Date): boolean {
-  const until = downUntil.get(id)
-  return until !== undefined && now.getTime() < until
+  return downNow(id, now) !== null
 }
 
 /**
@@ -72,7 +82,7 @@ async function markDown(id: EnrichProviderId, err: unknown, batch: BatchState): 
   const now = batch.now()
   const wasDown = isDown(id, now)
   const until = new Date(now.getTime() + PROVIDER_DOWN_MS)
-  downUntil.set(id, until.getTime())
+  downUntil.set(id, { until: until.getTime(), why: why.reason, hint: why.hint })
   if (wasDown) return
   await logActivity(
     'error',
@@ -137,7 +147,17 @@ export async function researchPause(deps: OrchestratorDeps = {}): Promise<Resear
   if (!provider || !settings.enrichment.providers.includes('claude_research')) return null
   if (!provider.isConfigured(env)) return null
   const now = (deps.now ?? (() => new Date()))()
-  if (isDown(provider.id, now)) return { reason: 'down', used: null, cap: null }
+  const down = downNow(provider.id, now)
+  if (down) {
+    return {
+      reason: 'down',
+      used: null,
+      cap: null,
+      why: down.why,
+      hint: down.hint,
+      retry_at: new Date(down.until).toISOString(),
+    }
+  }
   const cap = capFor(settings.enrichment.monthly_credit_cap, provider.id)
   if (cap === null) return null
   const { used } = await creditsUsed(provider.id, monthRange(now, settings.send_window.tz), db)

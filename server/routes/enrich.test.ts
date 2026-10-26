@@ -132,6 +132,34 @@ describe('POST /api/leads/enrich when research is out of lookups', () => {
     expect(res.body.research_paused).toEqual({ reason: 'cap', used: 2, cap: 2 })
     expect(research.calls).toHaveLength(0)
   })
+
+  it('says why research is down (out of credits) and what to do, not just "resting"', async () => {
+    await updateSettings(
+      { enrichment: { providers: ['li_license', 'claude_research'], monthly_credit_cap: {} } },
+      db,
+    )
+    const noCredits = Object.assign(
+      new Error(
+        '400 {"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}',
+      ),
+      { status: 400 },
+    )
+    const research = fakeProvider('claude_research', noCredits)
+    registerReal({ li_license: fakeProvider('li_license', {}), claude_research: research })
+    await insertLead(db, { full_name: 'Ann Bell' })
+    const first = await agent.post('/api/leads/enrich').send({ all: true })
+    expect(first.status).toBe(200)
+    expect(first.body.research_paused).toMatchObject({
+      reason: 'down',
+      why: expect.stringMatching(/out of credits/),
+      hint: expect.stringMatching(/console\.anthropic\.com/),
+      retry_at: expect.any(String),
+    })
+    // Pressing Enrich again inside the pause gives the same reason, and Claude is not asked again.
+    const again = await agent.post('/api/leads/enrich').send({ all: true })
+    expect(again.body.research_paused).toMatchObject({ reason: 'down', why: expect.any(String) })
+    expect(research.calls).toHaveLength(1)
+  })
 })
 
 describe('GET /api/enrich/usage', () => {

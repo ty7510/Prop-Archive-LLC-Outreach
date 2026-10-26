@@ -295,6 +295,12 @@ export const ResearchPausedSchema = z.object({
   reason: z.enum(['cap', 'down']),
   used: z.number().nullable(),
   cap: z.number().nullable(),
+  /** When down: what went wrong, in plain words ("the Anthropic account is out of credits"). */
+  why: z.string().optional(),
+  /** When down: what fixes it, or that it is tried again by itself. */
+  hint: z.string().optional(),
+  /** When down: when the app asks Claude again (ISO). */
+  retry_at: z.string().optional(),
 })
 export type ResearchPaused = z.infer<typeof ResearchPausedSchema>
 
