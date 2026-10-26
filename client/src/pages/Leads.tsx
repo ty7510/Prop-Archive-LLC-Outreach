@@ -99,6 +99,14 @@ function useDebounced<T>(value: T, ms: number): T {
   return v
 }
 
+/** "10:40 AM" in the viewer's own clock. */
+function fmtTime(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
 export default function Leads() {
   const toast = useToast()
   const [, navigate] = useLocation()
@@ -373,8 +381,11 @@ export default function Leads() {
             </>
           ) : (
             <>
-              Claude web research hit an error and is resting for 15 minutes. Press Enrich again
-              after that. The Activity page has the error.
+              Claude web research stopped: {researchPaused.why ?? 'it hit an error'}.{' '}
+              {researchPaused.hint ?? 'The Activity page has the error.'}{' '}
+              {researchPaused.retry_at
+                ? `After that, press Enrich again (the app also tries by itself at ${fmtTime(researchPaused.retry_at)}).`
+                : 'After that, press Enrich again.'}
             </>
           )}
         </p>
