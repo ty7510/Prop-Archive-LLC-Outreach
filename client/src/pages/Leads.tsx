@@ -11,6 +11,7 @@ import {
   Compass,
   ChevronLeft,
   ChevronRight,
+  Download,
   Loader2,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -22,6 +23,8 @@ import {
   enrollLead,
   getSettings,
   importCsv,
+  leadsCsvFileName,
+  leadsCsvUrl,
   listLeads,
   listSequences,
   isNotBuilt,
@@ -337,6 +340,9 @@ export default function Leads() {
             e.target.value = ''
           }}
         />
+        <a href={leadsCsvUrl} download={leadsCsvFileName()} className="btn-secondary">
+          <Download className="h-4 w-4" aria-hidden /> Export CSV
+        </a>
         <button
           type="button"
           className="btn-secondary"
