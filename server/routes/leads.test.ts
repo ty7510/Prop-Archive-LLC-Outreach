@@ -417,6 +417,45 @@ describe('leads API', () => {
     expect(parsed.mapping.mapped['Last contacted']).toBeUndefined()
   })
 
+  it('selects and exports all of 1,200 leads, not just one page', async () => {
+    const now = nowIso()
+    const rows = Array.from({ length: 1200 }, (_, i) => ({
+      id: newId(),
+      created_at: now,
+      updated_at: now,
+      status: (i % 2 === 0 ? 'enriched' : 'new') as 'enriched' | 'new',
+      icp_score: i % 100,
+      full_name: `Bulk Lead ${i}`,
+      email: `bulk${i}@example.com`,
+      unsubscribe_token: `tok-${i}-${newId()}`,
+    }))
+    for (let i = 0; i < rows.length; i += 300) await db.insert(leads).values(rows.slice(i, i + 300))
+
+    const matching = await agent.get('/api/leads/matching?status=enriched')
+    expect(matching.status).toBe(200)
+    expect(matching.body.total).toBe(600)
+    expect(matching.body.items).toHaveLength(600)
+    const scores = (matching.body.items as { icp_score: number }[]).map((l) => l.icp_score)
+    expect(scores).toEqual([...scores].sort((a, b) => b - a))
+
+    const ids = (matching.body.items as { id: string }[]).map((l) => l.id)
+    const picked = await agent.post('/api/leads/export.csv').send({ ids: [...ids, 'no-such-id'] })
+    expect(picked.status).toBe(200)
+    expect(picked.headers['x-lead-count']).toBe('600')
+    const pickedRows = parseCsv(picked.text.replace(/^\uFEFF/, '')).rows
+    expect(pickedRows).toHaveLength(600)
+    expect(pickedRows.every((r) => r['Status'] === 'enriched')).toBe(true)
+
+    const byFilter = await agent.get('/api/leads/export.csv?status=enriched')
+    expect(parseCsv(byFilter.text.replace(/^\uFEFF/, '')).rows).toHaveLength(600)
+    const everyone = await agent.get('/api/leads/export.csv')
+    expect(everyone.headers['x-lead-count']).toBe('1200')
+    expect(parseCsv(everyone.text.replace(/^\uFEFF/, '')).rows).toHaveLength(1200)
+
+    expect((await agent.post('/api/leads/export.csv').send({ ids: [] })).status).toBe(400)
+    expect((await agent.post('/api/leads/export.csv').send({})).status).toBe(400)
+  })
+
   it('leads rows carry no em-dash anywhere', async () => {
     await importSample(agent)
     const res = await agent.get('/api/leads')

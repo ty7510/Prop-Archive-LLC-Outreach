@@ -69,35 +69,47 @@ export const LeadsListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 })
 
+/** The WHERE for a status list, persona and search box, shared by the list, select all and export. */
+function leadsFilter(query: {
+  status?: LeadStatus[] | undefined
+  persona?: Lead['persona'] | undefined
+  q?: string | undefined
+}): SQL | undefined {
+  const where: SQL[] = []
+  if (query.status && query.status.length > 0) where.push(inArray(leads.status, query.status))
+  if (query.persona) where.push(eq(leads.persona, query.persona))
+  if (query.q) {
+    const needle = `%${query.q.replace(/[%_]/g, ' ')}%`
+    const match = or(
+      sql`lower(${leads.full_name}) like lower(${needle})`,
+      sql`lower(${leads.company}) like lower(${needle})`,
+      sql`lower(${leads.email}) like lower(${needle})`,
+      sql`lower(${leads.mailing_street}) like lower(${needle})`,
+      sql`lower(${leads.mailing_zip}) like lower(${needle})`,
+      sql`lower(${leads.phone}) like lower(${needle})`,
+    )
+    if (match) where.push(match)
+  }
+  return where.length > 0 ? and(...where) : undefined
+}
+
+/** Same order everywhere: best ICP score first, then the most recently changed. */
+const LEADS_ORDER = [desc(leads.icp_score), desc(leads.updated_at)] as const
+
 // GET /api/leads?status=&persona=&q=&page=&limit=  -> Paged<LeadRow>
 leadsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
     const db = getDb()
     const query = parseOr400(LeadsListQuerySchema, req.query, 'query')
-    const where: SQL[] = []
-    if (query.status && query.status.length > 0) where.push(inArray(leads.status, query.status))
-    if (query.persona) where.push(eq(leads.persona, query.persona))
-    if (query.q) {
-      const needle = `%${query.q.replace(/[%_]/g, ' ')}%`
-      const match = or(
-        sql`lower(${leads.full_name}) like lower(${needle})`,
-        sql`lower(${leads.company}) like lower(${needle})`,
-        sql`lower(${leads.email}) like lower(${needle})`,
-        sql`lower(${leads.mailing_street}) like lower(${needle})`,
-        sql`lower(${leads.mailing_zip}) like lower(${needle})`,
-        sql`lower(${leads.phone}) like lower(${needle})`,
-      )
-      if (match) where.push(match)
-    }
-    const filter = where.length > 0 ? and(...where) : undefined
+    const filter = leadsFilter(query)
 
     const totalRows = await db.select({ id: leads.id }).from(leads).where(filter)
     const items = await db
       .select()
       .from(leads)
       .where(filter)
-      .orderBy(desc(leads.icp_score), desc(leads.updated_at))
+      .orderBy(...LEADS_ORDER)
       .limit(query.limit)
       .offset((query.page - 1) * query.limit)
 
@@ -111,27 +123,90 @@ leadsRouter.get(
   }),
 )
 
-// GET /api/leads/export.csv -> CSV file: every lead as a row, best ICP score first, with the
-// import's own column names so it loads back in; sent as a download named for the day
-// (leads-2026-11-04.csv) so it saves on a phone too
+/** Most leads "Select all" and one export take at once. Far above the ~1,000 Theo works with. */
+export const LEADS_BULK_MAX = 20_000
+
+export const LeadsFilterQuerySchema = LeadsListQuerySchema.pick({
+  status: true,
+  persona: true,
+  q: true,
+})
+
+// GET /api/leads/matching?status=&persona=&q= -> { items: LeadRow[], total }: every lead the
+// filter matches, on every page, so "Select all" can tick them all (not just the page on screen)
 leadsRouter.get(
-  '/export.csv',
-  asyncHandler(async (_req, res) => {
-    const db = getDb()
-    const settings = await getSettings(db)
-    const rows = await db
+  '/matching',
+  asyncHandler(async (req, res) => {
+    const query = parseOr400(LeadsFilterQuerySchema, req.query, 'query')
+    const items = await getDb()
       .select()
       .from(leads)
-      .orderBy(desc(leads.icp_score), desc(leads.updated_at))
-    const tz = settings.send_window.tz
-    const p = zonedParts(new Date(), tz)
-    const two = (n: number) => String(n).padStart(2, '0')
-    const filename = `leads-${p.year}-${two(p.month)}-${two(p.day)}.csv`
-    res
-      .type('text/csv; charset=utf-8')
-      .set('Content-Disposition', `attachment; filename="${filename}"`)
-      .set('Cache-Control', 'private, no-store')
-      .send(leadsCsv(rows.map(toLeadRow), tz))
+      .where(leadsFilter(query))
+      .orderBy(...LEADS_ORDER)
+      .limit(LEADS_BULK_MAX + 1)
+    if (items.length > LEADS_BULK_MAX) {
+      throw badRequest(
+        `More than ${LEADS_BULK_MAX.toLocaleString('en-US')} leads match. Narrow the filter first.`,
+        'TOO_MANY',
+      )
+    }
+    res.json({ items: items.map(toLeadRow), total: items.length })
+  }),
+)
+
+/** The ticked leads by id, in the list's order. Fetched 1,000 ids per query. */
+async function leadsByIds(ids: string[]): Promise<Lead[]> {
+  const db = getDb()
+  const unique = [...new Set(ids)]
+  const found: Lead[] = []
+  for (let i = 0; i < unique.length; i += 1000) {
+    const chunk = unique.slice(i, i + 1000)
+    found.push(...(await db.select().from(leads).where(inArray(leads.id, chunk))))
+  }
+  return found.sort((a, b) => b.icp_score - a.icp_score || b.updated_at.localeCompare(a.updated_at))
+}
+
+async function sendLeadsCsv(res: Response, rows: Lead[]): Promise<void> {
+  const settings = await getSettings(getDb())
+  const tz = settings.send_window.tz
+  const p = zonedParts(new Date(), tz)
+  const two = (n: number) => String(n).padStart(2, '0')
+  const filename = `leads-${p.year}-${two(p.month)}-${two(p.day)}.csv`
+  res
+    .type('text/csv; charset=utf-8')
+    .set('Content-Disposition', `attachment; filename="${filename}"`)
+    .set('Cache-Control', 'private, no-store')
+    .set('X-Lead-Count', String(rows.length))
+    .send(leadsCsv(rows.map(toLeadRow), tz))
+}
+
+// GET /api/leads/export.csv?status=&persona=&q= -> CSV file of every lead the filter matches (no
+// filter: every lead), best ICP score first, with the import's own column names so it loads back
+// in; sent as a download named for the day (leads-2026-11-04.csv) so it saves on a phone too
+leadsRouter.get(
+  '/export.csv',
+  asyncHandler(async (req, res) => {
+    const query = parseOr400(LeadsFilterQuerySchema, req.query, 'query')
+    const rows = await getDb()
+      .select()
+      .from(leads)
+      .where(leadsFilter(query))
+      .orderBy(...LEADS_ORDER)
+    await sendLeadsCsv(res, rows)
+  }),
+)
+
+export const LeadsExportBodySchema = z.object({
+  ids: z.array(z.string().min(1).max(200)).min(1).max(LEADS_BULK_MAX),
+})
+
+// POST /api/leads/export.csv { ids } -> the same CSV file for exactly the ticked leads. A POST so
+// a thousand ids fit (a URL that long breaks in some browsers and proxies).
+leadsRouter.post(
+  '/export.csv',
+  asyncHandler(async (req, res) => {
+    const body = parseOr400(LeadsExportBodySchema, req.body, 'body')
+    await sendLeadsCsv(res, await leadsByIds(body.ids))
   }),
 )
 
