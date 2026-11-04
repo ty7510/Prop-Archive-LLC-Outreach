@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  ListChecks,
   Loader2,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -382,6 +383,32 @@ export default function Leads() {
             e.target.value = ''
           }}
         />
+        {everyMatchSelected ? (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setSelected(new Set())
+              setAllMatch(null)
+            }}
+          >
+            <ListChecks className="h-4 w-4" aria-hidden /> Clear selection
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={selectingAll || total === 0}
+            onClick={() => void selectAllMatching()}
+          >
+            {selectingAll ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <ListChecks className="h-4 w-4" aria-hidden />
+            )}
+            Select all{total ? ` (${total.toLocaleString('en-US')})` : ''}
+          </button>
+        )}
         <button
           type="button"
           className="btn-secondary"
