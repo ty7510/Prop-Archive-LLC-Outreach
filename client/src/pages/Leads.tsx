@@ -23,9 +23,10 @@ import {
   enrollLead,
   getSettings,
   importCsv,
-  leadsCsvFileName,
-  leadsCsvUrl,
+  downloadLeadsCsv,
+  errorMessage,
   listLeads,
+  listMatchingLeads,
   listSequences,
   isNotBuilt,
 } from '../api.ts'
@@ -254,6 +255,47 @@ export default function Leads() {
       return next
     })
   }
+  // "Select all": every lead the chip and search match, on every page, not just this one.
+  const filter = { status: chipDef.statuses.join(',') || undefined, q: dq || undefined }
+  const filterKey = `${chip}|${dq}`
+  const [selectingAll, setSelectingAll] = useState(false)
+  // The ids "Select all" ticked, and for which chip and search, so the note stays truthful.
+  const [allMatch, setAllMatch] = useState<{ key: string; ids: string[] } | null>(null)
+  async function selectAllMatching() {
+    setSelectingAll(true)
+    try {
+      const all = await listMatchingLeads(filter)
+      for (const l of all.items) selectedRows.current.set(l.id, l)
+      const ids = all.items.map((l) => l.id)
+      setSelected(new Set(ids))
+      setAllMatch({ key: filterKey, ids })
+    } catch (err) {
+      toast.error(errorMessage(err, 'Could not select them all'))
+    } finally {
+      setSelectingAll(false)
+    }
+  }
+  const everyMatchSelected =
+    allMatch !== null &&
+    allMatch.key === filterKey &&
+    allMatch.ids.length > 0 &&
+    allMatch.ids.every((id) => selected.has(id))
+  const showSelectAll = allOnPageSelected && total > items.length && !everyMatchSelected
+
+  // Export: exactly the ticked leads, or with none ticked every lead the chip and search match.
+  const [exporting, setExporting] = useState(false)
+  async function exportCsv() {
+    setExporting(true)
+    try {
+      const n = await downloadLeadsCsv(selected.size > 0 ? { ids: [...selected] } : filter)
+      toast.ok(`Saved ${plural(n, 'lead')} to one CSV file`)
+    } catch (err) {
+      toast.error(errorMessage(err, 'Export failed'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   function toggleOne(id: string) {
     const row = items.find((l) => l.id === id)
     if (row) selectedRows.current.set(id, row)
@@ -340,14 +382,32 @@ export default function Leads() {
             e.target.value = ''
           }}
         />
-        <a href={leadsCsvUrl} download={leadsCsvFileName()} className="btn-secondary">
-          <Download className="h-4 w-4" aria-hidden /> Export CSV
-        </a>
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={exporting || (selected.size === 0 && total === 0)}
+          onClick={() => void exportCsv()}
+        >
+          {exporting ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Download className="h-4 w-4" aria-hidden />
+          )}
+          {selected.size > 0
+            ? `Export selected (${selected.size.toLocaleString('en-US')})`
+            : `Export all${total ? ` (${total.toLocaleString('en-US')})` : ''}`}
+        </button>
         <button
           type="button"
           className="btn-secondary"
           disabled={selected.size === 0 || enrich.busy}
-          onClick={() => void enrich.run({ ids: [...selected] })}
+          onClick={() =>
+            selected.size > 500
+              ? toast.error(
+                  'Enrich takes up to 500 at a time. Untick some, or use "Enrich all not enriched".',
+                )
+              : void enrich.run({ ids: [...selected] })
+          }
         >
           <Sparkles className="h-4 w-4" aria-hidden /> Enrich selected
           {selected.size ? ` (${selected.size})` : ''}
@@ -371,6 +431,42 @@ export default function Leads() {
         </button>
       </div>
 
+      {showSelectAll || (everyMatchSelected && allMatch.ids.length > items.length) ? (
+        <p
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-stone-100 px-4 py-2 text-sm text-stone-700"
+          role="status"
+        >
+          {everyMatchSelected ? (
+            <>
+              All {allMatch.ids.length.toLocaleString('en-US')} leads here are selected, on every
+              page.
+              <button
+                type="button"
+                className="font-medium underline"
+                onClick={() => {
+                  setSelected(new Set())
+                  setAllMatch(null)
+                }}
+              >
+                Clear selection
+              </button>
+            </>
+          ) : (
+            <>
+              All {items.length} on this page are selected.
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 font-medium underline"
+                disabled={selectingAll}
+                onClick={() => void selectAllMatching()}
+              >
+                {selectingAll ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                Select all {total.toLocaleString('en-US')} leads here
+              </button>
+            </>
+          )}
+        </p>
+      ) : null}
       {discover.notBuilt ? <NotBuilt what="Finding new leads from the city records." /> : null}
       {doImport.notBuilt ? <NotBuilt what="CSV import." /> : null}
       {enrich.notBuilt ? <NotBuilt what="Enrichment." /> : null}

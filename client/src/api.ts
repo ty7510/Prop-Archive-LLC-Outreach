@@ -189,11 +189,56 @@ export const labelsPdfUrl = (ids: string[]) =>
 /** "envelope-labels-2026-10-24.pdf", today here (the server names the file the same way). */
 export const labelsPdfFileName = (now = new Date()) =>
   `envelope-labels-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.pdf`
-/** Every lead as one CSV file to download (opens in Excel or Sheets, imports back in). */
-export const leadsCsvUrl = '/api/leads/export.csv'
+/** The filter on screen: the chip's statuses (comma list), persona and search box. */
+export interface LeadsFilter extends Record<string, string | undefined> {
+  status?: string
+  persona?: string
+  q?: string
+}
+/** Every lead the filter matches, on every page, so "Select all" can tick them all. */
+export const listMatchingLeads = (filter: LeadsFilter) =>
+  api<{ items: Lead[]; total: number }>(`/api/leads/matching${qs(filter)}`)
+
 /** "leads-2026-11-04.csv", today here (the server names the file the same way). */
 export const leadsCsvFileName = (now = new Date()) =>
   `leads-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.csv`
+
+/**
+ * Save leads as one CSV file: exactly the ticked ids when given (sent in the body, so a thousand
+ * fit), otherwise every lead the filter matches on every page. Answers how many rows it holds.
+ */
+export async function downloadLeadsCsv(pick: { ids: string[] } | LeadsFilter): Promise<number> {
+  const byIds = Array.isArray(pick.ids)
+  const res = await fetch(
+    byIds ? '/api/leads/export.csv' : `/api/leads/export.csv${qs(pick as LeadsFilter)}`,
+    {
+      method: byIds ? 'POST' : 'GET',
+      credentials: 'same-origin',
+      headers: byIds ? { 'content-type': 'application/json' } : undefined,
+      body: byIds ? JSON.stringify({ ids: pick.ids }) : undefined,
+    },
+  )
+  if (!res.ok) {
+    let err: Partial<ApiError> = {}
+    try {
+      err = (await res.json()) as Partial<ApiError>
+    } catch {
+      // not JSON: keep the plain message below
+    }
+    throw new ApiRequestError(res.status, err.error ?? `Export failed (${res.status})`, err.code)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = leadsCsvFileName()
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Some browsers read the file after click() returns: free it a moment later.
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  return Number(res.headers.get('X-Lead-Count') ?? 0)
+}
 /** One printout to proof and edit: this person's part plus the page as it prints. */
 export const getPrintout = (messageId: string) =>
   api<PrintoutDoc>(`/api/queue/${encodeURIComponent(messageId)}/printout`)
