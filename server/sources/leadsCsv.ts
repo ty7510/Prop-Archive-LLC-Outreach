@@ -65,14 +65,18 @@ function columns(tz: string): Column[] {
   ]
 }
 
+/** A phone number or plain number: digits with spaces, dots, dashes, brackets, a leading sign. */
+const PLAIN_NUMBER = /^[+-]?[\d\s().-]*\d[\d\s().-]*$/
+
 /**
- * One CSV cell (RFC 4180): quoted when it holds a comma, quote or line break. A cell that starts
- * with "=" or "@" gets a leading apostrophe so a spreadsheet shows it instead of running it as a
- * formula ("+" and "-" are left alone: phone numbers start with them).
+ * One CSV cell (RFC 4180): quoted when it holds a comma, quote or line break. A cell that would
+ * start a spreadsheet formula ("=", "@", "+", "-", a tab or carriage return, even after leading
+ * spaces) gets a leading apostrophe so the sheet shows it instead of running it. Phone numbers
+ * and plain numbers like "+1 215 555 0102" or "-3" are left alone: they are not formulas.
  */
 export function csvCell(raw: string | number | boolean | null | undefined): string {
   let s = raw == null ? '' : String(raw)
-  if (/^[=@\t\r]/.test(s)) s = `'${s}`
+  if (/^\s*[=@+\-\t\r]/.test(s) && !PLAIN_NUMBER.test(s.trim())) s = `'${s}`
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
