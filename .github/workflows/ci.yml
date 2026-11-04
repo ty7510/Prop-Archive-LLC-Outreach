@@ -1,9 +1,24 @@
 name: CI
 
+# One run per pull request push (a newer push cancels the older run) and one per merge to main.
+# Each run checks only what changed since the closest commit that already passed CI
+# (scripts/ci/changed-since-green.sh): the tests that import a changed file, lint and formatting
+# on the changed files, and the typecheck and build only when code changed. Code that already
+# passed (a merge to main of a green, up-to-date pull request) is not checked again. A change that
+# can affect any test (dependencies, configs, migrations, the database layer, CI itself) still
+# runs every gate in full.
 on:
-  push:
-    branches: ['**']
   pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   gates:
@@ -21,15 +36,59 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: What changed since the last green commit
+        id: changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/changed-since-green.sh
+
       - uses: actions/setup-node@v4
+        if: steps.changed.outputs.skip != 'true'
         with:
           node-version: 24
-          cache: npm
       # Replit's Publish rewrites lockfile URLs to its private mirror, which CI cannot reach.
       - run: sed -i 's#http://package-firewall.replit.internal/npm/#https://registry.npmjs.org/#g' package-lock.json
+        if: steps.changed.outputs.skip != 'true'
+      - name: Reuse node_modules from the last run with this lockfile
+        id: modules
+        if: steps.changed.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('package-lock.json') }}
       - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run build
+        if: steps.changed.outputs.skip != 'true' && steps.modules.outputs.cache-hit != 'true'
+
+      - name: Typecheck
+        if: steps.changed.outputs.full == 'true' || steps.changed.outputs.code == 'true'
+        run: npm run check
+
+      - name: Tests (all)
+        if: steps.changed.outputs.full == 'true'
+        run: npm test
+      - name: Tests that import a changed file
+        if: steps.changed.outputs.full == 'false' && steps.changed.outputs.code == 'true'
+        run: npx vitest run --changed "${{ steps.changed.outputs.base }}" --passWithNoTests
+
+      - name: Lint (all)
+        if: steps.changed.outputs.full == 'true'
+        run: npm run lint
+      - name: Lint the changed files
+        if: steps.changed.outputs.full == 'false' && steps.changed.outputs.code == 'true'
+        run: xargs -a "$RUNNER_TEMP/changed-code.txt" npx eslint --no-warn-ignored
+
+      - name: Formatting (all)
+        if: steps.changed.outputs.full == 'true'
+        run: npm run format:check
+      - name: Formatting of the changed files
+        if: steps.changed.outputs.full == 'false' && steps.changed.outputs.any == 'true'
+        run: |
+          grep -vE '^$' "$RUNNER_TEMP/changed-all.txt" | while read -r f; do [ -f "$f" ] && echo "$f"; done \
+            | xargs -r npx prettier --check --ignore-unknown
+
+      - name: Build
+        if: steps.changed.outputs.full == 'true' || steps.changed.outputs.code == 'true'
+        run: npm run build
