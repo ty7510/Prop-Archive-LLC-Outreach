@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.ts'
 import { modules, registerModule, resetModules } from '../contracts.ts'
 import { createTestDb, type Db } from '../db/client.ts'
+import { parseCsv } from '../sources/csv.ts'
 import { enrollments, events, leads, messages, sequences } from '../db/schema.ts'
 import { newId } from '../lib/ids.ts'
 import { nowIso } from '../lib/time.ts'
@@ -364,6 +365,56 @@ describe('leads API', () => {
     expect((await agent.post('/api/leads/import').attach('file', SAMPLE)).status).toBe(501)
     // listing still works: it only needs the database
     expect((await agent.get('/api/leads')).status).toBe(200)
+  })
+
+  it('exports every lead as a CSV that imports back in, named for the day', async () => {
+    const empty = await agent.get('/api/leads/export.csv')
+    expect(empty.status).toBe(200)
+    expect(empty.type).toBe('text/csv')
+    expect(empty.headers['content-disposition']).toMatch(
+      /^attachment; filename="leads-\d{4}-\d{2}-\d{2}\.csv"$/,
+    )
+    expect(empty.text).toBe(`\uFEFF${empty.text.slice(1)}`)
+    expect(empty.text.split('\r\n')).toHaveLength(2) // header, then the final line break
+
+    const imported = await importSample(agent)
+    await db
+      .update(leads)
+      .set({ notes: 'Said "call me"\nafter 5, maybe', company: '=HYPERLINK("x")' })
+      .where(eq(leads.full_name, 'Maya Chen'))
+    const res = await agent.get('/api/leads/export.csv')
+    expect(res.status).toBe(200)
+    const parsed = parseCsv(res.text.replace(/^\uFEFF/, ''))
+    expect(parsed.rows).toHaveLength(imported.created)
+    expect(parsed.headers.slice(0, 5)).toEqual([
+      'Name',
+      'First name',
+      'Last name',
+      'Company',
+      'Email Address',
+    ])
+    const ray = parsed.rows.find((r) => r['Name'] === 'Ray Okafor')
+    expect(ray).toMatchObject({
+      Company: 'Okafor Properties LLC',
+      'Email Address': 'ray@okafor-properties.example.com',
+      'Street Address': '5214 Baltimore Ave',
+      City: 'Philadelphia',
+      State: 'PA',
+      Zip: '19143',
+      '# Properties': '9',
+      Units: '14',
+      Status: 'new',
+    })
+    const maya = parsed.rows.find((r) => r['Name'] === 'Maya Chen')
+    expect(maya?.['Notes']).toBe('Said "call me"\nafter 5, maybe')
+    expect(maya?.['Company']).toBe('\'=HYPERLINK("x")')
+    // The import recognises the lead columns and leaves the status columns alone.
+    expect(parsed.mapping.mapped['Email Address']).toBe('email')
+    expect(parsed.mapping.mapped['Street Address']).toBe('mailing_street')
+    expect(parsed.mapping.mapped['# Properties']).toBe('property_count')
+    expect(parsed.mapping.mapped['Email status']).toBeUndefined()
+    expect(parsed.mapping.mapped['Status']).toBeUndefined()
+    expect(parsed.mapping.mapped['Last contacted']).toBeUndefined()
   })
 
   it('leads rows carry no em-dash anywhere', async () => {

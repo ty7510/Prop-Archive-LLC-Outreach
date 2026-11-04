@@ -189,6 +189,11 @@ export const labelsPdfUrl = (ids: string[]) =>
 /** "envelope-labels-2026-10-24.pdf", today here (the server names the file the same way). */
 export const labelsPdfFileName = (now = new Date()) =>
   `envelope-labels-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.pdf`
+/** Every lead as one CSV file to download (opens in Excel or Sheets, imports back in). */
+export const leadsCsvUrl = '/api/leads/export.csv'
+/** "leads-2026-11-04.csv", today here (the server names the file the same way). */
+export const leadsCsvFileName = (now = new Date()) =>
+  `leads-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.csv`
 /** One printout to proof and edit: this person's part plus the page as it prints. */
 export const getPrintout = (messageId: string) =>
   api<PrintoutDoc>(`/api/queue/${encodeURIComponent(messageId)}/printout`)

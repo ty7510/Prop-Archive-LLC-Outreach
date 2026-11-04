@@ -29,7 +29,9 @@ import { logActivity } from '../lib/activity.ts'
 import { asyncHandler, badRequest, conflict, notFound, parseOr400 } from '../lib/http.ts'
 import { newId } from '../lib/ids.ts'
 import { withJobLock } from '../lib/locks.ts'
-import { nowIso } from '../lib/time.ts'
+import { getSettings } from '../lib/settings.ts'
+import { nowIso, zonedParts } from '../lib/time.ts'
+import { leadsCsv } from '../sources/leadsCsv.ts'
 import { displayNameFor } from '../sources/merge.ts'
 import { neighborhoodForLead } from '../sources/neighborhoods.ts'
 
@@ -106,6 +108,30 @@ leadsRouter.get(
       total: totalRows.length,
     }
     res.json(body)
+  }),
+)
+
+// GET /api/leads/export.csv -> CSV file: every lead as a row, best ICP score first, with the
+// import's own column names so it loads back in; sent as a download named for the day
+// (leads-2026-11-04.csv) so it saves on a phone too
+leadsRouter.get(
+  '/export.csv',
+  asyncHandler(async (_req, res) => {
+    const db = getDb()
+    const settings = await getSettings(db)
+    const rows = await db
+      .select()
+      .from(leads)
+      .orderBy(desc(leads.icp_score), desc(leads.updated_at))
+    const tz = settings.send_window.tz
+    const p = zonedParts(new Date(), tz)
+    const two = (n: number) => String(n).padStart(2, '0')
+    const filename = `leads-${p.year}-${two(p.month)}-${two(p.day)}.csv`
+    res
+      .type('text/csv; charset=utf-8')
+      .set('Content-Disposition', `attachment; filename="${filename}"`)
+      .set('Cache-Control', 'private, no-store')
+      .send(leadsCsv(rows.map(toLeadRow), tz))
   }),
 )
 
